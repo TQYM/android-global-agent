@@ -1,0 +1,13 @@
+type global_agent_bridge, domain;
+app_domain(global_agent_bridge)
+
+binder_use(global_agent_bridge)
+binder_call(global_agent_bridge, agentd)
+allow global_agent_bridge global_agent_service:service_manager find;
+
+# InputManager and task metadata calls are mediated by system_server permissions.
+binder_call(global_agent_bridge, system_server)
+allow global_agent_bridge input_service:service_manager find;
+allow global_agent_bridge activity_task_service:service_manager find;
+allow global_agent_bridge activity_service:service_manager find;
+allow global_agent_bridge display_service:service_manager find;

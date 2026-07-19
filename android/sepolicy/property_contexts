@@ -1,0 +1,2 @@
+sys.agent.enabled                            u:object_r:agent_enabled_prop:s0 exact bool
+

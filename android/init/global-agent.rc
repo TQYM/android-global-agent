@@ -1,0 +1,21 @@
+on post-fs-data
+    mkdir /data/misc/global_agent 0700 root root
+    restorecon_recursive /data/misc/global_agent
+
+service global-agentd /system_ext/bin/global-agentd
+    class main
+    user root
+    group root system graphics
+    seclabel u:r:agentd:s0
+    disabled
+    restart_period 1
+    oom_score_adjust -900
+
+on property:sys.boot_completed=1
+    setprop sys.agent.enabled 1
+
+on property:sys.agent.enabled=1
+    start global-agentd
+
+on property:sys.agent.enabled=0
+    stop global-agentd

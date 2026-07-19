@@ -1,0 +1,96 @@
+aidl_interface {
+    name: "global_agent_bridge_aidl",
+    srcs: ["android/aidl/com/example/globalagent/*.aidl"],
+    unstable: true,
+    backend: {
+        cpp: {
+            enabled: false,
+        },
+        java: {
+            enabled: true,
+        },
+        ndk: {
+            enabled: true,
+        },
+    },
+}
+
+cc_library_static {
+    name: "libglobal_agent_core",
+    srcs: [
+        "src/agent_loop.cpp",
+        "src/bezier.cpp",
+        "src/crc32.cpp",
+        "src/dumpsys_parser.cpp",
+        "src/gesture_validation.cpp",
+        "src/session_context.cpp",
+        "src/state_graph.cpp",
+        "src/state_store.cpp",
+        "src/subprocess.cpp",
+    ],
+    export_include_dirs: ["include"],
+    cflags: [
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-Wpedantic",
+    ],
+    cpp_std: "c++20",
+}
+
+cc_binary {
+    name: "global-agentd",
+    system_ext_specific: true,
+    srcs: [
+        "src/platform/aosp/agent_binder_service.cpp",
+        "src/platform/aosp/aosp_surface_capture.cpp",
+        "src/platform/aosp/bridge_input_injector.cpp",
+        "src/platform/aosp/main_aosp.cpp",
+    ],
+    local_include_dirs: ["src/platform/aosp"],
+    static_libs: [
+        "global_agent_bridge_aidl-ndk",
+        "libglobal_agent_core",
+    ],
+    header_libs: [
+        "libgui_aidl_headers",
+    ],
+    shared_libs: [
+        "libbinder",
+        "libbinder_ndk",
+        "libgui",
+        "liblog",
+        "libui",
+        "libutils",
+    ],
+    init_rc: ["android/init/global-agent.rc"],
+    cflags: [
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-Wpedantic",
+    ],
+    cpp_std: "c++20",
+}
+
+android_app {
+    name: "GlobalAgentBridge",
+    system_ext_specific: true,
+    manifest: "android/bridge/AndroidManifest.xml",
+    srcs: ["android/bridge/src/**/*.java"],
+    static_libs: ["global_agent_bridge_aidl-java"],
+    certificate: "platform",
+    platform_apis: true,
+    privileged: true,
+    optimize: {
+        enabled: true,
+    },
+}
+
+prebuilt_etc {
+    name: "privapp-permissions-com.example.globalagent",
+    system_ext_specific: true,
+    sub_dir: "permissions",
+    src: "android/bridge/privapp-permissions-com.example.globalagent.xml",
+    filename_from_src: true,
+}
