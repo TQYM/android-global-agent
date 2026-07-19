@@ -1,6 +1,6 @@
 # 项目问题清单
 
-更新时间：2026-07-19
+更新时间：2026-07-19 21:30（Asia/Shanghai）
 
 ## 阻塞问题
 
@@ -8,7 +8,7 @@
 | --- | --- | --- | --- | --- | --- |
 | GA-001 | P0 | 阻塞 | 缺少目标 Android 14 AOSP/OEM 源码树 | 无法编译私有 `libgui`、平台 Binder 注册、framework hidden API 和产品 sepolicy | 提供 checkout 路径、branch/tag、fingerprint、SPL |
 | GA-002 | P0 | 部分解除、平台集成阻塞 | API 34/35/36 Root AVD 已有，但缺少与 exact AOSP tree/platform key 匹配的完整集成设备 | portable stub 已验证；私有截图、平台输入、Binder death、产品 SELinux 仍无法验收 | 完成 exact-tree Soong 构建并部署匹配的 platform APK/daemon/policy |
-| GA-003 | P0 | 未验证 | 完整 Soong 产品构建尚未运行 | 本地 NDK 编译不覆盖 `binder_manager.h`、`libgui` 链接或平台 Java | 在目标树构建 `global-agentd`、`GlobalAgentBridge` 和 policy |
+| GA-003 | P0 | 未验证 | 完整 Soong 产品构建尚未运行 | 本地 NDK/SDK 编译不覆盖 `binder_manager.h`、`libgui`、平台 Java 或 APK 产品集成 | 在目标树构建 `global-agentd`、`GlobalAgentBridge`、`GlobalAgentModelGateway` 和 policy |
 | GA-004 | P1 | 未实现 | 电源键长按触发只有审计文档 | 不能通过长按电源键进入会话 | 选择 framework handoff 或显式 UI，并基于目标 `PhoneWindowManager` 实现 |
 | GA-005 | P1 | 本地已实现、待设备 | 用户可见的 bridge 会话入口尚未设备验收 | Activity 已提供明确开始、文本提交、取消、解锁/亮屏门禁和退后台取消 | 在目标 Soong 构建并验证锁屏、旋转、Binder death 和生命周期 |
 | GA-006 | P1 | 待决策 | Vosk 版本、模型和许可证未确定 | 无法实现真正离线 STT，不能评估 APK 体积/RSS/功耗 | 确认语言、模型、ABI、hash、分发与许可证 |
@@ -24,7 +24,7 @@
 | GA-011 | P1 | 部分实现 | 生产多点 bridge 未在设备运行 | 代码支持最多五指；需平台签名和目标设备验证缩放、旋转、取消与 display id |
 | GA-012 | P2 | 未实现 | 感知->决策->执行->验证闭环不完整 | 真实策略与结果验证尚无，不能自动跨应用执行 |
 | GA-013 | P2 | 部分实现 | 恢复策略只有基础 init backoff | 缺 SurfaceFlinger death link、两帧稳定门、完整 supervisor 与 P50/P95/P99 指标 |
-| GA-014 | P2 | 契约已实现、客户端未实现 | 外部模型 API 尚未接通 | 已有 HTTPS/模型 ID/Keystore alias/有界意图响应策略和三版 JVM 测试；仍缺独立低权限 gateway app、Keystore 实现、provider adapter 和配置 UI |
+| GA-014 | P2 | 独立 APK/公开配置已本地实现 | 外部模型 API 尚未接通 | Gateway 仅有 `INTERNET`，schema v2 只接受 `credentialRef`、root/shell 导入并原子存储；仍缺 v2 AIDL/CaptureGrant、Keystore 凭据 UI、provider HTTP adapter 和设备/mock 测试 |
 | GA-027 | P1 | 待产品决策 | 外部模型 API 的 provider 与认证方式未确定 | 无法安全实现请求 schema、TLS/certificate 策略和凭据生命周期 | 选择 API key/OAuth/device token、endpoint schema、数据出境范围和日志保留规则 |
 
 ## KernelSU 与 WebUI 问题
@@ -64,8 +64,9 @@
 ## 建议处理顺序
 
 1. 解决 GA-001 至 GA-003，完成目标 AOSP Soong/enforcing 基线。
-2. 在目标设备验证 GA-005 的显式 UI；仅在产品需要时再实现 GA-004 电源键入口。
-3. 确认 GA-006 后实现 GA-007，并先证明取消、超时和麦克风释放。
-4. 完成 GA-008 和设备状态回调，再开始任何真实决策。
-5. 只对指定自有 App 实现 GA-009/GA-012，并保留默认 `NoopDecision`。
-6. 用 exact-tree 设备数据关闭 GA-010、GA-011、GA-013、GA-021 和 GA-022。
+2. 在不扩大高权限面的前提下，继续 GA-014 的 v2 AIDL/CaptureGrant 和脱敏 DTO；在 GA-027 确认前不接真实 Provider。
+3. 在目标设备验证 GA-005 的显式 UI；仅在产品需要时再实现 GA-004 电源键入口。
+4. 确认 GA-006 后实现 GA-007，并先证明取消、超时和麦克风释放。
+5. 完成 GA-008 和设备状态回调，再开始任何真实决策。
+6. 只对指定自有 App 实现 GA-009/GA-012，并保留默认 `NoopDecision`。
+7. 用 exact-tree 设备数据关闭 GA-010、GA-011、GA-013、GA-021 和 GA-022。

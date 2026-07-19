@@ -161,6 +161,25 @@
   限定为 session/revision 绑定的有界 intent DTO，不允许远程坐标/手势直达输入桥。
   32 项策略测试在 API 34/35/36 Java 矩阵通过；实际 HTTP/Keystore/provider 未接入。
 
+## Iteration 23：低权限 ModelGateway 公开配置边界
+
+- 新增独立 `GlobalAgentModelGateway` APK，使用独立 app UID，Manifest 仅声明
+  `INTERNET`，禁止明文流量并只信任 system CA；高权限 bridge 仍无
+  `INTERNET`。
+- 实现公开配置 schema v2 严格解析：有界 JSON 深度/大小，拒绝重复键、
+  未知字段、原始 secret 字段、非 HTTPS endpoint、非 `keystore://` 引用、
+  未知 tool 和超限预算；当前阶段强制 `dryRun=true`。
+- `PublicConfigProvider` 只允许 root/shell 使用固定 method 和唯一
+  `config_b64` extra，严格 Base64/UTF-8 校验后使用 flush/fsync + `AtomicFile`
+  原子替换；该路径不导入 API Key。
+- endpoint/intent、schema、call envelope 和 importer 正反用例已纳入 API
+  34/35/36 Java 矩阵。主机 ASan/UBSan、NDK stub、AIDL boundary 和静态门
+  通过。
+- DeepSeek `deepseek-chat` 四轮复核后返回 `pass`，无 blocker/high/medium、
+  缺失测试或待确认问题。
+- 控制协议仍是 v1，且没有 HTTP client、Keystore 凭据 UI、CaptureGrant、
+  截图入站或输入执行；生产继续使用 `NoopDecision`。
+
 ## 当前验证快照
 
 - Host：Darwin 25.6.0 arm64。

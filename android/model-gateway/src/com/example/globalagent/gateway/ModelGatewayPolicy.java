@@ -31,7 +31,7 @@ public final class ModelGatewayPolicy {
           uri.getHost() != null && !uri.getHost().isEmpty() &&
           uri.getRawUserInfo() == null && uri.getRawQuery() == null &&
           uri.getRawFragment() == null && (port == -1 || port == 443) &&
-          uri.normalize().equals(uri);
+          !containsDotSegment(uri.getRawPath());
     } catch (URISyntaxException exception) {
       return false;
     }
@@ -88,5 +88,17 @@ public final class ModelGatewayPolicy {
       }
     }
     return true;
+  }
+
+  private static boolean containsDotSegment(String rawPath) {
+    if (rawPath == null || rawPath.isEmpty()) {
+      return false;
+    }
+    for (String segment : rawPath.split("/", -1)) {
+      if (".".equals(segment) || "..".equals(segment)) {
+        return true;
+      }
+    }
+    return false;
   }
 }

@@ -220,6 +220,7 @@ system_ext/global_agent/
 PRODUCT_PACKAGES += \
     global-agentd \
     GlobalAgentBridge \
+    GlobalAgentModelGateway \
     privapp-permissions-com.example.globalagent
 
 SYSTEM_EXT_PRIVATE_SEPOLICY_DIRS += \
@@ -230,6 +231,7 @@ SYSTEM_EXT_PRIVATE_SEPOLICY_DIRS += \
 
 ```text
 /system_ext/bin/global-agentd
+/system_ext/app/GlobalAgentModelGateway/GlobalAgentModelGateway.apk（具体路径由 Soong 决定）
 /system_ext/etc/permissions/privapp-permissions-com.example.globalagent.xml
 /system_ext/etc/init/global-agent.rc（具体分区由 Soong 决定）
 ```
@@ -239,7 +241,7 @@ SYSTEM_EXT_PRIVATE_SEPOLICY_DIRS += \
 ```sh
 source build/envsetup.sh
 lunch <device>-userdebug
-m global-agentd GlobalAgentBridge \
+m global-agentd GlobalAgentBridge GlobalAgentModelGateway \
   privapp-permissions-com.example.globalagent
 ```
 
@@ -251,6 +253,8 @@ m global-agentd GlobalAgentBridge \
 - `WindowConfiguration`、`InputManager` 隐藏 platform API；
 - `global_agent_bridge` 和 `agentd` 的 policy neverallow；
 - privapp allowlist 是否被 PackageManager 读取。
+- ModelGateway 是否使用独立 app UID，仅有 `INTERNET`，且 bridge 无
+  `INTERNET`。
 
 ### 5.4 Framework 电源键集成（可选）
 
@@ -464,8 +468,8 @@ adb logcat -d -s global-agentd GlobalAgentBridge
 
 ### 8.2 AOSP 产品回滚
 
-1. 从产品 `PRODUCT_PACKAGES` 移除 `global-agentd`、`GlobalAgentBridge` 和
-   privapp allowlist；
+1. 从产品 `PRODUCT_PACKAGES` 移除 `global-agentd`、`GlobalAgentBridge`、
+   `GlobalAgentModelGateway` 和 privapp allowlist；
 2. 移除对应 `SYSTEM_EXT_PRIVATE_SEPOLICY_DIRS`；
 3. 重新构建并刷回经过签名的 system/system_ext 镜像；
 4. 确认 `getenforce=Enforcing`、原生电源键/关机菜单和麦克风指示器恢复；

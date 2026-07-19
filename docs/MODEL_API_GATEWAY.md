@@ -3,14 +3,19 @@
 ## Current status
 
 The production AOSP daemon still uses `NoopDecision`. The project does not yet
-send network requests and does not store an API key. Internal AIDL/Binder APIs
-are implemented; an external model HTTP API is not production-ready.
+send network requests and does not store an API key. A separate
+`GlobalAgentModelGateway` APK now exists with `INTERNET` only, a strict public
+configuration schema v2, a root/shell-only `ContentProvider.call()` import and
+`AtomicFile` persistence. This is a local configuration boundary, not a
+Provider HTTP client or control-protocol v2 implementation.
 
 ## Required architecture
 
-The model client must be a separate, non-privileged application/process with
-`INTERNET` only. It must not share the bridge UID, hold `INJECT_EVENTS`, access
-SurfaceFlinger, read the Agent state file, or receive screenshots/raw PCM.
+The model client is a separate, non-privileged application/process with
+`INTERNET` only. It does not share the bridge UID, hold `INJECT_EVENTS`, access
+SurfaceFlinger or read the Agent state file. The current implementation receives
+no screenshots or raw PCM. A future redacted image path must require a
+single-use session/revision/deadline-bound `CaptureGrant`.
 
 The privileged bridge sends a bounded request containing only session id,
 revision, final user transcript, focused package/activity and allowlisted UI
@@ -28,6 +33,13 @@ input injection.
 - Require HTTPS, reject URL user-info/query/fragment credentials, and define a
   provider-specific certificate policy before deployment.
 
+The current public importer accepts only Base64-encoded UTF-8 configuration
+from root or shell. It rejects unknown call arguments, unknown JSON fields,
+duplicate keys, raw secret field names, non-Keystore credential references and
+out-of-range limits. Until the network/parser path exists it also requires
+`dryRun=true`. Credential entry is deliberately not available through this
+provider.
+
 ## Response boundary
 
 `ModelGatewayPolicy` rejects percent-encoded, backslash-containing or non-ASCII
@@ -42,7 +54,8 @@ to the input bridge.
 
 1. Select provider and authentication type: API key, OAuth or device-bound
    token.
-2. Create the separate Android app/service and signature-protected narrow AIDL.
+2. Add the protocol-v2 narrow AIDL, single-use `CaptureGrant` and redacted
+   perception DTOs without granting the gateway capture/input permissions.
 3. Implement Android Keystore credential encryption and user-visible config UI.
 4. Implement provider-specific HTTPS request/response mapping with cancellation,
    timeout, certificate rules and redacted logging.

@@ -26,6 +26,13 @@ public final class ModelGatewayPolicyTest {
     check(!ModelGatewayPolicy.isEndpointAllowed(
         "https://api.example.com\\@internal.example/decision"));
     check(!ModelGatewayPolicy.isEndpointAllowed(
+        "https://evil.example\\@good.example/decision"));
+    check(!ModelGatewayPolicy.isEndpointAllowed(
+        "https://api.example.com/v1/%5c/decision"));
+    check(!ModelGatewayPolicy.isEndpointAllowed(
+        "https://api.example.com/v1/../decision"));
+    check(!ModelGatewayPolicy.isEndpointAllowed("https:///decision"));
+    check(!ModelGatewayPolicy.isEndpointAllowed(
         "https://api.ex\u00e4mple.com/v1/decision"));
 
     check(ModelGatewayPolicy.isModelIdValid("vendor/model-v1:stable"));
@@ -35,6 +42,7 @@ public final class ModelGatewayPolicyTest {
     check(!ModelGatewayPolicy.isModelIdValid("a".repeat(
         ModelGatewayPolicy.MAX_MODEL_ID_BYTES + 1)));
     check(ModelGatewayPolicy.isCredentialAliasValid("agent_model_key"));
+    check(!ModelGatewayPolicy.isCredentialAliasValid(""));
     check(!ModelGatewayPolicy.isCredentialAliasValid("raw/key/value"));
 
     check(ModelGatewayPolicy.isIntentResponseValid(

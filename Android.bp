@@ -88,6 +88,20 @@ android_app {
     },
 }
 
+android_app {
+    name: "GlobalAgentModelGateway",
+    system_ext_specific: true,
+    manifest: "android/model-gateway/AndroidManifest.xml",
+    resource_dirs: ["android/model-gateway/res"],
+    srcs: ["android/model-gateway/src/**/*.java"],
+    certificate: "shared",
+    min_sdk_version: "34",
+    sdk_version: "current",
+    optimize: {
+        enabled: true,
+    },
+}
+
 prebuilt_etc {
     name: "privapp-permissions-com.example.globalagent",
     system_ext_specific: true,

@@ -49,11 +49,20 @@ for api in 34 35 36; do
         "$ROOT/android/bridge/src/com/example/globalagent/SessionClientRegistry.java" \
         "$ROOT/android/bridge/src/com/example/globalagent/SessionEntryPolicy.java" \
         "$ROOT/android/bridge/src/com/example/globalagent/SessionStatusValidator.java" \
+        "$ROOT/android/model-gateway/src/com/example/globalagent/gateway/AtomicPublicConfigStore.java" \
         "$ROOT/android/model-gateway/src/com/example/globalagent/gateway/ModelGatewayPolicy.java" \
+        "$ROOT/android/model-gateway/src/com/example/globalagent/gateway/PublicAgentConfigSchema.java" \
+        "$ROOT/android/model-gateway/src/com/example/globalagent/gateway/PublicConfigCallPolicy.java" \
+        "$ROOT/android/model-gateway/src/com/example/globalagent/gateway/PublicConfigImporter.java" \
+        "$ROOT/android/model-gateway/src/com/example/globalagent/gateway/PublicConfigProvider.java" \
+        "$ROOT/android/model-gateway/src/com/example/globalagent/gateway/StrictJsonParser.java" \
         "$ROOT/tests/java/com/example/globalagent/GestureValidatorTest.java" \
         "$ROOT/tests/java/com/example/globalagent/SessionEntryPolicyTest.java" \
         "$ROOT/tests/java/com/example/globalagent/SessionStatusValidatorTest.java" \
-        "$ROOT/tests/java/com/example/globalagent/gateway/ModelGatewayPolicyTest.java"
+        "$ROOT/tests/java/com/example/globalagent/gateway/ModelGatewayPolicyTest.java" \
+        "$ROOT/tests/java/com/example/globalagent/gateway/PublicAgentConfigSchemaTest.java" \
+        "$ROOT/tests/java/com/example/globalagent/gateway/PublicConfigCallPolicyTest.java" \
+        "$ROOT/tests/java/com/example/globalagent/gateway/PublicConfigImporterTest.java"
 
     java -cp "$class_out:$android_jar" \
         com.example.globalagent.GestureValidatorTest >/dev/null
@@ -63,6 +72,12 @@ for api in 34 35 36; do
         com.example.globalagent.SessionEntryPolicyTest >/dev/null
     java -cp "$class_out:$android_jar" \
         com.example.globalagent.gateway.ModelGatewayPolicyTest >/dev/null
+    java -cp "$class_out:$android_jar" \
+        com.example.globalagent.gateway.PublicAgentConfigSchemaTest >/dev/null
+    java -cp "$class_out:$android_jar" \
+        com.example.globalagent.gateway.PublicConfigCallPolicyTest >/dev/null
+    java -cp "$class_out:$android_jar" \
+        com.example.globalagent.gateway.PublicConfigImporterTest >/dev/null
 
     printf 'java_api_%s=compiled-and-policy-tests-passed\n' "$api"
 done

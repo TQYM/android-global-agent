@@ -31,6 +31,9 @@ third-party anti-tamper controls.
   automatic cancellation when it leaves the foreground.
 - Platform task metadata publisher without granting the daemon broad dumpsys
   access.
+- A separate low-privilege ModelGateway APK with `INTERNET` only, strict public
+  config schema v2 import, root/shell caller checks and atomic persistence. It
+  still has no HTTP client, credential storage or capture grant path.
 - init, SELinux, property and service context integration skeletons.
 - Host unit tests and Android NDK stub cross-build.
 
@@ -90,6 +93,7 @@ Copy the repository into the Android 14 source tree, for example
 PRODUCT_PACKAGES += \
     global-agentd \
     GlobalAgentBridge \
+    GlobalAgentModelGateway \
     privapp-permissions-com.example.globalagent
 ```
 
@@ -114,6 +118,9 @@ The cross-version Android 14/15/16 adapter contract and strict source-tree gate
 are documented in [the Android 14/15/16 engineering manual](docs/ANDROID14_GLOBAL_AGENT_ENGINEERING_MANUAL.md).
 The external model boundary and current non-network status are documented in
 [the model API gateway guide](docs/MODEL_API_GATEWAY.md).
+The current OpenClaw-style host/Android mapping, public config v2 contract and
+capture-grant roadmap are in
+[the OpenClaw API Agent engineering manual](docs/OPENCLAW_API_AGENT_ENGINEERING_MANUAL.md).
 The Android 14 power-key event path is audited in
 [POWER_KEY_AUDIT.md](docs/POWER_KEY_AUDIT.md), and the offline speech/edge-glow
 implementation boundary is in

@@ -1196,7 +1196,7 @@ API 34/35/36 公共 `android.jar` 编译；它证明公共 API 源码兼容和 D
 hidden API、platform certificate、Binder 服务注册或 SELinux 兼容。完整
 AOSP 产品构建还必须在三个独立 checkout/worktree 中执行：
 
-> "m global-agentd GlobalAgentBridge privapp-permissions-com.example.globalagent selinux_policy"
+> "m global-agentd GlobalAgentBridge GlobalAgentModelGateway privapp-permissions-com.example.globalagent selinux_policy"
 
 每个产物必须记录自己的 branch/tag、fingerprint、SPL 和 signer digest。禁止把
 API 34 的 `services.jar`、platform APK、native daemon 或 precompiled policy 推到

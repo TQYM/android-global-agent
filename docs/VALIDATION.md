@@ -405,6 +405,34 @@ device=unavailable
   issues, missing tests or questions. The verbatim final report is stored in
   `outputs/ai-review.md`. This review does not replace exact-tree/device gates.
 
+## Iteration 23: low-privilege ModelGateway public configuration
+
+- Added the separate `GlobalAgentModelGateway` Soong app with the non-platform
+  standard `shared` certificate. Its manifest requests only `INTERNET`, disables
+  cleartext traffic, trusts system CAs, and does not request injection or
+  frame-capture permissions. The bridge manifest remains offline.
+- Added a bounded strict JSON parser and public config schema version 2. The
+  validator rejects duplicate/unknown fields, raw secret field names, ambiguous
+  endpoints, non-Keystore credential references, unknown tools, screenshot
+  retention and limits outside the documented envelope. The current importer
+  requires `runtime=openclaw-host` and `dryRun=true`.
+- Added a root/shell-only `ContentProvider.call()` envelope with one fixed method,
+  null `arg`, exactly one `config_b64` extra, strict Base64/UTF-8 decoding and a
+  96 KiB decoded limit. Validated JSON is flushed, fsynced and committed through
+  `AtomicFile`; query/insert/update/delete remain unsupported.
+- Added endpoint, schema, call-policy and importer regression tests for raw and
+  encoded separators, dot segments, empty hosts, duplicate keys/tools/providers,
+  oversized integers, bad UTF-8/Base64, unauthorized UIDs and storage failure.
+- `tools/check-java-api-matrix.sh` passed for API 34, 35 and 36 after each repair
+  pass. `tools/run-tests.sh`, `tools/build-android-stub.sh`,
+  `tools/build-aidl-boundary-stub.sh`, and `tools/check-project.sh` passed.
+- DeepSeek / `deepseek-chat` returned `pass` on review iteration 4 with no
+  blocker/high/medium issues, missing tests or questions. The final verbatim
+  report is in `outputs/ai-review.md`.
+- This iteration did not add an HTTP client, credential value storage, Keystore
+  UI, protocol-v2 Binder API, CaptureGrant, image ingress or action execution.
+  Production remains `NoopDecision`; Soong/device APK validation is still open.
+
 ## Remaining gate
 
 A full AOSP 14 build on the target device source drop is still required to

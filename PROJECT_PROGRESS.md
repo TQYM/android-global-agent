@@ -1,12 +1,13 @@
 # 项目进度
 
-更新时间：2026-07-19 19:17（Asia/Shanghai）
+更新时间：2026-07-19 21:30（Asia/Shanghai）
 
 ## 结论
 
 项目目前完成了 Android 14 全局 Agent 的便携核心、AOSP 集成骨架、平台签名
 输入 bridge、单帧截屏适配器、会话 AIDL 控制面、显式会话 Activity、KernelSU
-调试 WebUI 和 Android 14/15/16 兼容性门禁。当前属于“本地可验证的系统边界
+调试 WebUI、Android 14/15/16 兼容性门禁，以及独立低权限 ModelGateway
+的公开配置导入边界。当前属于“本地可验证的系统边界
 实现”，不是已经在目标 Android 14/15/16 设备上验收的完整产品。
 
 本次发布变更集以主线 commit
@@ -23,8 +24,8 @@
 | KernelSU 截屏/点击 | 调试可用候选 | WebUI 显式调用 stock `screencap` 与有界单点 `input tap` | 物理 KernelSU 设备与 OEM WebView 回归 |
 | 会话控制面 | 本地通过 | trigger/transcript/status DTO、UID 鉴权、revision、超时、取消、Binder death 重连 | Soong 完整构建和设备 Binder 测试 |
 | 显式会话入口 | 本地通过 | Launcher Activity、解锁/亮屏门禁、文本 final transcript、取消、退后台自动取消 | 平台 APK Soong 构建和设备生命周期测试 |
-| API 34/35/36 兼容契约 | 本地通过、设备阻塞 | 版本矩阵手册、SDK/AOSP 源码入口检查、strict 模式门禁 | API 34/35/36 SDK 与 exact AOSP trees、逐版本私有 ABI 编译 |
-| 外部模型 API | 安全契约通过、未接通 | HTTPS endpoint、模型 ID、credential alias、有界 intent response 校验 | 独立低权限 gateway、provider/auth 选择、Keystore、HTTP client、mock/device 测试 |
+| API 34/35/36 兼容契约 | 本地通过、设备阻塞 | 版本矩阵手册、三版 SDK/AOSP 源码入口检查、strict 模式门禁 | 三棵 exact AOSP trees、逐版本私有 ABI/Soong 编译 |
+| 外部模型 API | 独立 APK/公开配置本地实现、HTTP 未接通 | `INTERNET`-only Gateway、system CA/禁明文网络、schema v2、root/shell 导入、原子存储、v1 intent 校验 | provider/auth 选择、v2 AIDL/CaptureGrant、Keystore UI、HTTP adapter、mock/device 测试 |
 | 电源键长按 | 仅审计/设计 | AOSP 13/14 输入路径和兼容风险已有文档 | 目标 framework 源码、产品入口选择、设备测试 |
 | 离线语音 STT | 仅设计 | AudioRecord/Vosk/FGS 的权限和线程边界已有设计 | Vosk 版本/模型/许可确认、用户可见入口、设备功耗测试 |
 | 边缘光效 | 仅设计 | RuntimeShader/overlay 状态机与安全边界已有设计 | 实际 View/Service、overlay 授权和设备 GPU 测试 |
@@ -42,8 +43,10 @@
 - API 矩阵门禁检查 API 34/35/36 SDK、Surface/Input/Power/SELinux 源码入口和 strict 模式要求。
 - 同一组 AIDL、显式 Activity 和 Java 策略测试已分别对 API 34/35/36 公共 SDK 编译通过。
 - API 34/35/36 userdebug Root AVD 均已运行 API 34-minSdk arm64 stub；API 34/36 另完成 Enforcing 与 `SIGKILL` 恢复。
-- 模型网关策略 32 项测试已纳入 API 34/35/36 Java 编译矩阵；生产仍保持 `NoopDecision` 和无网络请求。
-- DeepSeek `deepseek-chat` 四轮独立复核最终 `pass`，无 blocker/high/medium、缺失测试或待确认问题。
+- 模型网关 endpoint/intent 策略、公开配置 schema/importer/call 负向测试
+  已纳入 API 34/35/36 Java 矩阵；生产仍保持 `NoopDecision` 和无网络请求。
+- 本轮 DeepSeek `deepseek-chat` 四轮独立复核最终 `pass`，无
+  blocker/high/medium、缺失测试或待确认问题。
 - XML、Shell、WebUI JavaScript、离线资源和危险策略模式静态检查。
 - KernelSU v0.4.0 包完整性检查。
 
@@ -71,8 +74,10 @@ tools/validation-metadata.sh
 ## 当前阶段
 
 P0 本地契约与验证已完成。P3 的会话 AIDL 控制面和显式 bridge UI 已提前完成
-本地实现。API 34/35/36 SDK 与 arm64 Google APIs 镜像已安装，兼容性契约已加入；
-P1 目标 AOSP 集成仍被三棵 exact 源码树、API 34/36 Root AVD 验证和平台签名阻塞，
+本地实现。OpenClaw 手册中的独立 ModelGateway APK 与公开配置 v2 导入
+也已完成本地边界，但控制协议仍为 v1，不发起 HTTP。API 34/35/36 SDK
+与 arm64 Google APIs 镜像已安装；P1 目标 AOSP 集成仍被三棵 exact
+源码树、匹配的 platform key/集成镜像和完整 Soong/enforcing 验收阻塞，
 因此 P2-P5 不能宣称设备可用。
 
 下一阶段的必要输入：
@@ -83,6 +88,7 @@ P1 目标 AOSP 集成仍被三棵 exact 源码树、API 34/36 Root AVD 验证和
 4. 首个自有/授权测试 App 和允许执行的具体流程。
 5. 是否还需要电源键 framework handoff；当前默认入口已选显式 bridge UI。
 6. 是否引入 Vosk、模型语言/体积、许可证和目标 ABI。
+7. 外部 Provider、认证方式、endpoint/区域、数据出境和日志保留策略。
 
 ## 事实来源
 

@@ -172,6 +172,22 @@
   非 443 endpoint、超限字段、stale/非法响应和无确认的不可逆 intent；32 项测试
   在 API 34/35/36 编译矩阵通过。没有向高权限 bridge 增加 `INTERNET` 或保存 key。
 
+### 阶段 14：ModelGateway 公开配置导入
+
+- 将网关从纯策略类扩展为独立 `GlobalAgentModelGateway` APK。该 APK 在脚手架
+  中使用非 platform 的标准 `shared` 证书（产品可换专用证书），只声明
+  `INTERNET`，并以 network security config 禁止明文流量。
+- 实现可在主机 JVM 运行的严格 JSON/parser/schema，拒绝重复/未知字段、
+  secret 字段、路径歧义、越界整数、非 Keystore alias、重复 package/tool 与
+  保留截图；当前只接受 `runtime=openclaw-host` 和 `dryRun=true`。
+- 实现 root/shell-only `PublicConfigProvider.call()` 信封校验与严格
+  Base64/UTF-8 解码，通过 flush/fsync + `AtomicFile` 存储已验证公开配置。
+  Provider 不支持 query/insert/update/delete，也不接收凭据值。
+- API 34/35/36 公共 SDK 编译和所有 endpoint/intent/schema/call/importer JVM 测试通过；
+  host ASan/UBSan、API 34 arm64 NDK stub、AIDL boundary 和项目静态门通过。
+- DeepSeek `deepseek-chat` 第四轮复核最终 `pass`。该结果不替代 Soong APK 构建、
+  独立 UID/权限设备验收、Keystore、TLS/mock server 或 CaptureGrant 测试。
+
 ## 已验证的门
 
 在当前工作区可重复执行：
@@ -199,6 +215,8 @@ tools/build-aidl-boundary-stub.sh
    link 或两帧稳定后恢复逻辑。
 5. 完整 `libgui`、platform AIDL、framework stubs、OEM sepolicy 和平台签名尚未在
    目标 AOSP tree 编译。
+6. ModelGateway 当前只有公开配置导入；没有 HTTP client、credential UI、
+   protocol-v2 AIDL、CaptureGrant 或任何模型调用。
 
 ## 日志维护规则
 

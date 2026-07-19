@@ -21,6 +21,9 @@
 - 用户可见的 bridge Launcher Activity，提供解锁/亮屏门禁、显式开始、文本 final
   transcript、状态显示、取消和退后台自动取消。
 - 平台任务元数据发布器，无需向守护进程授予宽泛的 dumpsys 权限。
+- 独立低权限 ModelGateway APK，仅声明 `INTERNET`，并实现严格的公开配置
+  schema v2、root/shell 调用方校验和原子持久化；尚未实现 HTTP
+  client、凭据保存或 capture grant 路径。
 - init、SELinux、属性和服务上下文集成脚手架。
 - 主机单元测试和 Android NDK 桩交叉编译。
 
@@ -68,6 +71,7 @@ native Binder 服务逻辑；仅平台可用的服务注册仍必须由 Soong �
 PRODUCT_PACKAGES += \
     global-agentd \
     GlobalAgentBridge \
+    GlobalAgentModelGateway \
     privapp-permissions-com.example.globalagent
 ```
 
@@ -85,3 +89,5 @@ PRODUCT_PACKAGES += \
 
 Android 14/15/16 的版本适配、strict 源码树门禁和 Advanced Protection 降级策略见[跨版本工程手册](docs/ANDROID14_GLOBAL_AGENT_ENGINEERING_MANUAL.md)。
 外部模型 API 的低权限网关、凭据和响应 DTO 边界见[模型 API 网关说明](docs/MODEL_API_GATEWAY.md)；当前生产配置仍不发起网络请求。
+当前 OpenClaw 风格的宿主机/Android 映射、公开配置 v2 与 capture grant
+路线见 [OpenClaw API Agent 工程手册](docs/OPENCLAW_API_AGENT_ENGINEERING_MANUAL.md)。

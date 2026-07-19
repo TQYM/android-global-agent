@@ -13,7 +13,9 @@ Android 14 Agent 边界实现。路线图优先保证可停止、可恢复、可
 
 便携核心和 bridge 骨架已有本地验证。手势限制、失败路径测试、单帧 API 命名和
 验证元数据已在 P0 收敛；P3 的会话 AIDL 控制面和显式 bridge Activity 也已提前
-完成本地实现，但没有麦克风。下一步不是直接加入“会自己操作 App”的模型，而是
+完成本地实现，但没有麦克风。独立 ModelGateway APK 与公开配置 schema v2
+导入边界也已本地完成，但控制协议仍为 v1，没有 HTTP/Keystore/CaptureGrant。
+下一步不是直接加入“会自己操作 App”的模型，而是
 取得目标 AOSP/设备输入；没有目标源码和设备时，P1 之后的运行能力不能可靠完成。
 
 ## 阶段路线
@@ -28,6 +30,8 @@ Android 14 Agent 边界实现。路线图优先保证可停止、可恢复、可
 - 为 `AgentLoop`、`SessionContext`、bridge validator 补齐失败路径和边界测试；
 - 为每次验证记录工具版本、commit、设备 fingerprint/SPL（若有设备）；
 - 将“单帧视觉 hash”和“真实连续帧/模型”在 API 命名和文档中明确区分。
+- [本地完成] 独立 `INTERNET`-only ModelGateway APK、公开配置 schema v2、
+  root/shell 导入和原子存储，同时保持 bridge 无 `INTERNET`。
 
 完成标准：
 
@@ -35,6 +39,10 @@ Android 14 Agent 边界实现。路线图优先保证可停止、可恢复、可
   通过；
 - AIDL 与 Java/native 对限制值没有漂移；
 - 文档不再把设计骨架描述为已接入能力。
+
+可并行的下一个本地契约是 protocol-v2 AIDL、一次性 `CaptureGrant` 和脱敏
+perception/action DTO。该工作不得让 ModelGateway 获得截屏/输入权限，也不在
+Provider 与认证方式未确认时接入真实网络。
 
 ### P1：目标 AOSP 集成（当前阻塞）
 

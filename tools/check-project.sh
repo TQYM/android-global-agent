@@ -25,6 +25,23 @@ done
 
 xmllint --noout "$ROOT/android/bridge/AndroidManifest.xml"
 xmllint --noout "$ROOT/android/bridge/privapp-permissions-com.example.globalagent.xml"
+xmllint --noout "$ROOT/android/model-gateway/AndroidManifest.xml"
+xmllint --noout "$ROOT/android/model-gateway/res/xml/network_security_config.xml"
+
+if rg -n 'INJECT_EVENTS|READ_FRAME_BUFFER|CAPTURE_VIDEO_OUTPUT' \
+    "$ROOT/android/model-gateway/AndroidManifest.xml"; then
+    echo "ModelGateway manifest must not request privileged capture/input permissions" >&2
+    exit 1
+fi
+if rg -n 'android.permission.INTERNET' "$ROOT/android/bridge/AndroidManifest.xml"; then
+    echo "bridge manifest must remain offline" >&2
+    exit 1
+fi
+if sed -n '/name: "GlobalAgentModelGateway"/,/^}/p' "$ROOT/Android.bp" | \
+    rg -n 'certificate:[[:space:]]*"platform"|privileged:[[:space:]]*true'; then
+    echo "ModelGateway must not use the platform certificate or privileged install" >&2
+    exit 1
+fi
 
 test -s "$ROOT/PROJECT_PROGRESS.md"
 test -s "$ROOT/PROJECT_LOG.md"
