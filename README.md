@@ -1,5 +1,7 @@
 # Android 14 Global Agent
 
+English | [简体中文](README.zh-CN.md)
+
 This repository is a security-bounded implementation scaffold for an Android 14
 global agent on an owned or explicitly authorized device. It separates the
 portable state machine from AOSP-private capture and input APIs.
