@@ -110,6 +110,10 @@ Root-level snapshots are available in [project progress](PROJECT_PROGRESS.md),
 [complete project log](PROJECT_LOG.md), and [project issues](PROJECT_ISSUES.md).
 The opt-in trigger, offline STT, visual-state, and session-lifecycle boundary is
 documented in [trigger/STT integration](docs/TRIGGER_STT_INTEGRATION.md).
+The cross-version Android 14/15/16 adapter contract and strict source-tree gate
+are documented in [the Android 14/15/16 engineering manual](docs/ANDROID14_GLOBAL_AGENT_ENGINEERING_MANUAL.md).
+The external model boundary and current non-network status are documented in
+[the model API gateway guide](docs/MODEL_API_GATEWAY.md).
 The Android 14 power-key event path is audited in
 [POWER_KEY_AUDIT.md](docs/POWER_KEY_AUDIT.md), and the offline speech/edge-glow
 implementation boundary is in

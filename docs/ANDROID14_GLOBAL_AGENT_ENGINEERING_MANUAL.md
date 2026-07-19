@@ -1,6 +1,8 @@
-# Android 14 全局 Agent 系统工程手册
+# Android 14/15/16 全局 Agent 系统工程手册
 
-基线：Android 14 / API 34 / AOSP `android-14.0.0_r1` 语义；目标仅限自有或已授权的 AVD。生产分支、QPR、OEM backport 必须按设备 fingerprint 对源码重新核对。本文中的 Root、platform 签名、SELinux permissive 都是开发条件，不是产品安全模型。
+基线：Android 14/API 34、Android 15/API 35、Android 16/API 36；目标仅限自有或已授权的 AVD。本文将 API 34 作为便携核心和 AIDL 的最低基线，但所有 AOSP 私有接口必须对 exact branch/tag 单独编译。生产分支、QPR、OEM backport 必须按设备 fingerprint 对源码重新核对。本文中的 Root、platform 签名、SELinux permissive 都是开发条件，不是产品安全模型。
+
+**兼容性目标：** 便携核心、会话 DTO、权限边界和失败语义以 API 34 为最低版本并面向 API 34--36；当前证据只覆盖 API 34 NDK 编译和 API 35 模拟器运行，API 36 运行及三版本私有平台 ABI 尚未验证。`PhoneWindowManager`、`ScreenshotClient`、`GraphicBuffer`、`InputManager` 和 SELinux policy 属于私有平台接口，必须使用每个 API 的独立 adapter 和 Soong 验证，不能用 API 34 编译产物直接覆盖 API 35/36。
 
 ## 0. 结论、边界与联动架构
 
@@ -1077,3 +1079,144 @@ Perfetto 配置应启用 `sched`, `freq`, `binder_driver`, `gfx`, `view`, `audio
 - Google APIs/Play 预编译镜像的签名、AVB、QPR 和 OEM backport 不受本方案控制；任何隐藏 API、SELinux type、ioctl allow、Binder 事务都必须对 exact build 实测。
 - 模拟器性能不代表真机：GPU/gralloc、音频路由、触摸采样、thermal、TEE/DRM 和厂商 SystemUI 都不同。生产结论必须补真机 userdebug 工程样机矩阵。
 - 本手册提供可编译集成骨架和验收门槛，不承诺在 enforcing、未知 OEM ROM 或未来 SPL 上无需适配。
+
+## 16. Android 14/15/16 跨版本适配规范
+
+本节是前述模块的强制覆盖层。前述 API 34 示例仍是最低基线；API 35/36 不得
+通过运行时反射、硬编码 Binder transaction 或复制旧 platform 二进制来兼容。
+
+### 16.1 AVD 与工具链矩阵
+
+| 系统 | API | 合格镜像 | 失败即停条件 |
+| --- | ---: | --- | --- |
+| Android 14 | 34 | AOSP/default 或经 Root 实测的 Google APIs；禁止 Google Play | `adb root`、`remount`、`id` 任一失败 |
+| Android 15 | 35 | AOSP/default 或经 Root 实测的 Google APIs；禁止 Google Play | 同上；不得从 API 34 设备推断权限 |
+| Android 16 | 36 | AOSP/default 或经 Root 实测的 Google APIs；禁止 Google Play | 同上；Advanced Protection 状态未知时按受限处理 |
+
+安装候选镜像：
+
+> "sdkmanager \"platforms;android-34\" \"system-images;android-34;default;x86_64\""
+
+> "sdkmanager \"platforms;android-35\" \"system-images;android-35;default;x86_64\""
+
+> "sdkmanager \"platforms;android-36\" \"system-images;android-36;default;x86_64\""
+
+启动命令分别使用 `AgentApi34`、`AgentApi35`、`AgentApi36`，并保持：
+
+> "emulator -avd AgentApiXX -writable-system -selinux permissive -partition-size 4096 -no-snapshot-load -show-kernel"
+
+`Google APIs` 只是镜像标签，不保证 `userdebug`、Root 或 platform 私钥可得。
+UID 1000 仍必须由与镜像匹配的 platform certificate 证明；普通 debug keystore
+在三个版本上都不构成 platform 签名。
+
+### 16.2 私有 API adapter 边界
+
+推荐目录形态：
+
+```text
+src/platform/aosp/api34/aosp_surface_capture.cpp
+src/platform/aosp/api35/aosp_surface_capture.cpp
+src/platform/aosp/api36/aosp_surface_capture.cpp
+src/platform/aosp/common/capture_contract.h
+```
+
+公共契约只暴露稳定自有字段：
+
+```text
+CaptureRequest {
+  display_id;
+  deadline_ns;
+  expected_rotation;
+  expected_session_id;
+  expected_revision;
+  capture_secure_layers = false;
+}
+
+CaptureResult {
+  status;
+  width;
+  height;
+  stride;
+  pixel_format;
+  rotation;
+  single_frame_visual_hash;
+}
+```
+
+| 边界 | API 34 | API 35 | API 36 | 强制策略 |
+| --- | --- | --- | --- | --- |
+| Java `SurfaceControl` | 隐藏 capture/display API，不反射 | 不依赖旧 `createDisplay(String, boolean)` | 非 SDK 限制更严格，不反射 | 使用 exact-tree native adapter |
+| Native capture | 核对 `ScreenshotClient::captureDisplay(DisplayId, listener)` | 重新核对 overload、listener、results/fence | 重新核对 overload、权限、buffer/fence | 任一字段漂移必须编译失败 |
+| `InputManager` | 目标 framework stubs | 重新生成 API 35 stubs | 重新生成 API 36 stubs | `platform_apis: true`，禁止公共 SDK 反射 |
+| Power policy | API 34 `PowerKeyRule` 语义 | 重新核对 key-down/up 和 gesture rule | 重新核对 policy ownership、锁屏和广播限制 | 每分支单独 patch/test |
+| SELinux | exact API 34 platform/device policy | 重新跑 neverallow 与 AVC | 同时核对 genfs、mapping、kernel/vendor ioctl | 不复制预编译 policy |
+
+单帧截屏不需要 `createDisplay`。API 35 中旧 Java display 创建 overload 的变化
+不应驱动截屏架构；单帧路径继续以目标 native `ScreenshotClient` 为准。只有连续
+帧确有性能证据时才评估受授权的 Virtual Display/BufferQueue。`service call
+SurfaceFlinger` 不是替代方案。
+
+### 16.3 Android 16 Advanced Protection
+
+不能假定存在跨 AOSP/OEM 稳定的公共 Settings key。检测必须分为
+`ENABLED/DISABLED/UNKNOWN/UNSUPPORTED`，其中 `UNKNOWN` 按 `ENABLED` 处理：
+
+> "adb shell settings list global | sed -n '/advanced/Ip;/protection/Ip'"
+
+> "adb shell settings list secure | sed -n '/advanced/Ip;/protection/Ip'"
+
+> "adb shell dumpsys accessibility"
+
+> "rg -n \"Advanced Protection|ADVANCED_PROTECTION|advanced_protection\" frameworks/base packages/modules device vendor"
+
+启用或未知时：
+
+- 禁止把 Accessibility 当成可靠后台注入通道；
+- 禁止隐式启动麦克风或后台 Activity；
+- 电源键 handoff 失败时恢复系统原生行为；
+- 降级到显式 `AgentSessionActivity`、用户确认和只读感知；
+- 不修改 Settings、DevicePolicy 或安全组件来绕过保护。
+
+### 16.4 API 级别构建门
+
+便携核心最低 API 为 34；API 35/36 的 NDK 可移植性可以用同一核心交叉编译，
+但这不验证私有 `libgui`、framework stubs 或 policy。标准命令：
+
+> "tools/check-api-compat.sh"
+
+> "tools/check-api-compat.sh --strict"
+
+> "tools/check-java-api-matrix.sh"
+
+默认模式是本地契约门，只报告 SDK 状态并明确输出 `exact_tree_check=not-run`；它
+不构成三版本兼容结论。strict 模式是发布/设备兼容门，要求 34/35/36 三个平台
+和三棵 exact AOSP tree 全部存在。完整
+`check-java-api-matrix.sh` 将生成的 AIDL、显式 Activity 和纯 Java 校验分别对
+API 34/35/36 公共 `android.jar` 编译；它证明公共 API 源码兼容和 DTO 校验，不证明
+hidden API、platform certificate、Binder 服务注册或 SELinux 兼容。完整
+AOSP 产品构建还必须在三个独立 checkout/worktree 中执行：
+
+> "m global-agentd GlobalAgentBridge privapp-permissions-com.example.globalagent selinux_policy"
+
+每个产物必须记录自己的 branch/tag、fingerprint、SPL 和 signer digest。禁止把
+API 34 的 `services.jar`、platform APK、native daemon 或 precompiled policy 推到
+API 35/36。
+
+### 16.5 三版本统一验收
+
+每个 API 都必须独立完成：
+
+1. `adb root/remount/id`、fingerprint、SPL、kernel、SELinux 归档；
+2. platform certificate、privapp path、UID 和 granted permission 三检；
+3. exact-tree `PhoneWindowManager`、capture、InputManager、sepolicy 源码搜索；
+4. normal/secure/rotation/unknown-format capture 测试；
+5. 单指/双指/取消/焦点变化/Binder death 输入测试；
+6. microphone FGS、AppOps、隐私开关、静音和硬超时测试；
+7. overlay 焦点、触摸穿透、屏灭和 250 ms 渐隐测试；
+8. daemon/bridge/SurfaceFlinger/SystemUI 重启与低内存测试；
+9. P50/P95/P99 和功耗数据；
+10. Android 16 额外执行 Advanced Protection 的 ENABLED/UNKNOWN 降级测试。
+
+只有三个版本分别通过上述门，才能声明“Android 14/15/16 设备兼容”。只通过
+公共 SDK 编译、API 34 NDK stub 或 API 35 模拟器运行便携核心时，只能声明本地
+契约/ABI 验证。

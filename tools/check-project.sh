@@ -6,6 +6,8 @@ ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 for script in \
     "$ROOT/tools/run-tests.sh" \
     "$ROOT/tools/check-aidl.sh" \
+    "$ROOT/tools/check-api-compat.sh" \
+    "$ROOT/tools/check-java-api-matrix.sh" \
     "$ROOT/tools/build-aidl-boundary-stub.sh" \
     "$ROOT/tools/build-android-stub.sh" \
     "$ROOT/tools/package-kernelsu.sh" \
@@ -18,12 +20,16 @@ for script in \
     test -x "$script"
 done
 
+"$ROOT/tools/check-api-compat.sh"
+"$ROOT/tools/check-java-api-matrix.sh"
+
 xmllint --noout "$ROOT/android/bridge/AndroidManifest.xml"
 xmllint --noout "$ROOT/android/bridge/privapp-permissions-com.example.globalagent.xml"
 
 test -s "$ROOT/PROJECT_PROGRESS.md"
 test -s "$ROOT/PROJECT_LOG.md"
 test -s "$ROOT/PROJECT_ISSUES.md"
+test -s "$ROOT/docs/MODEL_API_GATEWAY.md"
 
 test -f "$ROOT/deploy/magisk/webroot/index.html"
 test -f "$ROOT/deploy/magisk/webroot/styles.css"

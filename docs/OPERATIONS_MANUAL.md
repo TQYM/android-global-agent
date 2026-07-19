@@ -18,7 +18,7 @@ Play Protect、`FLAG_SECURE`、DRM、TEE 或第三方应用沙箱的工具。
 | 电源键 2 秒触发 | 设计/审计完成，未接入生产入口 | 修改匹配的 framework 或受控系统服务 |
 | 离线 STT | 设计/服务骨架，未随产品启用 | 用户授予麦克风权限、microphone FGS、Vosk 模型/许可 |
 | 边缘光效 | 设计/渲染骨架，未随产品启用 | 用户授予悬浮窗权限或自有 SystemUI 集成 |
-| 独立 AI 审批 | `blocked` | 审批插件当前无可用模型/受管凭据 |
+| 独立 AI 复核 | `pass` | DeepSeek `deepseek-chat` 四轮；不替代 exact-tree/设备验证 |
 
 当前 AOSP 主程序使用 `NoopDecision`，默认只做感知、状态记录和 Binder
 注册，不会自行执行跨应用动作。新增的 `SessionContext` 只提供有界的临时

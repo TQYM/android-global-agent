@@ -82,3 +82,6 @@ PRODUCT_PACKAGES += \
 ## 验证状态
 
 主机测试和 NDK 交叉编译是本地检查门槛。由于当前工作区并非 Android 平台源码树，无法在本地编译 AOSP 私有头文件，因此仍需完成完整的 AOSP 构建和设备测试。
+
+Android 14/15/16 的版本适配、strict 源码树门禁和 Advanced Protection 降级策略见[跨版本工程手册](docs/ANDROID14_GLOBAL_AGENT_ENGINEERING_MANUAL.md)。
+外部模型 API 的低权限网关、凭据和响应 DTO 边界见[模型 API 网关说明](docs/MODEL_API_GATEWAY.md)；当前生产配置仍不发起网络请求。

@@ -7,7 +7,7 @@
 | ID | 优先级 | 状态 | 问题 | 影响 | 解除条件 |
 | --- | --- | --- | --- | --- | --- |
 | GA-001 | P0 | 阻塞 | 缺少目标 Android 14 AOSP/OEM 源码树 | 无法编译私有 `libgui`、平台 Binder 注册、framework hidden API 和产品 sepolicy | 提供 checkout 路径、branch/tag、fingerprint、SPL |
-| GA-002 | P0 | 阻塞 | 缺少授权 userdebug/eng 或 Root 设备 | 无法验证截图格式/延迟、多点注入、Binder death、SELinux AVC 和 OEM 行为 | 提供设备与可用 ADB，记录 enforcing 状态 |
+| GA-002 | P0 | 部分解除、平台集成阻塞 | API 34/35/36 Root AVD 已有，但缺少与 exact AOSP tree/platform key 匹配的完整集成设备 | portable stub 已验证；私有截图、平台输入、Binder death、产品 SELinux 仍无法验收 | 完成 exact-tree Soong 构建并部署匹配的 platform APK/daemon/policy |
 | GA-003 | P0 | 未验证 | 完整 Soong 产品构建尚未运行 | 本地 NDK 编译不覆盖 `binder_manager.h`、`libgui` 链接或平台 Java | 在目标树构建 `global-agentd`、`GlobalAgentBridge` 和 policy |
 | GA-004 | P1 | 未实现 | 电源键长按触发只有审计文档 | 不能通过长按电源键进入会话 | 选择 framework handoff 或显式 UI，并基于目标 `PhoneWindowManager` 实现 |
 | GA-005 | P1 | 本地已实现、待设备 | 用户可见的 bridge 会话入口尚未设备验收 | Activity 已提供明确开始、文本提交、取消、解锁/亮屏门禁和退后台取消 | 在目标 Soong 构建并验证锁屏、旋转、Binder death 和生命周期 |
@@ -24,7 +24,8 @@
 | GA-011 | P1 | 部分实现 | 生产多点 bridge 未在设备运行 | 代码支持最多五指；需平台签名和目标设备验证缩放、旋转、取消与 display id |
 | GA-012 | P2 | 未实现 | 感知->决策->执行->验证闭环不完整 | 真实策略与结果验证尚无，不能自动跨应用执行 |
 | GA-013 | P2 | 部分实现 | 恢复策略只有基础 init backoff | 缺 SurfaceFlinger death link、两帧稳定门、完整 supervisor 与 P50/P95/P99 指标 |
-| GA-014 | P2 | 未实现 | 当前没有模型 API 配置页 | 项目默认离线且 `NoopDecision`，WebUI 没有 API Key 输入；若引入云模型需单独密钥存储与网络安全设计 |
+| GA-014 | P2 | 契约已实现、客户端未实现 | 外部模型 API 尚未接通 | 已有 HTTPS/模型 ID/Keystore alias/有界意图响应策略和三版 JVM 测试；仍缺独立低权限 gateway app、Keystore 实现、provider adapter 和配置 UI |
+| GA-027 | P1 | 待产品决策 | 外部模型 API 的 provider 与认证方式未确定 | 无法安全实现请求 schema、TLS/certificate 策略和凭据生命周期 | 选择 API key/OAuth/device token、endpoint schema、数据出境范围和日志保留规则 |
 
 ## KernelSU 与 WebUI 问题
 
@@ -44,6 +45,9 @@
 | GA-021 | P2 | 待补 | 缺 Binder 服务设备级集成测试 | 需覆盖未授权 UID、stale revision、重连、超时、并发 callback 和 daemon restart |
 | GA-022 | P2 | 待补 | 缺性能/功耗数据 | 截屏、map、注入、STT、GPU 均无目标设备 P50/P95/P99 与耗电结果 |
 | GA-023 | P2 | 本次发布已处理 | 多轮源码与本地 ZIP 曾混在工作区 | 源码/文档进入独立 GitHub 分支；生成 ZIP 保留本地并由 `.gitignore` 排除 |
+| GA-024 | P1 | 部分解除、源码阻塞 | API 34/35/36 SDK 与 Google APIs arm64 镜像已安装，但缺少三个 exact AOSP trees | 默认兼容门只验证本地契约；提供 `AOSP_TREE_34/35/36` 后运行 strict 门和逐版本 Soong 构建 |
+| GA-025 | P1 | 本地已完成、限便携层 | API 34/36 AVD Root/remount/Enforcing 冒烟 | 两版均为 userdebug、UID 0、remount success；API 34-minSdk stub 冒烟和 `SIGKILL` 恢复通过 | 私有平台能力继续由 GA-001 至 GA-003 阻塞 |
+| GA-026 | P1 | 设计完成、运行未接入 | Android 16 Advanced Protection 只有 fail-closed 规则，尚无 bridge 运行时检测器 | 基于 exact API 36 AOSP 可用 API/服务实现四态检测；UNKNOWN 必须禁用 Accessibility 自动化并回退显式 UI |
 
 ## 安全与不可突破边界
 
@@ -64,4 +68,4 @@
 3. 确认 GA-006 后实现 GA-007，并先证明取消、超时和麦克风释放。
 4. 完成 GA-008 和设备状态回调，再开始任何真实决策。
 5. 只对指定自有 App 实现 GA-009/GA-012，并保留默认 `NoopDecision`。
-6. 用设备数据关闭 GA-010、GA-011、GA-013、GA-021 和 GA-022。
+6. 用 exact-tree 设备数据关闭 GA-010、GA-011、GA-013、GA-021 和 GA-022。

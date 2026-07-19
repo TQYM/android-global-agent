@@ -34,6 +34,13 @@ printf 'android_build_tools=%s\n' \
 printf 'android_ndk=%s\n' \
   "$(property_value Pkg.Revision "$NDK_PROPERTIES")"
 printf 'android_stub_target=android-34/arm64-v8a\n'
+for api in 34 35 36; do
+  if [ -f "$SDK_ROOT/platforms/android-$api/android.jar" ]; then
+    printf 'android_sdk_%s=installed\n' "$api"
+  else
+    printf 'android_sdk_%s=missing\n' "$api"
+  fi
+done
 
 if command -v adb >/dev/null 2>&1 && adb get-state >/dev/null 2>&1; then
   printf 'device_serial=%s\n' "$(adb get-serialno)"

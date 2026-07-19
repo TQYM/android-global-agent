@@ -140,6 +140,27 @@
 - 全量本地门禁通过；API 35 userdebug/Enforcing 模拟器运行 API 34 arm64 stub，
   `SIGKILL` 后恢复报告 `generation=34 nodes=2 edges=1`。
 
+## Iteration 22：Android 14/15/16 兼容性契约
+
+- 将工程手册从 API 34 基线扩展为 API 34/35/36 适配规范，明确 SurfaceControl、
+  Power policy、InputManager、SELinux 和 Android 16 Advanced Protection 的逐版本
+  检查与安全降级边界。
+- 新增 `tools/check-api-compat.sh`：默认盘点 API 34/35/36 SDK，strict 模式要求
+  `AOSP_TREE_34`、`AOSP_TREE_35`、`AOSP_TREE_36` 并检查每棵树的 framework/native/
+  sepolicy 入口。
+- 将兼容性检查接入 `tools/check-project.sh`，并让 `validation-metadata.sh` 记录三
+  个 SDK 是否安装。
+- 当前主机结果：API 35 SDK 已安装，API 34/36 缺失；默认门禁通过，strict 门禁保持
+  阻塞。没有声称 API 35/36 私有 ABI 或设备兼容已完成。
+- 后续已安装 API 34/36 SDK 与 Google APIs arm64 镜像；新增三版本 Java/AIDL
+  编译矩阵，API 34/35/36 均通过 Activity、DTO 和策略测试。exact AOSP tree/Soong
+  验证仍保持 strict 阻塞。
+- 新建 API 34/36 arm64 AVD；Root/remount/Enforcing、API 34-minSdk stub 冒烟和
+  `SIGKILL` 恢复通过，补齐三版本便携层设备证据。
+- 增加 provider-neutral 模型网关策略：仅 HTTPS、只接受 credential alias、响应
+  限定为 session/revision 绑定的有界 intent DTO，不允许远程坐标/手势直达输入桥。
+  32 项策略测试在 API 34/35/36 Java 矩阵通过；实际 HTTP/Keystore/provider 未接入。
+
 ## 当前验证快照
 
 - Host：Darwin 25.6.0 arm64。

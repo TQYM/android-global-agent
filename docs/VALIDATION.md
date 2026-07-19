@@ -347,6 +347,64 @@ device=unavailable
   Activity, platform certificate, private `libgui`, Binder registration and
   Android 14 product policy remain target-Soong/device gates.
 
+## Iteration 22: Android 14/15/16 compatibility contract
+
+- Expanded `docs/ANDROID14_GLOBAL_AGENT_ENGINEERING_MANUAL.md` with API 34/35/36
+  AVD rules, exact-tree private API adapters, Android 16 Advanced Protection
+  fail-closed behavior, SELinux policy boundaries and a three-version acceptance
+  matrix.
+- Added `tools/check-api-compat.sh` and wired it into `tools/check-project.sh`.
+  Default mode checks the installed platform jars and required source contracts;
+  `--strict` additionally requires `AOSP_TREE_34`, `AOSP_TREE_35`, and
+  `AOSP_TREE_36` with framework/native/sepolicy entrypoints.
+- Updated `tools/validation-metadata.sh` to record `android_sdk_34`,
+  `android_sdk_35`, and `android_sdk_36` availability.
+- `tools/check-project.sh`, `tools/check-api-compat.sh`, `tools/check-aidl.sh`,
+  `tools/run-tests.sh`, `tools/build-android-stub.sh`, and `git diff --check`
+  passed.
+- Current host matrix: API 34 SDK missing, API 35 SDK installed, API 36 SDK
+  missing. No exact AOSP trees are present, so strict compatibility remains
+  intentionally blocked.
+- API 34 and API 36 platforms and non-Play Google APIs arm64 images were then
+  installed. `tools/check-java-api-matrix.sh` compiled generated AIDL, the
+  explicit Activity, and the Java policy validators against API 34, 35, and 36;
+  all three matrices passed. This is public-SDK source compatibility only.
+- After DeepSeek review iteration 1, GA-024 was corrected, compatibility claims
+  were narrowed to goals plus evidence, non-strict output now explicitly says
+  exact-tree checks were not run, strict mode remains the release/device gate,
+  and strict tree selection no longer uses `eval`.
+- Created non-Play Google APIs arm64 AVDs `Agent_API_34` and `Agent_API_36` with
+  writable system, permissive boot and a 4096 MB partition ceiling. Both were
+  userdebug, `ro.debuggable=1`, root adbd, and reported successful overlayfs
+  remount (with reboot still required before system-overlay deployment).
+- API 34 fingerprint/SPL:
+  `google/sdk_gphone64_arm64/emu64a:14/UE1A.230829.050/12077443:userdebug/dev-keys`,
+  `2023-09-05`. The API 34-minSdk arm64 stub passed smoke, Enforcing rerun and
+  `SIGKILL` recovery (`generation=8 nodes=2 edges=1`).
+- API 36 fingerprint/SPL:
+  `google/sdk_gphone64_arm64/emu64a:16/BE2A.250530.026.F3/13894323:userdebug/dev-keys`,
+  `2025-07-05`. The same stub passed smoke, Enforcing rerun and `SIGKILL`
+  recovery (`generation=9 nodes=2 edges=1`).
+- No `global-agent` AVC was found during the Enforcing portable-stub reruns.
+  These tests do not exercise private `libgui`, platform Java APIs or product
+  sepolicy.
+- Added `ModelGatewayPolicy` as the provider-neutral pre-network contract. It
+  requires HTTPS/443, rejects URL credentials/query/fragment, validates model
+  ids and Keystore aliases, and accepts only bounded session/revision intent
+  responses with explicit confirmation for confirmation-required intents.
+- Thirty-two model-gateway policy checks compile and run in the API 34/35/36 Java
+  matrix. No `INTERNET` permission, HTTP client, raw credential storage or
+  provider adapter was added to the privileged bridge; production remains
+  `NoopDecision`.
+- The follow-up checks reject percent-encoded, backslash and non-ASCII endpoint
+  strings; cover model-id byte limits, session/confidence boundaries and every
+  intent enum value.
+- DeepSeek `deepseek-chat` completed four review iterations. Iterations 1--2
+  requested revisions; iteration 3 passed with two low test suggestions; after
+  the URI and boundary-test expansion, iteration 4 returned `pass` with no
+  issues, missing tests or questions. The verbatim final report is stored in
+  `outputs/ai-review.md`. This review does not replace exact-tree/device gates.
+
 ## Remaining gate
 
 A full AOSP 14 build on the target device source drop is still required to

@@ -154,6 +154,24 @@
 - 主机、API 34 arm64 stub、AIDL 边界、静态检查和 diff 检查全部通过；当前 API 35
   userdebug/Enforcing 模拟器上的 stub 冒烟与 `SIGKILL` 恢复通过，但不覆盖 Activity。
 
+### 阶段 13：Android 14/15/16 兼容性契约
+
+- 工程手册增加 API 34/35/36 的 AVD、平台签名、Surface capture、InputManager、
+  Power policy、SELinux、非 SDK API 和 Advanced Protection 适配规则。
+- 新增 `tools/check-api-compat.sh` 并接入项目静态门禁；默认模式报告 SDK 状态，
+  `--strict` 需要三棵 exact AOSP tree 并检查各版本私有源码入口。
+- 本轮未声称旧 `createDisplay` overload、API 34 `services.jar`、policy 或 native
+  daemon 可直接复用到 API 35/36；缺少目标树时统一 fail-closed。
+- 安装 API 34/36 SDK 后新增 `tools/check-java-api-matrix.sh`，同一组 AIDL、显式
+  Activity 和纯 Java 策略测试分别对 API 34、35、36 `android.jar` 编译并通过。
+  该结果只证明公共 API 源码兼容，不替代 private platform ABI/Soong 验证。
+- 创建 API 34/36 Google APIs arm64 AVD；两版 Root、remount、Enforcing、portable
+  stub 冒烟和 `SIGKILL` 恢复通过。API 35 已有同类恢复证据，三版便携层运行矩阵
+  形成，但 platform APK、私有截屏/输入和产品 sepolicy 仍未覆盖。
+- 新增 `ModelGatewayPolicy` 和独立低权限网关边界文档。策略拒绝 HTTP、URL 内凭据、
+  非 443 endpoint、超限字段、stale/非法响应和无确认的不可逆 intent；32 项测试
+  在 API 34/35/36 编译矩阵通过。没有向高权限 bridge 增加 `INTERNET` 或保存 key。
+
 ## 已验证的门
 
 在当前工作区可重复执行：
