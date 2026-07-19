@@ -12,5 +12,5 @@ NINJA="$SDK_ROOT/cmake/3.22.1/bin/ninja"
     -DGLOBAL_AGENT_ENABLE_SANITIZERS=ON
 "$CMAKE" --build "$ROOT/build/host" -j 4
 "$CMAKE" --build "$ROOT/build/host" --target test
-"$ROOT/tools/check-aidl.sh"
+"$ROOT/tools/build-aidl-boundary-stub.sh"
 "$ROOT/tools/check-project.sh"

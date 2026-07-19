@@ -11,6 +11,8 @@ bool IsContinuation(std::uint8_t byte) {
 
 } // namespace
 
+SessionContext::~SessionContext() { Cancel(); }
+
 bool SessionContext::Begin(const TriggerEvent &event, TimePoint now,
                            std::string *error) {
   std::lock_guard lock(mutex_);
@@ -79,7 +81,13 @@ bool SessionContext::SubmitTranscript(const TranscriptChunk &chunk,
       *error = "no active session";
     return false;
   }
-  if (chunk.session_id != session_.id || chunk.sequence <= session_.transcript_sequence) {
+  if (session_.state != VisualState::kListening) {
+    if (error != nullptr)
+      *error = "transcripts are accepted only while listening";
+    return false;
+  }
+  if (chunk.session_id != session_.id ||
+      chunk.sequence <= session_.transcript_sequence) {
     if (error != nullptr)
       *error = "transcript session or sequence is invalid";
     return false;

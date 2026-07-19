@@ -86,8 +86,8 @@ a documented capture, Binder, state-file or system-service operation.
 
 ## Moving to a streaming virtual display
 
-The initial platform adapter uses asynchronous single-frame
-`ScreenshotClient::captureDisplay`, which is easier to validate. For continuous
-30/60 fps capture, replace only `AospSurfaceCapture` with a persistent virtual
-Display + BufferQueue consumer. Keep H.264/PNG outside the low-latency path and
-retain `captureSecureLayers = false`.
+The initial platform adapter (`AospSingleFrameCapture`) uses asynchronous
+single-frame `ScreenshotClient::captureDisplay`, which is easier to validate.
+For continuous 30/60 fps capture, replace only `AospSingleFrameCapture` with a
+persistent virtual Display + BufferQueue consumer. Keep H.264/PNG outside the
+low-latency path and retain `captureSecureLayers = false`.

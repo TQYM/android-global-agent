@@ -22,7 +22,7 @@ public:
     const auto now = std::chrono::steady_clock::now().time_since_epoch();
     perception->monotonic_ns = static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(now).count());
-    perception->visual_hash = frame_ < 3 ? 0x1001U : 0x2002U;
+    perception->single_frame_visual_hash = frame_ < 3 ? 0x1001U : 0x2002U;
     perception->confidence_milli = 1000;
     perception->window.component_hash =
         HashString(frame_ < 3 ? "demo/.FirstActivity" : "demo/.SecondActivity");

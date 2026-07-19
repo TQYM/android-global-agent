@@ -1,7 +1,6 @@
 id=global-agent-deployment-helper
-name=Global Agent Deployment Helper
-version=0.1.0
-versionCode=1
+name=Global Agent KernelSU Debug Helper
+version=0.4.0
+versionCode=4
 author=local
-description=Context and debug deployment helper; does not bypass SELinux or platform signing.
-
+description=Android 14 arm64 debug WebUI with explicit screencap/tap; no secure capture or SELinux bypass.

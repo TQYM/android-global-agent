@@ -274,7 +274,23 @@ AOSP 14 的 `interceptPowerKeyDown()` 不是长按计时器；计时由
 `SingleKeyGestureDetector` 完成。LSPosed hook 私有方法只适合测试 flavor，
 不能当作跨 ROM 生产方案。
 
-### 5.5 STT 集成
+### 5.5 显式会话入口
+
+bridge APK 提供用户可见的 Launcher Activity：
+
+```sh
+adb shell am start -W \
+  -n com.example.globalagent/.AgentSessionActivity
+```
+
+只有服务已连接、设备解锁、屏幕 interactive 且当前无活动会话时，“Start session”
+可用。文本输入只提交一条最多 4096 UTF-8 字节的 final transcript；Activity 退到
+后台会取消活动会话。由于生产决策仍为 `NoopDecision`，提交文本不会自动操作 App。
+
+设备验收至少覆盖：服务断开、锁屏、熄屏、旋转、Home 键、Binder death，以及在
+begin 请求尚未返回时立即退后台。所有路径最终都应回到 IDLE，不留下活动会话。
+
+### 5.6 STT 集成
 
 STT 必须由 bridge APK 的用户可见 microphone foreground service 负责，native
 daemon 不直接读 ALSA 或 `/dev/snd`。
@@ -323,7 +339,7 @@ AudioRecord 16 kHz mono PCM
 不要把原始 PCM 或完整 transcript 写入 mmap 状态文件；SessionContext 会在取消、
 超时和切换会话时清除文本。
 
-### 5.6 边缘光效集成
+### 5.7 边缘光效集成
 
 普通 bridge 使用 `TYPE_APPLICATION_OVERLAY`，并在用户授权 SAW 后创建：
 
@@ -405,7 +421,8 @@ adb shell dmesg | grep -E 'avc: denied.*(agentd|global_agent)'
 
 ### 6.4 会话和文本
 
-当前 native 服务尚未开放实际 `submitTranscript` AIDL。接入时必须验证：
+native 服务已开放带 UID 校验的 `submitTranscript` AIDL，但尚未接入实际 STT
+引擎。设备集成时必须验证：
 
 - caller UID/SID 是 platform/system 或已安装 bridge；
 - session ID、序号严格递增；

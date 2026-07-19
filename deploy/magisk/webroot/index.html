@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="color-scheme" content="light dark">
+    <meta name="theme-color" content="#f4f6f8">
+    <title>Global Agent</title>
+    <link rel="icon" href="icons/cpu.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="styles.css">
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="header-inner">
+        <div class="brand-mark" aria-hidden="true">GA</div>
+        <div class="brand-copy">
+          <h1>Global Agent</h1>
+          <p>KernelSU Debug Helper</p>
+        </div>
+        <div class="connection" id="connectionBadge" data-state="checking">
+          <span class="connection-dot" aria-hidden="true"></span>
+          <span id="connectionText">检测中</span>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <nav class="tabs" aria-label="模块视图">
+        <button class="tab is-active" type="button" data-tab="overview"
+                aria-selected="true">概览</button>
+        <button class="tab" type="button" data-tab="logs"
+                aria-selected="false">运行日志</button>
+        <button class="tab" type="button" data-tab="device"
+                aria-selected="false">设备工具</button>
+      </nav>
+
+      <section class="tab-panel is-active" id="overviewPanel">
+        <div class="status-band" id="statusBand" data-tone="neutral">
+          <img src="icons/cpu.svg" alt="" aria-hidden="true">
+          <div>
+            <strong id="statusTitle">正在读取模块状态</strong>
+            <span id="statusDetail">等待 KernelSU Bridge 响应</span>
+          </div>
+        </div>
+
+        <section class="section" aria-labelledby="runtimeHeading">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">RUNTIME</p>
+              <h2 id="runtimeHeading">运行环境</h2>
+            </div>
+            <button class="icon-button" id="refreshButton" type="button"
+                    title="刷新状态" aria-label="刷新状态">
+              <img src="icons/rotate-cw.svg" alt="">
+            </button>
+          </div>
+          <dl class="metric-grid">
+            <div class="metric">
+              <dt>模块</dt>
+              <dd id="moduleVersion">0.4.0</dd>
+            </div>
+            <div class="metric">
+              <dt>设备</dt>
+              <dd id="deviceModel">--</dd>
+            </div>
+            <div class="metric">
+              <dt>Android</dt>
+              <dd id="androidVersion">--</dd>
+            </div>
+            <div class="metric">
+              <dt>架构</dt>
+              <dd id="deviceArch">arm64</dd>
+            </div>
+          </dl>
+        </section>
+
+        <section class="section" aria-labelledby="capabilityHeading">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">BOUNDARY</p>
+              <h2 id="capabilityHeading">能力边界</h2>
+            </div>
+          </div>
+          <div class="capability-list">
+            <div class="capability-row">
+              <img src="icons/circle-check.svg" alt="" aria-hidden="true">
+              <span>便携核心 smoke test</span>
+              <strong>可用</strong>
+            </div>
+            <div class="capability-row is-debug">
+              <img src="icons/mouse-pointer-click.svg" alt="" aria-hidden="true">
+              <span>手动截屏与单点注入</span>
+              <strong>调试可用</strong>
+            </div>
+            <div class="capability-row">
+              <img src="icons/shield-check.svg" alt="" aria-hidden="true">
+              <span>Secure surface 捕获</span>
+              <strong>禁用</strong>
+            </div>
+          </div>
+        </section>
+
+        <section class="section action-section" aria-labelledby="actionsHeading">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">ACTIONS</p>
+              <h2 id="actionsHeading">调试操作</h2>
+            </div>
+          </div>
+          <div class="action-grid">
+            <button class="command-button is-primary" id="runButton" type="button">
+              <img src="icons/play.svg" alt="" aria-hidden="true">
+              <span>运行测试</span>
+            </button>
+            <button class="command-button" id="clearButton" type="button">
+              <img src="icons/trash-2.svg" alt="" aria-hidden="true">
+              <span>清除状态</span>
+            </button>
+          </div>
+        </section>
+      </section>
+
+      <section class="tab-panel" id="logsPanel" hidden>
+        <section class="section log-section" aria-labelledby="logHeading">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">OUTPUT</p>
+              <h2 id="logHeading">运行日志</h2>
+            </div>
+            <button class="icon-button" id="copyButton" type="button"
+                    title="复制日志" aria-label="复制日志">
+              <img src="icons/copy.svg" alt="">
+            </button>
+          </div>
+          <pre class="terminal" id="terminalOutput" aria-live="polite">等待操作...</pre>
+        </section>
+      </section>
+
+      <section class="tab-panel" id="devicePanel" hidden>
+        <div class="status-band" id="deviceToolStatus" data-tone="neutral">
+          <img src="icons/monitor-smartphone.svg" alt="" aria-hidden="true">
+          <div>
+            <strong id="deviceToolTitle">等待设备状态</strong>
+            <span id="deviceToolDetail">连接 KernelSU Bridge 后可用</span>
+          </div>
+        </div>
+
+        <section class="section" aria-labelledby="captureHeading">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">CAPTURE</p>
+              <h2 id="captureHeading">当前屏幕</h2>
+            </div>
+            <span class="display-size" id="displaySize">--</span>
+          </div>
+          <div class="capture-stage" id="captureStage" data-state="empty">
+            <div class="capture-empty" id="captureEmpty">
+              <img src="icons/image-off.svg" alt="" aria-hidden="true">
+              <span>暂无截图</span>
+            </div>
+            <img class="capture-image" id="captureImage" alt="设备屏幕截图" hidden>
+          </div>
+          <div class="action-grid capture-actions">
+            <button class="command-button is-primary" id="captureButton" type="button">
+              <img src="icons/camera.svg" alt="" aria-hidden="true">
+              <span>截取屏幕</span>
+            </button>
+            <button class="command-button" id="discardCaptureButton" type="button">
+              <img src="icons/x.svg" alt="" aria-hidden="true">
+              <span>移除预览</span>
+            </button>
+          </div>
+        </section>
+
+        <section class="section" aria-labelledby="tapHeading">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">INPUT</p>
+              <h2 id="tapHeading">单点注入</h2>
+            </div>
+          </div>
+          <div class="coordinate-grid">
+            <label class="number-field">
+              <span>X 坐标</span>
+              <input id="tapX" type="number" inputmode="numeric" min="0"
+                     step="1" value="0">
+            </label>
+            <label class="number-field">
+              <span>Y 坐标</span>
+              <input id="tapY" type="number" inputmode="numeric" min="0"
+                     step="1" value="0">
+            </label>
+          </div>
+          <button class="command-button device-command" id="tapButton" type="button">
+            <img src="icons/mouse-pointer-click.svg" alt="" aria-hidden="true">
+            <span>发送点击</span>
+          </button>
+        </section>
+      </section>
+    </main>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>

@@ -65,6 +65,8 @@ public:
   static constexpr std::int32_t kMaxDisplayId = 4095;
   static constexpr std::chrono::seconds kSessionTimeout{15};
 
+  ~SessionContext();
+
   bool Begin(const TriggerEvent &event, TimePoint now, std::string *error);
   bool SubmitTranscript(const TranscriptChunk &chunk, std::string *error);
   bool Transition(VisualState state, std::string *error);

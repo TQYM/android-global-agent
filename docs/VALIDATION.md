@@ -167,6 +167,186 @@ ABI/state layer, not AOSP 14 private `libgui` or platform Java APIs.
   commands remain subject to the target device's ADB, framework and policy
   prerequisites.
 
+## Iteration 14: development log and roadmap
+
+- Added `docs/DEVELOPMENT_LOG.md` as the maintained implementation-status and
+  engineering-history summary, while keeping this file as the detailed
+  validation record.
+- Added `docs/ROADMAP.md` with staged P0-P5 work, dependencies, blockers,
+  completion criteria, explicit non-goals and the product decisions required
+  before device/session work begins.
+- Recorded the current two-second gesture limit versus the older ten-second
+  security-document statement as a contract mismatch to resolve in P0.
+- Linked both documents from `README.md` and ran `git diff --check` plus
+  `tools/check-project.sh`; both passed. No runtime code or permission boundary
+  changed in this documentation-only iteration.
+
+## Iteration 15: P0 contract and cancellation hardening
+
+- Centralized the native gesture limits (256 frames, five pointers, two-second
+  duration) and used the same constants at the AOSP bridge boundary.
+- Tightened Java `actionIndex` validation so every frame rejects negative or
+  out-of-range indices consistently with native validation.
+- If perception capture fails while an asynchronous gesture is pending, the
+  loop now requests `ACTION_CANCEL` and drops the pending feedback record.
+- Added host coverage for the exact two-second boundary, over-limit rejection,
+  capture-failure cancellation, and the ten-second power-trigger boundary.
+- No new permission, SELinux rule, capture mode, or persistence field was added.
+
+- `git diff --check` passed.
+- `tools/run-tests.sh` passed (ASan/UBSan, CTest, AIDL/static checks).
+- `tools/build-android-stub.sh` passed (API 34 arm64-v8a).
+- `tools/check-project.sh` passed.
+- No AOSP source-tree or device bridge smoke test was available; the private
+  `libgui` and platform framework conditions remain unverified.
+
+## Iteration 16: single-frame API and reproducible metadata
+
+- Renamed the transient perception field to `single_frame_visual_hash` and the
+  AOSP adapter class to `AospSingleFrameCapture`. The serialized state-node
+  field remains `visual_hash`; its binary layout did not change.
+- Added AgentLoop coverage for bridge rejection and a deadline that expires
+  before injection. Added SessionContext coverage for invalid state transitions
+  and transcript clearing on cancellation.
+- Extracted the platform-independent Java `GestureValidator` and ran eight JVM
+  checks from `tools/check-aidl.sh`. This found and fixed null boundary-frame
+  exceptions and acceptance of a `-1 ms` first-frame timestamp.
+- Added `tools/validation-metadata.sh` and included it in static project checks.
+  The 2026-07-19 run reported:
+
+```text
+git_commit=30b9da2a0d8cb1ae8b398cfcff9c536edcc4e680
+git_worktree=dirty
+host=Darwin 25.6.0 arm64
+host_os_version=26.6
+cmake=cmake version 3.22.1-g37088a8
+ninja=1.10.2
+host_cxx=Apple clang version 21.0.0 (clang-2100.1.1.101)
+javac=javac 21.0.2
+android_build_tools=35.0.0
+android_ndk=26.1.10909125
+android_stub_target=android-34/arm64-v8a
+device=unavailable
+```
+
+- `tools/run-tests.sh`, `tools/build-android-stub.sh`,
+  `tools/check-project.sh`, and `git diff --check` passed.
+- Independent review was not produced: the configured review proxy rejected
+  the request with HTTP 403 before Gemini/DeepSeek execution. The blocked
+  report is recorded in `outputs/ai-review.md` and is not an approval.
+- No permission or persistence-format change was made. A full AOSP build and
+  device validation remain unavailable.
+
+## Iteration 17: KernelSU debug package
+
+- Added KernelSU/Magisk-compatible `customize.sh`, `post-fs-data.sh`, and
+  `action.sh` around the API 34 arm64 portable-core stub. Installation rejects
+  non-arm64 and pre-API-34 devices; no boot-time daemon or runtime sepolicy rule
+  is installed.
+- Added `tools/package-kernelsu.sh` and generated
+  `GlobalAgent-KernelSU-v0.2.0-arm64-debug.zip` on the desktop.
+- Archive validation passed with seven root-level/module files, executable mode
+  preserved for scripts and binary, and no macOS metadata entries.
+- Packaged binary: AArch64 Android PIE using `/system/bin/linker64`.
+- SHA-256:
+  `1b044a541790c47ebb6c5fa1728dd95175fabe38a88e0ebd1247b51c1521c037`.
+- This is a synthetic portable-core smoke-test module, not the full AOSP
+  `libgui`/platform-bridge product.
+
+## Iteration 18: KernelSU WebUI recovery
+
+- Added the required `webroot/index.html` entry plus offline CSS, JavaScript,
+  and pinned Lucide SVG assets. The previous archive had no WebUI entry, so
+  KernelSU Manager had no page to load.
+- Added a bounded asynchronous wrapper for KernelSU's injected `ksu.exec`
+  interface. Missing bridge, callback timeout, command failure, page errors,
+  and rejected promises are rendered as states instead of closing the page.
+- Removed recursive install-time permission changes over `webroot`; KernelSU
+  remains responsible for its WebUI permissions and SELinux context.
+- Browser QA passed at the default desktop size and a 390 x 844 mobile viewport:
+  no horizontal overflow, no console errors, tabs work, and no-bridge mode is
+  read-only. A local mock of the documented bridge verified status refresh,
+  smoke-test execution, log rendering, and button recovery.
+- `tools/run-tests.sh`, `tools/build-android-stub.sh`, `tools/check-project.sh`,
+  Node syntax checking, `git diff --check`, and `unzip -t` passed.
+- Generated `GlobalAgent-KernelSU-v0.3.0-arm64-debug.zip` with 21 entries.
+  SHA-256:
+  `24db6598edd1235ba59f0c9a9d4cff9f1421148cbb2452f12e5d9aa01be661a7`.
+- Device-level WebView/KernelSU testing remains required because ADB is not
+  available in this workspace.
+
+## Iteration 19: explicit screenshot and tap diagnostics
+
+- Added a KernelSU WebUI device-tools tab using Android's stock
+  `/system/bin/screencap -p` and `/system/bin/input touchscreen tap` commands.
+  Both require an explicit user action; no service or automatic policy invokes
+  them.
+- Display bounds come from `wm size`. X/Y values must be finite non-negative
+  integers inside the active bounds, with a 100000 hard fallback limit when the
+  display size cannot be read.
+- Screenshot files use a module-private runtime directory with 0700/0600 modes,
+  are converted to an in-memory Blob, and are deleted after image load, on
+  preview removal, and on page hide. Secure/DRM pixels remain subject to Android
+  screencap redaction.
+- Browser QA with a documented-API mock passed at 390 x 844: 1080 x 2400 bounds
+  were applied, `(1080, 1200)` was rejected, `(100, 200)` was accepted, capture
+  loaded through a Blob URL, preview removal restored the empty state, and no
+  warning/error console entries were emitted.
+- `tools/run-tests.sh`, `tools/build-android-stub.sh`, `tools/check-project.sh`,
+  Node syntax checking, `git diff --check`, and archive integrity passed.
+- Generated `GlobalAgent-KernelSU-v0.4.0-arm64-debug.zip`. SHA-256:
+  `4bb7fc975b69a6614485917f9c9f979ae80a9c78bc076227a6e3a6b2d985183f`.
+- No physical KernelSU device was available, so OEM `screencap`, `input`,
+  display rotation, multi-display behavior, and secure-surface output remain
+  unverified.
+
+## Iteration 20: authenticated session AIDL boundary
+
+- Added structured trigger, transcript and session-status DTOs plus protocol
+  version `1`. Native mutations enforce caller UID, session id, transcript
+  sequence, state transitions and bounded values; final text transitions to
+  `THINKING`, while timeout and shutdown clear the ephemeral session.
+- Added monotonic bridge callbacks and `AgentSessionClient`. It tolerates the
+  valid race between an oneway callback and the synchronous method return,
+  rejects conflicting same/older revisions, and resets its baseline after
+  Binder death.
+- Split the AOSP-only service-manager registration from the service logic.
+  `tools/build-aidl-boundary-stub.sh` now regenerates both AIDL backends, runs
+  eight gesture and eight session-validator JVM checks, then compiles the
+  native service logic with API 34 arm64 NDK, C++20 and `-Werror`.
+- The standard NDK intentionally has no `android/binder_manager.h`; therefore
+  service registration, private `libgui`, platform Java symbols and the final
+  link remain target-Soong gates. No device or AOSP checkout was available.
+- No microphone, overlay, uinput, secure capture or persisted transcript was
+  added. Production decision behavior remains `NoopDecision`.
+
+## Iteration 21: explicit bridge session Activity
+
+- Added `AgentSessionActivity` as a launcher entry. Start is enabled only when
+  the native session service is connected, the display is interactive, the
+  keyguard is unlocked, and no session/request is active.
+- Added bounded final-text submission, status display and explicit cancel. An
+  Activity leaving the foreground queues cancellation even if a begin request
+  has not returned yet; configuration changes retain the visible session.
+- Changed `AgentSessionClient` to support multiple listeners and publish a null
+  disconnected state. This prevents Binder death from appearing as a usable
+  placeholder IDLE connection.
+- Added `SessionEntryPolicy` and 16 JVM checks covering connection, keyguard,
+  display, active/request state, UTF-8 byte limits and cancellation.
+- `tools/run-tests.sh`, `tools/build-android-stub.sh`,
+  `tools/build-aidl-boundary-stub.sh`, `tools/check-project.sh`,
+  `tools/validation-metadata.sh`, and `git diff --check` passed.
+- Validation metadata found `emulator-5554`: API 35 arm64 userdebug,
+  `ro.debuggable=1`, root adbd, SELinux Enforcing, fingerprint
+  `google/sdk_gphone64_arm64/emu64a:15/AE3A.240806.043/12960925:userdebug/dev-keys`,
+  SPL `2024-09-05`.
+- The API 34 arm64 portable stub ran on that emulator. A long-running process
+  was killed with `SIGKILL`; the next run against the same state file reported
+  `generation=34 nodes=2 edges=1` and a validated five-frame demo gesture.
+- This device evidence covers only the portable ABI/state layer. The launcher
+  Activity, platform certificate, private `libgui`, Binder registration and
+  Android 14 product policy remain target-Soong/device gates.
+
 ## Remaining gate
 
 A full AOSP 14 build on the target device source drop is still required to

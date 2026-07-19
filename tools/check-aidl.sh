@@ -16,6 +16,9 @@ set -- \
     "$ROOT/android/aidl/com/example/globalagent/PointerSample.aidl" \
     "$ROOT/android/aidl/com/example/globalagent/GestureFrame.aidl" \
     "$ROOT/android/aidl/com/example/globalagent/GestureSpec.aidl" \
+    "$ROOT/android/aidl/com/example/globalagent/SessionStatus.aidl" \
+    "$ROOT/android/aidl/com/example/globalagent/SessionTrigger.aidl" \
+    "$ROOT/android/aidl/com/example/globalagent/TranscriptUpdate.aidl" \
     "$ROOT/android/aidl/com/example/globalagent/WindowSnapshot.aidl" \
     "$ROOT/android/aidl/com/example/globalagent/IAgentBridge.aidl" \
     "$ROOT/android/aidl/com/example/globalagent/IAgentService.aidl"
@@ -29,6 +32,25 @@ javac --release 17 -cp "$ANDROID_JAR" -d "$CLASS_OUT" \
     "$JAVA_OUT/com/example/globalagent/PointerSample.java" \
     "$JAVA_OUT/com/example/globalagent/GestureFrame.java" \
     "$JAVA_OUT/com/example/globalagent/GestureSpec.java" \
+    "$JAVA_OUT/com/example/globalagent/SessionStatus.java" \
+    "$JAVA_OUT/com/example/globalagent/SessionTrigger.java" \
+    "$JAVA_OUT/com/example/globalagent/TranscriptUpdate.java" \
     "$JAVA_OUT/com/example/globalagent/WindowSnapshot.java" \
     "$JAVA_OUT/com/example/globalagent/IAgentBridge.java" \
-    "$JAVA_OUT/com/example/globalagent/IAgentService.java"
+    "$JAVA_OUT/com/example/globalagent/IAgentService.java" \
+    "$ROOT/android/bridge/src/com/example/globalagent/AgentSessionClient.java" \
+    "$ROOT/android/bridge/src/com/example/globalagent/AgentSessionActivity.java" \
+    "$ROOT/android/bridge/src/com/example/globalagent/GestureValidator.java" \
+    "$ROOT/android/bridge/src/com/example/globalagent/SessionClientRegistry.java" \
+    "$ROOT/android/bridge/src/com/example/globalagent/SessionEntryPolicy.java" \
+    "$ROOT/android/bridge/src/com/example/globalagent/SessionStatusValidator.java" \
+    "$ROOT/tests/java/com/example/globalagent/GestureValidatorTest.java" \
+    "$ROOT/tests/java/com/example/globalagent/SessionEntryPolicyTest.java" \
+    "$ROOT/tests/java/com/example/globalagent/SessionStatusValidatorTest.java"
+
+java -cp "$CLASS_OUT:$ANDROID_JAR" \
+    com.example.globalagent.GestureValidatorTest
+java -cp "$CLASS_OUT:$ANDROID_JAR" \
+    com.example.globalagent.SessionStatusValidatorTest
+java -cp "$CLASS_OUT:$ANDROID_JAR" \
+    com.example.globalagent.SessionEntryPolicyTest

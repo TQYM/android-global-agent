@@ -6,15 +6,38 @@ ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 for script in \
     "$ROOT/tools/run-tests.sh" \
     "$ROOT/tools/check-aidl.sh" \
+    "$ROOT/tools/build-aidl-boundary-stub.sh" \
     "$ROOT/tools/build-android-stub.sh" \
+    "$ROOT/tools/package-kernelsu.sh" \
+    "$ROOT/tools/validation-metadata.sh" \
     "$ROOT/tools/push-debug-stub.sh" \
-    "$ROOT/deploy/magisk/post-fs-data.sh"; do
+    "$ROOT/deploy/magisk/customize.sh" \
+    "$ROOT/deploy/magisk/post-fs-data.sh" \
+    "$ROOT/deploy/magisk/action.sh"; do
     sh -n "$script"
     test -x "$script"
 done
 
 xmllint --noout "$ROOT/android/bridge/AndroidManifest.xml"
 xmllint --noout "$ROOT/android/bridge/privapp-permissions-com.example.globalagent.xml"
+
+test -s "$ROOT/PROJECT_PROGRESS.md"
+test -s "$ROOT/PROJECT_LOG.md"
+test -s "$ROOT/PROJECT_ISSUES.md"
+
+test -f "$ROOT/deploy/magisk/webroot/index.html"
+test -f "$ROOT/deploy/magisk/webroot/styles.css"
+test -f "$ROOT/deploy/magisk/webroot/app.js"
+if command -v node >/dev/null 2>&1; then
+    node --check "$ROOT/deploy/magisk/webroot/app.js"
+fi
+if rg -n 'https?://|<script[^>]+src="https?://' \
+    "$ROOT/deploy/magisk/webroot/index.html" \
+    "$ROOT/deploy/magisk/webroot/styles.css" \
+    "$ROOT/deploy/magisk/webroot/app.js"; then
+    echo "KernelSU WebUI must remain fully offline" >&2
+    exit 1
+fi
 
 if rg -n \
     -g '!build/**' -g '!outputs/**' \

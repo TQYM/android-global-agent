@@ -11,5 +11,16 @@
         android:label="Global Agent Bridge"
         android:persistent="true"
         android:supportsRtl="true">
+        <activity
+            android:name=".AgentSessionActivity"
+            android:directBootAware="false"
+            android:exported="true"
+            android:showWhenLocked="false"
+            android:turnScreenOn="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
     </application>
 </manifest>

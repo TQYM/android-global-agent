@@ -52,7 +52,7 @@ ga::Perception MakePerception(std::uint64_t visual, std::string_view component,
                               std::uint64_t timestamp) {
   ga::Perception perception;
   perception.monotonic_ns = timestamp;
-  perception.visual_hash = visual;
+  perception.single_frame_visual_hash = visual;
   perception.confidence_milli = 900;
   perception.window.component_hash = ga::HashString(component);
   perception.window.focused_pid = 123;
@@ -106,6 +106,12 @@ void TestGestureValidation() {
   std::string error;
   CHECK(ga::ValidateGesture(valid, &error));
 
+  valid.frames.back().elapsed_ms = ga::kMaxGestureDurationMs;
+  CHECK(ga::ValidateGesture(valid, &error));
+  valid.frames.back().elapsed_ms = ga::kMaxGestureDurationMs + 1;
+  CHECK(!ga::ValidateGesture(valid, &error));
+
+  valid.frames.back().elapsed_ms = 32;
   valid.frames[2].pointers.pop_back();
   CHECK(!ga::ValidateGesture(valid, &error));
 }
@@ -227,13 +233,19 @@ void TestDumpsysParser() {
 class SequencePerception final : public ga::PerceptionBackend {
 public:
   bool Capture(const ga::Deadline &, ga::Perception *perception,
-               std::string *) override {
+               std::string *error) override {
+    if (fail_capture) {
+      if (error != nullptr)
+        *error = "synthetic capture failed";
+      return false;
+    }
     *perception =
         frames.at(index < frames.size() ? index++ : frames.size() - 1);
     return true;
   }
   std::vector<ga::Perception> frames;
   std::size_t index = 0;
+  bool fail_capture = false;
 };
 
 class OneActionDecision final : public ga::DecisionEngine {
@@ -262,6 +274,18 @@ public:
   bool cancelled = false;
 };
 
+class RejectingInput final : public ga::InputInjector {
+public:
+  bool Inject(const ga::Gesture &, const ga::Deadline &,
+              std::string *error) override {
+    if (error != nullptr)
+      *error = "synthetic injection failed";
+    return false;
+  }
+  void CancelActiveGesture() override { cancelled = true; }
+  bool cancelled = false;
+};
+
 void TestAgentLoop() {
   const std::string path = TempPath();
   std::string error;
@@ -285,6 +309,72 @@ void TestAgentLoop() {
   CHECK(result.outcome == ga::ActionOutcome::kSucceeded);
   CHECK(!loop.has_pending_action());
   CHECK(loop.graph().edges().size() == 1);
+  std::filesystem::remove(path);
+}
+
+void TestAgentLoopCaptureFailureCancelsPendingGesture() {
+  const std::string path = TempPath();
+  std::string error;
+  ga::StateStore store;
+  CHECK(store.Open(path, &error, 8192));
+  SequencePerception perception;
+  perception.frames = {MakePerception(1, "pkg/.A", 10)};
+  OneActionDecision decision;
+  AcceptingInput input;
+  ga::AgentLoop loop(&perception, &decision, &input, &store);
+  CHECK(loop.Restore(&error));
+  CHECK(loop.Step(std::chrono::milliseconds(200)).ok);
+  CHECK(loop.has_pending_action());
+
+  perception.fail_capture = true;
+  const auto result = loop.Step(std::chrono::milliseconds(200));
+  CHECK(!result.ok);
+  CHECK(input.cancelled);
+  CHECK(!loop.has_pending_action());
+  std::filesystem::remove(path);
+}
+
+void TestAgentLoopRejectsFailedInjection() {
+  const std::string path = TempPath();
+  std::string error;
+  ga::StateStore store;
+  CHECK(store.Open(path, &error, 8192));
+  SequencePerception perception;
+  perception.frames = {MakePerception(1, "pkg/.A", 10)};
+  OneActionDecision decision;
+  RejectingInput input;
+  ga::AgentLoop loop(&perception, &decision, &input, &store);
+  CHECK(loop.Restore(&error));
+
+  const auto result = loop.Step(std::chrono::milliseconds(200));
+  CHECK(!result.ok);
+  CHECK(result.action_attempted);
+  CHECK(result.outcome == ga::ActionOutcome::kRejected);
+  CHECK(input.cancelled);
+  CHECK(!loop.has_pending_action());
+  CHECK(loop.graph().edges().size() == 1);
+  CHECK(loop.graph().edges().front().outcome == ga::ActionOutcome::kRejected);
+  std::filesystem::remove(path);
+}
+
+void TestAgentLoopRejectsExpiredStepBeforeInjection() {
+  const std::string path = TempPath();
+  std::string error;
+  ga::StateStore store;
+  CHECK(store.Open(path, &error, 8192));
+  SequencePerception perception;
+  perception.frames = {MakePerception(1, "pkg/.A", 10)};
+  OneActionDecision decision;
+  AcceptingInput input;
+  ga::AgentLoop loop(&perception, &decision, &input, &store);
+  CHECK(loop.Restore(&error));
+
+  const auto result = loop.Step(std::chrono::milliseconds::zero());
+  CHECK(!result.ok);
+  CHECK(!result.action_attempted);
+  CHECK(result.outcome == ga::ActionOutcome::kTimedOut);
+  CHECK(!input.injected);
+  CHECK(!loop.has_pending_action());
   std::filesystem::remove(path);
 }
 
@@ -371,6 +461,33 @@ void TestSessionContext() {
                         std::chrono::milliseconds(1)));
   CHECK(context.Expire(start + ga::SessionContext::kSessionTimeout));
   CHECK(!context.Snapshot().active);
+
+  ga::TriggerEvent power = valid;
+  power.monotonic_ns = 6;
+  power.source = ga::TriggerSource::kPowerLongPress;
+  power.press_duration_ms = ga::SessionContext::kMaxPowerPressMs;
+  CHECK(context.Begin(power, start, &error));
+  power.monotonic_ns = 7;
+  power.press_duration_ms = ga::SessionContext::kMaxPowerPressMs + 1;
+  context.Cancel();
+  CHECK(!context.Begin(power, start, &error));
+
+  explicit_ui.monotonic_ns = 8;
+  CHECK(context.Begin(explicit_ui, start, &error));
+  CHECK(context.SubmitTranscript(
+      {.session_id = context.Snapshot().id, .sequence = 1, .is_final = false,
+       .text = "temporary text"},
+      &error));
+  CHECK(!context.Transition(ga::VisualState::kExecuting, &error));
+  CHECK(context.Snapshot().state == ga::VisualState::kListening);
+  CHECK(context.Transition(ga::VisualState::kThinking, &error));
+  CHECK(!context.SubmitTranscript(
+      {.session_id = context.Snapshot().id, .sequence = 2, .is_final = false,
+       .text = "late partial"},
+      &error));
+  context.Cancel();
+  CHECK(!context.Snapshot().active);
+  CHECK(context.Snapshot().transcript.empty());
 }
 
 } // namespace
@@ -386,6 +503,9 @@ int main() {
   TestDumpsysParser();
   TestBoundedSubprocess();
   TestAgentLoop();
+  TestAgentLoopCaptureFailureCancelsPendingGesture();
+  TestAgentLoopRejectsFailedInjection();
+  TestAgentLoopRejectsExpiredStepBeforeInjection();
   TestSessionContext();
   if (failures != 0) {
     std::cerr << failures << " test assertion(s) failed\n";

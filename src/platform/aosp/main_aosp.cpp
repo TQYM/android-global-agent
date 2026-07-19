@@ -48,7 +48,7 @@ int main() {
     return 1;
   }
 
-  platform::AospSurfaceCapture capture(binder_service);
+  platform::AospSingleFrameCapture capture(binder_service);
   platform::BridgeInputInjector input(binder_service);
   NoopDecision decision;
   ga::AgentLoop loop(&capture, &decision, &input, &store);
@@ -58,6 +58,7 @@ int main() {
   }
 
   while (running.load(std::memory_order_acquire)) {
+    binder_service->ExpireSession();
     const ga::StepResult result = loop.Step(std::chrono::milliseconds(200));
     if (!result.ok) {
       std::cerr << "agent step failed: " << result.error << '\n';
@@ -67,5 +68,6 @@ int main() {
     std::this_thread::sleep_for(std::chrono::milliseconds(16));
   }
   input.CancelActiveGesture();
+  binder_service->ResetSession();
   return 0;
 }

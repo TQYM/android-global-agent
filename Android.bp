@@ -42,6 +42,7 @@ cc_binary {
     name: "global-agentd",
     system_ext_specific: true,
     srcs: [
+        "src/platform/aosp/agent_binder_registration.cpp",
         "src/platform/aosp/agent_binder_service.cpp",
         "src/platform/aosp/aosp_surface_capture.cpp",
         "src/platform/aosp/bridge_input_injector.cpp",

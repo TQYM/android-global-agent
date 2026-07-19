@@ -23,6 +23,12 @@ third-party anti-tamper controls.
   path keeps secure capture off. This is a private platform ABI and must be
   compiled against the exact device source drop.
 - Platform-signed Java input bridge using validated structured AIDL messages.
+- Authenticated, revisioned session AIDL for opt-in triggers, bounded
+  transcripts, cancellation and visual-state callbacks; the bridge-side client
+  resets its revision baseline after Binder death.
+- A user-visible bridge launcher Activity with unlocked/interactive gates,
+  explicit start, bounded final-text submission, status, cancellation, and
+  automatic cancellation when it leaves the foreground.
 - Platform task metadata publisher without granting the daemon broad dumpsys
   access.
 - init, SELinux, property and service context integration skeletons.
@@ -54,11 +60,26 @@ exercises state transitions without sending input to the computer or a device.
 
 ```sh
 tools/build-android-stub.sh
+tools/build-aidl-boundary-stub.sh
+tools/validation-metadata.sh
 ```
 
 This verifies that the portable core cross-compiles for API 34/arm64. The NDK
 stub does not contain `libgui` or hidden framework APIs because those are not
-part of the NDK.
+part of the NDK. The AIDL boundary command additionally regenerates Java/NDK
+bindings, runs the JVM DTO validators, and compiles the native Binder service
+logic. Platform-only service registration is still a Soong build requirement.
+The metadata command records the exact local commit and tool
+versions, plus fingerprint/SPL/SELinux state when an ADB device is available.
+
+## KernelSU debug WebUI
+
+`tools/package-kernelsu.sh` creates an Android 14 arm64 debug module with an
+offline `webroot/index.html`. KernelSU Manager can display module/device status,
+run the synthetic portable-core smoke test, show its output, and clear only the
+debug state file. Its device-tools tab also provides explicit manual
+`screencap` and bounded single-tap diagnostics. This package is not the full
+AOSP capture/input product and does not capture secure/DRM surfaces.
 
 ## Full AOSP build
 
@@ -82,12 +103,21 @@ See [AOSP integration](docs/AOSP_INTEGRATION.md) and
 [security model](docs/SECURITY.md) before device deployment.
 The step-by-step procedure is in the
 [operations manual](docs/OPERATIONS_MANUAL.md).
+The implementation history is tracked in the
+[development log](docs/DEVELOPMENT_LOG.md), and staged follow-up work is in the
+[roadmap](docs/ROADMAP.md).
+Root-level snapshots are available in [project progress](PROJECT_PROGRESS.md),
+[complete project log](PROJECT_LOG.md), and [project issues](PROJECT_ISSUES.md).
 The opt-in trigger, offline STT, visual-state, and session-lifecycle boundary is
 documented in [trigger/STT integration](docs/TRIGGER_STT_INTEGRATION.md).
 The Android 14 power-key event path is audited in
 [POWER_KEY_AUDIT.md](docs/POWER_KEY_AUDIT.md), and the offline speech/edge-glow
 implementation boundary is in
 [STT_OVERLAY_ANDROID14.md](docs/STT_OVERLAY_ANDROID14.md).
+The broader [engineering manual](docs/ANDROID14_GLOBAL_AGENT_ENGINEERING_MANUAL.md)
+collects alternative root/AOSP development paths and acceptance gates; those
+alternatives are reference material, not all enabled by the current production
+configuration.
 
 ## Runtime data
 

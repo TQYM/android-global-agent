@@ -2,5 +2,5 @@
 /outputs/
 *.bin
 *.log
+GlobalAgent-KernelSU-*.zip
 .DS_Store
-

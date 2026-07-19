@@ -112,7 +112,8 @@ bool ReadEdge(Reader *reader, StateEdge *edge) {
 
 NodeId StateGraph::ComputeNodeId(const Perception &perception) {
   std::uint64_t hash =
-      HashCombine(perception.window.component_hash, perception.visual_hash);
+      HashCombine(perception.window.component_hash,
+                  perception.single_frame_visual_hash);
   hash = HashCombine(hash, perception.window.view_hash);
   hash = HashCombine(hash, perception.window.display_id);
   hash = HashCombine(hash, perception.window.rotation);
@@ -127,7 +128,7 @@ NodeId StateGraph::Observe(const Perception &perception) {
   if (existing == nodes_.end()) {
     nodes_.push_back({
         .id = id,
-        .visual_hash = perception.visual_hash,
+        .visual_hash = perception.single_frame_visual_hash,
         .component_hash = perception.window.component_hash,
         .view_hash = perception.window.view_hash,
         .last_seen_ns = perception.monotonic_ns,

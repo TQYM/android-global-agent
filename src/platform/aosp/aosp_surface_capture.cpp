@@ -85,8 +85,9 @@ std::uint64_t HashRgbaBuffer(const std::uint8_t *pixels, std::uint32_t width,
 
 } // namespace
 
-bool AospSurfaceCapture::Capture(const Deadline &deadline,
-                                 Perception *perception, std::string *error) {
+bool AospSingleFrameCapture::Capture(const Deadline &deadline,
+                                     Perception *perception,
+                                     std::string *error) {
   if (perception == nullptr || service_ == nullptr || deadline.Expired()) {
     if (error != nullptr) {
       *error = service_ == nullptr ? "capture backend is unavailable"
@@ -192,7 +193,7 @@ bool AospSurfaceCapture::Capture(const Deadline &deadline,
   const auto now = std::chrono::steady_clock::now().time_since_epoch();
   perception->monotonic_ns = static_cast<std::uint64_t>(
       std::chrono::duration_cast<std::chrono::nanoseconds>(now).count());
-  perception->visual_hash = visual_hash;
+  perception->single_frame_visual_hash = visual_hash;
   perception->confidence_milli = 850;
   perception->window = service_->window_metadata();
   perception->window.view_hash =

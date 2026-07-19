@@ -16,6 +16,10 @@
 - 有界子进程运行器，在超时时终止诊断命令。
 - AOSP 14 `ScreenshotClient::captureDisplay(DisplayId, ...)` 后端，包含有界回调和 fence 等待；经 Root 授权的 `captureDisplayById` 路径仍会禁用安全内容捕获。这是私有平台 ABI，必须针对设备对应的源码版本进行编译。
 - 使用经过校验的结构化 AIDL 消息、由平台签名的 Java 输入桥接服务。
+- 带调用方鉴权和单调 revision 的会话 AIDL，支持显式触发、有界 transcript、取消
+  和视觉状态回调；bridge 客户端会在 Binder death 后重置 revision 基线。
+- 用户可见的 bridge Launcher Activity，提供解锁/亮屏门禁、显式开始、文本 final
+  transcript、状态显示、取消和退后台自动取消。
 - 平台任务元数据发布器，无需向守护进程授予宽泛的 dumpsys 权限。
 - init、SELinux、属性和服务上下文集成脚手架。
 - 主机单元测试和 Android NDK 桩交叉编译。
@@ -44,9 +48,17 @@ build/host/global-agentd \
 
 ```sh
 tools/build-android-stub.sh
+tools/build-aidl-boundary-stub.sh
+tools/validation-metadata.sh
 ```
 
-该流程用于验证可移植核心能否针对 API 34/arm64 完成交叉编译。NDK 桩不包含 `libgui` 或隐藏的 Framework API，因为它们不属于 NDK。
+该流程用于验证可移植核心能否针对 API 34/arm64 完成交叉编译。NDK 桩不包含 `libgui` 或隐藏的 Framework API，因为它们不属于 NDK。元数据命令会记录准确的本地提交和工具版本；如果存在可用的 ADB 设备，还会记录设备指纹、安全补丁级别（SPL）和 SELinux 状态。
+其中 AIDL 边界命令还会重新生成 Java/NDK binding、运行 JVM DTO 校验，并编译
+native Binder 服务逻辑；仅平台可用的服务注册仍必须由 Soong 验证。
+
+## KernelSU 调试 WebUI
+
+`tools/package-kernelsu.sh` 会创建一个面向 Android 14 arm64 的调试模块，其中包含离线 `webroot/index.html`。KernelSU 管理器可以显示模块和设备状态、运行可移植核心的合成冒烟测试、显示测试输出，并且只清理调试状态文件。设备工具标签页还提供需要明确手动操作的 `screencap` 和有界单次点击诊断。该软件包并非完整的 AOSP 屏幕捕获和输入产品，也不会捕获安全或 DRM 界面。
 
 ## 完整 AOSP 构建
 
@@ -61,7 +73,7 @@ PRODUCT_PACKAGES += \
 
 通过产品的 `SYSTEM_EXT_PRIVATE_SEPOLICY_DIRS` 或等效配置合并 `android/sepolicy/`。请针对设备对应的准确标签或 OEM 源码版本进行构建，因为 `libgui` 是私有平台 ABI。桥接服务还需要 Soong `platform_apis` 和目标 Framework 桩；公共 SDK 中的 `android.jar` 不包含所需的隐藏平台符号。
 
-部署到设备前，请先阅读 [AOSP 集成](docs/AOSP_INTEGRATION.md)和[安全模型](docs/SECURITY.md)。具体步骤请参阅[操作手册](docs/OPERATIONS_MANUAL.md)。主动触发、离线 STT、视觉状态和会话生命周期的边界记录在[触发与 STT 集成](docs/TRIGGER_STT_INTEGRATION.md)中。Android 14 电源键事件路径见 [POWER_KEY_AUDIT.md](docs/POWER_KEY_AUDIT.md)，离线语音和边缘光效的实现边界见 [STT_OVERLAY_ANDROID14.md](docs/STT_OVERLAY_ANDROID14.md)。
+部署到设备前，请先阅读 [AOSP 集成](docs/AOSP_INTEGRATION.md)和[安全模型](docs/SECURITY.md)。具体步骤请参阅[操作手册](docs/OPERATIONS_MANUAL.md)。实现历史记录在[开发日志](docs/DEVELOPMENT_LOG.md)中，后续阶段的工作列在[路线图](docs/ROADMAP.md)中。项目根目录还提供[项目进度](PROJECT_PROGRESS.md)、[完整项目日志](PROJECT_LOG.md)和[项目问题](PROJECT_ISSUES.md)。主动触发、离线 STT、视觉状态和会话生命周期的边界记录在[触发与 STT 集成](docs/TRIGGER_STT_INTEGRATION.md)中。Android 14 电源键事件路径见 [POWER_KEY_AUDIT.md](docs/POWER_KEY_AUDIT.md)，离线语音和边缘光效的实现边界见 [STT_OVERLAY_ANDROID14.md](docs/STT_OVERLAY_ANDROID14.md)。更广泛的 [Android 14 工程手册](docs/ANDROID14_GLOBAL_AGENT_ENGINEERING_MANUAL.md)汇总了 Root/AOSP 备选开发路径和验收门；其中的备选方案是参考资料，并非当前生产配置全部启用。
 
 ## 运行时数据
 

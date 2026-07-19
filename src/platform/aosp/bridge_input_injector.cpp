@@ -7,12 +7,6 @@
 #include "global_agent/gesture_validation.h"
 
 namespace global_agent::aosp {
-namespace {
-
-constexpr std::size_t kMaxFrames = 256;
-constexpr std::size_t kMaxPointers = 5;
-
-} // namespace
 
 bool BridgeInputInjector::Inject(const Gesture &gesture,
                                  const Deadline &deadline, std::string *error) {
@@ -21,7 +15,8 @@ bool BridgeInputInjector::Inject(const Gesture &gesture,
       *error = "gesture deadline expired";
     return false;
   }
-  if (!ValidateGesture(gesture, error, kMaxFrames, kMaxPointers)) {
+  if (!ValidateGesture(gesture, error, kMaxGestureFrames,
+                       kMaxGesturePointers, kMaxGestureDurationMs)) {
     return false;
   }
   const auto bridge = service_->bridge();
@@ -37,7 +32,7 @@ bool BridgeInputInjector::Inject(const Gesture &gesture,
   spec.frames.reserve(gesture.frames.size());
   for (const auto &source_frame : gesture.frames) {
     if (source_frame.pointers.empty() ||
-        source_frame.pointers.size() > kMaxPointers) {
+        source_frame.pointers.size() > kMaxGesturePointers) {
       if (error != nullptr)
         *error = "invalid pointer count";
       return false;
