@@ -41,6 +41,7 @@ between builds.
 PRODUCT_PACKAGES += \
     global-agentd \
     GlobalAgentBridge \
+    GlobalAgentModelGateway \
     privapp-permissions-com.example.globalagent
 SYSTEM_EXT_PRIVATE_SEPOLICY_DIRS += \
     system_ext/global_agent/android/sepolicy
@@ -55,6 +56,14 @@ Do not compile the bridge against the public SDK `android.jar`: the bridge uses
 hidden platform symbols intentionally exposed by Soong `platform_apis: true`.
 Use the exact target framework stubs and platform certificate in the AOSP build;
 reflection is not a compatibility strategy.
+
+`GlobalAgentModelGateway` is a separate app UID and uses the standard `shared`
+certificate in this scaffold rather than the platform certificate. A production
+product may replace that with a dedicated gateway certificate. Its manifest
+requests only `INTERNET`, uses system trust anchors with cleartext disabled, and
+exposes a root/shell-only public-config import call. It must not receive the
+bridge certificate, `INJECT_EVENTS`, frame-capture permissions or access to
+`/data/misc/global_agent`.
 
 ## SELinux verification
 
@@ -86,8 +95,8 @@ a documented capture, Binder, state-file or system-service operation.
 
 ## Moving to a streaming virtual display
 
-The initial platform adapter uses asynchronous single-frame
-`ScreenshotClient::captureDisplay`, which is easier to validate. For continuous
-30/60 fps capture, replace only `AospSurfaceCapture` with a persistent virtual
-Display + BufferQueue consumer. Keep H.264/PNG outside the low-latency path and
-retain `captureSecureLayers = false`.
+The initial platform adapter (`AospSingleFrameCapture`) uses asynchronous
+single-frame `ScreenshotClient::captureDisplay`, which is easier to validate.
+For continuous 30/60 fps capture, replace only `AospSingleFrameCapture` with a
+persistent virtual Display + BufferQueue consumer. Keep H.264/PNG outside the
+low-latency path and retain `captureSecureLayers = false`.

@@ -1,5 +1,7 @@
 #include "global_agent/agent_loop.h"
 #include "global_agent/bezier.h"
+#include "global_agent/bridge_caller_policy.h"
+#include "global_agent/capture_grant.h"
 #include "global_agent/crc32.h"
 #include "global_agent/dumpsys_parser.h"
 #include "global_agent/gesture_validation.h"
@@ -10,14 +12,17 @@
 #include "global_agent/subprocess.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <fcntl.h>
 #include <filesystem>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <string>
+#include <thread>
 #include <unistd.h>
 #include <vector>
 
@@ -52,16 +57,173 @@ ga::Perception MakePerception(std::uint64_t visual, std::string_view component,
                               std::uint64_t timestamp) {
   ga::Perception perception;
   perception.monotonic_ns = timestamp;
-  perception.visual_hash = visual;
+  perception.single_frame_visual_hash = visual;
   perception.confidence_milli = 900;
   perception.window.component_hash = ga::HashString(component);
   perception.window.focused_pid = 123;
   return perception;
 }
 
+ga::CaptureGrantRecord MakeCaptureGrant(std::uint64_t expires_at_ns) {
+  ga::CaptureGrantRecord grant;
+  grant.token_digest.fill(0x11);
+  grant.service_instance_id.fill(0x22);
+  grant.grant_id = 1;
+  grant.grantee_uid = 10123;
+  grant.capability_id = 7;
+  grant.session_id = 9;
+  grant.revision = 3;
+  grant.focus_epoch = 4;
+  grant.focus_digest.fill(0x33);
+  grant.display_id = 0;
+  grant.crop = {.left = 0, .top = 0, .right = 1080, .bottom = 1920};
+  grant.expires_at_elapsed_ns = expires_at_ns;
+  grant.max_image_bytes = 512 * 1024;
+  grant.redaction_policy_version = 1;
+  return grant;
+}
+
+ga::CaptureGrantContext ContextFor(const ga::CaptureGrantRecord &grant,
+                                   std::uint64_t now_ns) {
+  return {
+      .service_instance_id = grant.service_instance_id,
+      .caller_uid = grant.grantee_uid,
+      .capability_id = grant.capability_id,
+      .session_id = grant.session_id,
+      .revision = grant.revision,
+      .focus_epoch = grant.focus_epoch,
+      .focus_digest = grant.focus_digest,
+      .display_id = grant.display_id,
+      .now_elapsed_ns = now_ns,
+  };
+}
+
 void TestCrc32() {
   constexpr char text[] = "123456789";
   CHECK(ga::Crc32(text, sizeof(text) - 1) == 0xCBF43926U);
+}
+
+void TestBridgeCallerPolicy() {
+  constexpr std::int32_t bridge_uid = 10'234;
+  constexpr std::int32_t second_user_bridge_uid =
+      bridge_uid + ga::kAndroidPerUserRange;
+
+  CHECK(!ga::IsAuthorizedBridgeIdentity(
+      0, ga::kBridgeSelinuxSid, std::nullopt));
+  CHECK(!ga::IsAuthorizedBridgeIdentity(
+      9'999, ga::kBridgeSelinuxSid, std::nullopt));
+  CHECK(ga::IsAuthorizedBridgeIdentity(
+      10'000, ga::kBridgeSelinuxSid, std::nullopt));
+  CHECK(ga::IsAuthorizedBridgeIdentity(
+      19'999, ga::kBridgeSelinuxSid, std::nullopt));
+  CHECK(!ga::IsAuthorizedBridgeIdentity(
+      20'000, ga::kBridgeSelinuxSid, std::nullopt));
+  CHECK(!ga::IsAuthorizedBridgeIdentity(
+      99'000, ga::kBridgeSelinuxSid, std::nullopt));
+  CHECK(!ga::IsAuthorizedBridgeIdentity(
+      100'000, ga::kBridgeSelinuxSid, std::nullopt));
+  CHECK(!ga::IsAuthorizedBridgeIdentity(
+      109'999, ga::kBridgeSelinuxSid, std::nullopt));
+  CHECK(ga::IsAuthorizedBridgeIdentity(
+      110'000, ga::kBridgeSelinuxSid, std::nullopt));
+  CHECK(ga::IsAuthorizedBridgeIdentity(
+      119'999, ga::kBridgeSelinuxSid, std::nullopt));
+  CHECK(!ga::IsAuthorizedBridgeIdentity(
+      120'000, ga::kBridgeSelinuxSid, std::nullopt));
+  CHECK(!ga::IsAuthorizedBridgeIdentity(
+      1'009'999, ga::kBridgeSelinuxSid, std::nullopt));
+  CHECK(ga::IsAuthorizedBridgeIdentity(
+      1'010'000, ga::kBridgeSelinuxSid, std::nullopt));
+  CHECK(ga::IsAuthorizedBridgeIdentity(
+      1'019'999, ga::kBridgeSelinuxSid, std::nullopt));
+  CHECK(!ga::IsAuthorizedBridgeIdentity(
+      1'020'000, ga::kBridgeSelinuxSid, std::nullopt));
+  CHECK(ga::IsAuthorizedBridgeIdentity(
+      bridge_uid, ga::kBridgeSelinuxSid, std::nullopt));
+  CHECK(ga::IsAuthorizedBridgeIdentity(
+      bridge_uid, ga::kBridgeSelinuxSid, bridge_uid));
+  CHECK(ga::IsAuthorizedBridgeIdentity(
+      second_user_bridge_uid, ga::kBridgeSelinuxSid, std::nullopt));
+  CHECK(ga::IsAuthorizedBridgeIdentity(
+      bridge_uid, "u:r:global_agent_bridge:s0:c123,c256,c512", bridge_uid));
+  CHECK(ga::IsAuthorizedBridgeIdentity(
+      bridge_uid, "u:r:global_agent_bridge:s0:c0.c1023", bridge_uid));
+  CHECK(ga::IsAuthorizedBridgeIdentity(
+      bridge_uid, "u:r:global_agent_bridge:s0:c1023", bridge_uid));
+  CHECK(!ga::IsAuthorizedBridgeIdentity(
+      bridge_uid + 1, ga::kBridgeSelinuxSid, bridge_uid));
+  CHECK(!ga::IsAuthorizedBridgeIdentity(
+      1000, ga::kBridgeSelinuxSid, std::nullopt));
+  CHECK(!ga::IsAuthorizedBridgeIdentity(
+      2000, ga::kBridgeSelinuxSid, std::nullopt));
+  CHECK(!ga::IsAuthorizedBridgeIdentity(
+      bridge_uid, "", std::nullopt));
+  CHECK(!ga::IsAuthorizedBridgeIdentity(
+      bridge_uid, "u:r:untrusted_app:s0", std::nullopt));
+  CHECK(!ga::IsAuthorizedBridgeIdentity(
+      bridge_uid, "u:r:untrusted_app:s0:c999", bridge_uid));
+  CHECK(!ga::IsAuthorizedBridgeIdentity(
+      bridge_uid, "u:object_r:global_agent_bridge:s0:c999", bridge_uid));
+  CHECK(!ga::IsAuthorizedBridgeIdentity(
+      bridge_uid, "u:r:global_agent_bridge:s0:extra", std::nullopt));
+  CHECK(!ga::IsAuthorizedBridgeIdentity(
+      bridge_uid, "u:r:global_agent_bridge:s0:c", std::nullopt));
+  CHECK(!ga::IsAuthorizedBridgeIdentity(
+      bridge_uid, "u:r:global_agent_bridge:s0:c1,", std::nullopt));
+  CHECK(!ga::IsAuthorizedBridgeIdentity(
+      bridge_uid, "u:r:global_agent_bridge:s0:c1::c2", std::nullopt));
+  CHECK(!ga::IsAuthorizedBridgeIdentity(
+      bridge_uid, "u:r:global_agent_bridge:s0:c1024", std::nullopt));
+  CHECK(!ga::IsAuthorizedBridgeIdentity(
+      bridge_uid, "u:r:global_agent_bridge:s0:c0.c1024", std::nullopt));
+  CHECK(!ga::IsAuthorizedBridgeIdentity(
+      bridge_uid, "u:r:global_agent_bridge:s0:c0-c1", std::nullopt));
+  CHECK(!ga::IsAuthorizedBridgeIdentity(
+      bridge_uid, "u:r:global_agent_bridge:s0:c01", std::nullopt));
+  CHECK(!ga::IsAuthorizedBridgeIdentity(
+      bridge_uid, "u:r:global_agent_bridge:s0:c2.c1", std::nullopt));
+  CHECK(!ga::IsAuthorizedBridgeIdentity(
+      bridge_uid, "u:r:global_agent_bridge:s0:c5.c3", std::nullopt));
+  CHECK(!ga::IsAuthorizedBridgeIdentity(
+      bridge_uid, "u:r:global_agent_bridge:s0:c0.c0", std::nullopt));
+  CHECK(!ga::IsAuthorizedBridgeIdentity(
+      bridge_uid, "u:r:global_agent_bridge:s0:c.1", std::nullopt));
+  CHECK(!ga::IsAuthorizedBridgeIdentity(
+      bridge_uid, "u:r:global_agent_bridge:s0:c1,c1", std::nullopt));
+  CHECK(!ga::IsAuthorizedBridgeIdentity(
+      bridge_uid, "u:r:global_agent_bridge:s0:c2,c1", std::nullopt));
+  CHECK(!ga::IsAuthorizedBridgeIdentity(
+      bridge_uid, "u:r:global_agent_bridge:s0:c0.c2,c2", std::nullopt));
+  CHECK(!ga::IsAuthorizedBridgeIdentity(
+      std::numeric_limits<std::int32_t>::max(), ga::kBridgeSelinuxSid,
+      bridge_uid));
+  CHECK(!ga::IsAuthorizedBridgeIdentity(
+      std::numeric_limits<std::int32_t>::max(), ga::kBridgeSelinuxSid,
+      std::nullopt));
+
+  std::atomic<int> concurrent_valid_accepts{0};
+  std::atomic<int> concurrent_invalid_accepts{0};
+  std::vector<std::thread> callers;
+  for (int index = 0; index < 16; ++index) {
+    callers.emplace_back([&concurrent_valid_accepts,
+                          &concurrent_invalid_accepts, bridge_uid] {
+      if (ga::IsAuthorizedBridgeIdentity(
+              bridge_uid, "u:r:global_agent_bridge:s0:c0.c1023",
+              bridge_uid)) {
+        concurrent_valid_accepts.fetch_add(1, std::memory_order_relaxed);
+      }
+      if (ga::IsAuthorizedBridgeIdentity(
+              bridge_uid, "u:r:global_agent_bridge:s0:c0.c1024",
+              bridge_uid)) {
+        concurrent_invalid_accepts.fetch_add(1, std::memory_order_relaxed);
+      }
+    });
+  }
+  for (auto &caller : callers) {
+    caller.join();
+  }
+  CHECK(concurrent_valid_accepts.load(std::memory_order_relaxed) == 16);
+  CHECK(concurrent_invalid_accepts.load(std::memory_order_relaxed) == 0);
 }
 
 void TestBezier() {
@@ -106,8 +268,127 @@ void TestGestureValidation() {
   std::string error;
   CHECK(ga::ValidateGesture(valid, &error));
 
+  valid.frames.back().elapsed_ms = ga::kMaxGestureDurationMs;
+  CHECK(ga::ValidateGesture(valid, &error));
+  valid.frames.back().elapsed_ms = ga::kMaxGestureDurationMs + 1;
+  CHECK(!ga::ValidateGesture(valid, &error));
+
+  valid.frames.back().elapsed_ms = 32;
   valid.frames[2].pointers.pop_back();
   CHECK(!ga::ValidateGesture(valid, &error));
+}
+
+void TestCaptureGrantValidationAndConsumption() {
+  constexpr std::uint64_t now_ns = 10'000;
+  ga::CaptureGrantStore store;
+  auto grant = MakeCaptureGrant(now_ns + 1'000);
+  CHECK(store.Issue(grant, now_ns));
+  CHECK(store.HasOutstandingGrant());
+  CHECK(!store.Issue(grant, now_ns));
+
+  auto wrong_caller = ContextFor(grant, now_ns);
+  wrong_caller.caller_uid++;
+  CHECK(store.ConsumeBeforeIo(grant.token_digest, wrong_caller, nullptr) ==
+        ga::CaptureGrantResult::kUnauthorized);
+  CHECK(store.HasOutstandingGrant());
+
+  ga::CaptureTokenDigest wrong_token = grant.token_digest;
+  wrong_token.front() ^= 0xff;
+  CHECK(store.ConsumeBeforeIo(wrong_token, ContextFor(grant, now_ns),
+                             nullptr) == ga::CaptureGrantResult::kNotFound);
+  CHECK(store.HasOutstandingGrant());
+
+  ga::CaptureGrantRecord consumed;
+  CHECK(store.ConsumeBeforeIo(grant.token_digest, ContextFor(grant, now_ns),
+                             &consumed) ==
+        ga::CaptureGrantResult::kConsumed);
+  CHECK(consumed.grant_id == grant.grant_id);
+  CHECK(std::all_of(consumed.token_digest.begin(), consumed.token_digest.end(),
+                    [](std::uint8_t byte) { return byte == 0; }));
+  CHECK(!store.HasOutstandingGrant());
+  CHECK(store.ConsumeBeforeIo(grant.token_digest, ContextFor(grant, now_ns),
+                             nullptr) == ga::CaptureGrantResult::kNotFound);
+
+  auto too_long = MakeCaptureGrant(now_ns + ga::CaptureGrantStore::kMaxTtlNs +
+                                   1);
+  CHECK(!store.Issue(too_long, now_ns));
+  auto too_large = MakeCaptureGrant(now_ns + 1'000);
+  too_large.max_image_bytes = ga::CaptureGrantStore::kMaxImageBytes + 1;
+  CHECK(!store.Issue(too_large, now_ns));
+  auto bad_crop = MakeCaptureGrant(now_ns + 1'000);
+  bad_crop.crop.right = bad_crop.crop.left;
+  CHECK(!store.Issue(bad_crop, now_ns));
+}
+
+void TestCaptureGrantStaleAndExpiry() {
+  constexpr std::uint64_t now_ns = 20'000;
+  ga::CaptureGrantStore store;
+  auto grant = MakeCaptureGrant(now_ns + 100);
+  CHECK(store.Issue(grant, now_ns));
+  auto expired = ContextFor(grant, grant.expires_at_elapsed_ns);
+  CHECK(store.ConsumeBeforeIo(grant.token_digest, expired, nullptr) ==
+        ga::CaptureGrantResult::kExpired);
+  CHECK(!store.HasOutstandingGrant());
+
+  grant.grant_id++;
+  grant.token_digest.back()++;
+  CHECK(store.Issue(grant, now_ns));
+  auto stale = ContextFor(grant, now_ns);
+  stale.revision++;
+  CHECK(store.ConsumeBeforeIo(grant.token_digest, stale, nullptr) ==
+        ga::CaptureGrantResult::kStale);
+  CHECK(!store.HasOutstandingGrant());
+
+  grant.grant_id++;
+  grant.token_digest.back()++;
+  CHECK(store.Issue(grant, now_ns));
+  store.RevokeAll();
+  CHECK(!store.HasOutstandingGrant());
+}
+
+void TestCaptureGrantConcurrentReplay() {
+  constexpr std::uint64_t now_ns = 30'000;
+  ga::CaptureGrantStore store;
+  auto grant = MakeCaptureGrant(now_ns + 1'000);
+  CHECK(store.Issue(grant, now_ns));
+  const auto context = ContextFor(grant, now_ns);
+  std::atomic<int> consumed_count{0};
+  std::vector<std::thread> contenders;
+  for (int index = 0; index < 16; ++index) {
+    contenders.emplace_back([&store, &grant, &context, &consumed_count]() {
+      if (store.ConsumeBeforeIo(grant.token_digest, context, nullptr) ==
+          ga::CaptureGrantResult::kConsumed) {
+        consumed_count.fetch_add(1, std::memory_order_relaxed);
+      }
+    });
+  }
+  for (auto &contender : contenders) {
+    contender.join();
+  }
+  CHECK(consumed_count.load(std::memory_order_relaxed) == 1);
+  CHECK(!store.HasOutstandingGrant());
+}
+
+void TestCaptureGrantConcurrentRevoke() {
+  constexpr std::uint64_t now_ns = 40'000;
+  ga::CaptureGrantStore store;
+  auto grant = MakeCaptureGrant(now_ns + 1'000);
+  CHECK(store.Issue(grant, now_ns));
+  const auto context = ContextFor(grant, now_ns);
+  std::atomic<int> consumed_count{0};
+  std::thread consumer([&store, &grant, &context, &consumed_count]() {
+    if (store.ConsumeBeforeIo(grant.token_digest, context, nullptr) ==
+        ga::CaptureGrantResult::kConsumed) {
+      consumed_count.fetch_add(1, std::memory_order_relaxed);
+    }
+  });
+  std::thread revoker([&store]() { store.RevokeAll(); });
+  consumer.join();
+  revoker.join();
+  CHECK(consumed_count.load(std::memory_order_relaxed) <= 1);
+  CHECK(!store.HasOutstandingGrant());
+  CHECK(store.ConsumeBeforeIo(grant.token_digest, context, nullptr) ==
+        ga::CaptureGrantResult::kNotFound);
 }
 
 void TestStateRoundTrip() {
@@ -227,13 +508,19 @@ void TestDumpsysParser() {
 class SequencePerception final : public ga::PerceptionBackend {
 public:
   bool Capture(const ga::Deadline &, ga::Perception *perception,
-               std::string *) override {
+               std::string *error) override {
+    if (fail_capture) {
+      if (error != nullptr)
+        *error = "synthetic capture failed";
+      return false;
+    }
     *perception =
         frames.at(index < frames.size() ? index++ : frames.size() - 1);
     return true;
   }
   std::vector<ga::Perception> frames;
   std::size_t index = 0;
+  bool fail_capture = false;
 };
 
 class OneActionDecision final : public ga::DecisionEngine {
@@ -262,6 +549,18 @@ public:
   bool cancelled = false;
 };
 
+class RejectingInput final : public ga::InputInjector {
+public:
+  bool Inject(const ga::Gesture &, const ga::Deadline &,
+              std::string *error) override {
+    if (error != nullptr)
+      *error = "synthetic injection failed";
+    return false;
+  }
+  void CancelActiveGesture() override { cancelled = true; }
+  bool cancelled = false;
+};
+
 void TestAgentLoop() {
   const std::string path = TempPath();
   std::string error;
@@ -285,6 +584,72 @@ void TestAgentLoop() {
   CHECK(result.outcome == ga::ActionOutcome::kSucceeded);
   CHECK(!loop.has_pending_action());
   CHECK(loop.graph().edges().size() == 1);
+  std::filesystem::remove(path);
+}
+
+void TestAgentLoopCaptureFailureCancelsPendingGesture() {
+  const std::string path = TempPath();
+  std::string error;
+  ga::StateStore store;
+  CHECK(store.Open(path, &error, 8192));
+  SequencePerception perception;
+  perception.frames = {MakePerception(1, "pkg/.A", 10)};
+  OneActionDecision decision;
+  AcceptingInput input;
+  ga::AgentLoop loop(&perception, &decision, &input, &store);
+  CHECK(loop.Restore(&error));
+  CHECK(loop.Step(std::chrono::milliseconds(200)).ok);
+  CHECK(loop.has_pending_action());
+
+  perception.fail_capture = true;
+  const auto result = loop.Step(std::chrono::milliseconds(200));
+  CHECK(!result.ok);
+  CHECK(input.cancelled);
+  CHECK(!loop.has_pending_action());
+  std::filesystem::remove(path);
+}
+
+void TestAgentLoopRejectsFailedInjection() {
+  const std::string path = TempPath();
+  std::string error;
+  ga::StateStore store;
+  CHECK(store.Open(path, &error, 8192));
+  SequencePerception perception;
+  perception.frames = {MakePerception(1, "pkg/.A", 10)};
+  OneActionDecision decision;
+  RejectingInput input;
+  ga::AgentLoop loop(&perception, &decision, &input, &store);
+  CHECK(loop.Restore(&error));
+
+  const auto result = loop.Step(std::chrono::milliseconds(200));
+  CHECK(!result.ok);
+  CHECK(result.action_attempted);
+  CHECK(result.outcome == ga::ActionOutcome::kRejected);
+  CHECK(input.cancelled);
+  CHECK(!loop.has_pending_action());
+  CHECK(loop.graph().edges().size() == 1);
+  CHECK(loop.graph().edges().front().outcome == ga::ActionOutcome::kRejected);
+  std::filesystem::remove(path);
+}
+
+void TestAgentLoopRejectsExpiredStepBeforeInjection() {
+  const std::string path = TempPath();
+  std::string error;
+  ga::StateStore store;
+  CHECK(store.Open(path, &error, 8192));
+  SequencePerception perception;
+  perception.frames = {MakePerception(1, "pkg/.A", 10)};
+  OneActionDecision decision;
+  AcceptingInput input;
+  ga::AgentLoop loop(&perception, &decision, &input, &store);
+  CHECK(loop.Restore(&error));
+
+  const auto result = loop.Step(std::chrono::milliseconds::zero());
+  CHECK(!result.ok);
+  CHECK(!result.action_attempted);
+  CHECK(result.outcome == ga::ActionOutcome::kTimedOut);
+  CHECK(!input.injected);
+  CHECK(!loop.has_pending_action());
   std::filesystem::remove(path);
 }
 
@@ -371,14 +736,46 @@ void TestSessionContext() {
                         std::chrono::milliseconds(1)));
   CHECK(context.Expire(start + ga::SessionContext::kSessionTimeout));
   CHECK(!context.Snapshot().active);
+
+  ga::TriggerEvent power = valid;
+  power.monotonic_ns = 6;
+  power.source = ga::TriggerSource::kPowerLongPress;
+  power.press_duration_ms = ga::SessionContext::kMaxPowerPressMs;
+  CHECK(context.Begin(power, start, &error));
+  power.monotonic_ns = 7;
+  power.press_duration_ms = ga::SessionContext::kMaxPowerPressMs + 1;
+  context.Cancel();
+  CHECK(!context.Begin(power, start, &error));
+
+  explicit_ui.monotonic_ns = 8;
+  CHECK(context.Begin(explicit_ui, start, &error));
+  CHECK(context.SubmitTranscript(
+      {.session_id = context.Snapshot().id, .sequence = 1, .is_final = false,
+       .text = "temporary text"},
+      &error));
+  CHECK(!context.Transition(ga::VisualState::kExecuting, &error));
+  CHECK(context.Snapshot().state == ga::VisualState::kListening);
+  CHECK(context.Transition(ga::VisualState::kThinking, &error));
+  CHECK(!context.SubmitTranscript(
+      {.session_id = context.Snapshot().id, .sequence = 2, .is_final = false,
+       .text = "late partial"},
+      &error));
+  context.Cancel();
+  CHECK(!context.Snapshot().active);
+  CHECK(context.Snapshot().transcript.empty());
 }
 
 } // namespace
 
 int main() {
   TestCrc32();
+  TestBridgeCallerPolicy();
   TestBezier();
   TestGestureValidation();
+  TestCaptureGrantValidationAndConsumption();
+  TestCaptureGrantStaleAndExpiry();
+  TestCaptureGrantConcurrentReplay();
+  TestCaptureGrantConcurrentRevoke();
   TestStateRoundTrip();
   TestMmapStore();
   TestStoreSingleWriterLock();
@@ -386,6 +783,9 @@ int main() {
   TestDumpsysParser();
   TestBoundedSubprocess();
   TestAgentLoop();
+  TestAgentLoopCaptureFailureCancelsPendingGesture();
+  TestAgentLoopRejectsFailedInjection();
+  TestAgentLoopRejectsExpiredStepBeforeInjection();
   TestSessionContext();
   if (failures != 0) {
     std::cerr << failures << " test assertion(s) failed\n";

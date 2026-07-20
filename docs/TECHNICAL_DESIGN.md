@@ -213,9 +213,10 @@ restorecon -RF "$DATA" "$BIN" 2>/dev/null || true
   源码 tag 复核。若接口被补丁封堵，备用路径是用户可见的
   `AccessibilityService + Root 辅助校准`，并保留 secure surface 和权限边界。
 - 纯Root方案无法完美绕过Google Play Protect的检测，且无法在硬件级TEE（如StrongBox）中获取密钥，凡是声称能破解金融类App加密传输的方案均为幻觉。
-- 本轮独立 AI 审批因 Gemini 模型不可用且插件没有受管 DeepSeek 凭据而为
-  `blocked`；[outputs/ai-review.md](../outputs/ai-review.md) 是诚实记录，不是
-  “已通过”证明。
+- 最新独立复核由 DeepSeek `deepseek-chat` 完成四轮，在修复兼容性声明、门禁语义
+  和模型网关 URI/边界测试后结论为 `pass`；
+  [outputs/ai-review.md](../outputs/ai-review.md) 保存最终报告。该结果不替代 exact
+  AOSP tree、平台签名和设备 SELinux 验证。
 
 **总体置信度：0.90（实现骨架）；生产可用性：未宣称，待目标 AOSP 14 源码和
 设备验证。**

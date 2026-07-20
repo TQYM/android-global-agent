@@ -18,7 +18,7 @@ Play Protect、`FLAG_SECURE`、DRM、TEE 或第三方应用沙箱的工具。
 | 电源键 2 秒触发 | 设计/审计完成，未接入生产入口 | 修改匹配的 framework 或受控系统服务 |
 | 离线 STT | 设计/服务骨架，未随产品启用 | 用户授予麦克风权限、microphone FGS、Vosk 模型/许可 |
 | 边缘光效 | 设计/渲染骨架，未随产品启用 | 用户授予悬浮窗权限或自有 SystemUI 集成 |
-| 独立 AI 审批 | `blocked` | 审批插件当前无可用模型/受管凭据 |
+| 独立 AI 复核 | `pass` | DeepSeek `deepseek-chat` 四轮；不替代 exact-tree/设备验证 |
 
 当前 AOSP 主程序使用 `NoopDecision`，默认只做感知、状态记录和 Binder
 注册，不会自行执行跨应用动作。新增的 `SessionContext` 只提供有界的临时
@@ -199,6 +199,27 @@ could not install *smartsocket* listener: Operation not permitted
 解决；记录为环境阻断，改跑 `tools/run-tests.sh` 和主机 Demo，并在有可用 ADB
 的工程环境重试。
 
+### 4.6 ModelGateway 公共 SDK AVD 验证
+
+无需 platform key 即可构建和验证低权限 Gateway APK：
+
+```sh
+tools/build-model-gateway-debug-apk.sh
+tools/verify-model-gateway-avd.sh emulator-5554
+```
+
+验证脚本要求 API 34+ userdebug AVD、root adbd 和 SELinux Enforcing。它会重新构建
+并安装 debug APK，确认 Gateway 是独立非 system UID、运行于 `untrusted_app`、
+Manifest 只请求 `INTERNET`，然后以 shell 身份导入有界 schema-v2 公开配置、检查
+原子落盘并验证未知 method 被拒绝。该流程不会导入 API Key、发起 HTTP、注册
+private native v2 service 或测试输入注入。
+
+这些是 development-only 边界证据，不等价于匹配 platform key、exact AOSP tree、
+产品 SELinux 或量产签名验收。
+
+API 34/35/36 可分别启动后运行同一命令。不要并行运行多个会写 `build/aidl-*` 或
+`build/model-gateway-debug` 的构建脚本；它们共享生成目录。
+
 ## 5. 完整 AOSP 14 集成
 
 ### 5.1 放置源码
@@ -220,6 +241,7 @@ system_ext/global_agent/
 PRODUCT_PACKAGES += \
     global-agentd \
     GlobalAgentBridge \
+    GlobalAgentModelGateway \
     privapp-permissions-com.example.globalagent
 
 SYSTEM_EXT_PRIVATE_SEPOLICY_DIRS += \
@@ -230,6 +252,7 @@ SYSTEM_EXT_PRIVATE_SEPOLICY_DIRS += \
 
 ```text
 /system_ext/bin/global-agentd
+/system_ext/app/GlobalAgentModelGateway/GlobalAgentModelGateway.apk（具体路径由 Soong 决定）
 /system_ext/etc/permissions/privapp-permissions-com.example.globalagent.xml
 /system_ext/etc/init/global-agent.rc（具体分区由 Soong 决定）
 ```
@@ -239,7 +262,7 @@ SYSTEM_EXT_PRIVATE_SEPOLICY_DIRS += \
 ```sh
 source build/envsetup.sh
 lunch <device>-userdebug
-m global-agentd GlobalAgentBridge \
+m global-agentd GlobalAgentBridge GlobalAgentModelGateway \
   privapp-permissions-com.example.globalagent
 ```
 
@@ -251,6 +274,8 @@ m global-agentd GlobalAgentBridge \
 - `WindowConfiguration`、`InputManager` 隐藏 platform API；
 - `global_agent_bridge` 和 `agentd` 的 policy neverallow；
 - privapp allowlist 是否被 PackageManager 读取。
+- ModelGateway 是否使用独立 app UID，仅有 `INTERNET`，且 bridge 无
+  `INTERNET`。
 
 ### 5.4 Framework 电源键集成（可选）
 
@@ -274,7 +299,23 @@ AOSP 14 的 `interceptPowerKeyDown()` 不是长按计时器；计时由
 `SingleKeyGestureDetector` 完成。LSPosed hook 私有方法只适合测试 flavor，
 不能当作跨 ROM 生产方案。
 
-### 5.5 STT 集成
+### 5.5 显式会话入口
+
+bridge APK 提供用户可见的 Launcher Activity：
+
+```sh
+adb shell am start -W \
+  -n com.example.globalagent/.AgentSessionActivity
+```
+
+只有服务已连接、设备解锁、屏幕 interactive 且当前无活动会话时，“Start session”
+可用。文本输入只提交一条最多 4096 UTF-8 字节的 final transcript；Activity 退到
+后台会取消活动会话。由于生产决策仍为 `NoopDecision`，提交文本不会自动操作 App。
+
+设备验收至少覆盖：服务断开、锁屏、熄屏、旋转、Home 键、Binder death，以及在
+begin 请求尚未返回时立即退后台。所有路径最终都应回到 IDLE，不留下活动会话。
+
+### 5.6 STT 集成
 
 STT 必须由 bridge APK 的用户可见 microphone foreground service 负责，native
 daemon 不直接读 ALSA 或 `/dev/snd`。
@@ -323,7 +364,7 @@ AudioRecord 16 kHz mono PCM
 不要把原始 PCM 或完整 transcript 写入 mmap 状态文件；SessionContext 会在取消、
 超时和切换会话时清除文本。
 
-### 5.6 边缘光效集成
+### 5.7 边缘光效集成
 
 普通 bridge 使用 `TYPE_APPLICATION_OVERLAY`，并在用户授权 SAW 后创建：
 
@@ -405,7 +446,8 @@ adb shell dmesg | grep -E 'avc: denied.*(agentd|global_agent)'
 
 ### 6.4 会话和文本
 
-当前 native 服务尚未开放实际 `submitTranscript` AIDL。接入时必须验证：
+native 服务已开放带 UID 校验的 `submitTranscript` AIDL，但尚未接入实际 STT
+引擎。设备集成时必须验证：
 
 - caller UID/SID 是 platform/system 或已安装 bridge；
 - session ID、序号严格递增；
@@ -447,8 +489,8 @@ adb logcat -d -s global-agentd GlobalAgentBridge
 
 ### 8.2 AOSP 产品回滚
 
-1. 从产品 `PRODUCT_PACKAGES` 移除 `global-agentd`、`GlobalAgentBridge` 和
-   privapp allowlist；
+1. 从产品 `PRODUCT_PACKAGES` 移除 `global-agentd`、`GlobalAgentBridge`、
+   `GlobalAgentModelGateway` 和 privapp allowlist；
 2. 移除对应 `SYSTEM_EXT_PRIVATE_SEPOLICY_DIRS`；
 3. 重新构建并刷回经过签名的 system/system_ext 镜像；
 4. 确认 `getenforce=Enforcing`、原生电源键/关机菜单和麦克风指示器恢复；

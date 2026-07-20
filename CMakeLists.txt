@@ -12,6 +12,8 @@ option(GLOBAL_AGENT_ENABLE_SANITIZERS "Enable address and undefined behavior san
 add_library(global_agent_core STATIC
     src/agent_loop.cpp
     src/bezier.cpp
+    src/bridge_caller_policy.cpp
+    src/capture_grant.cpp
     src/crc32.cpp
     src/dumpsys_parser.cpp
     src/gesture_validation.cpp

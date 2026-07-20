@@ -7,9 +7,9 @@
 
 namespace global_agent::aosp {
 
-class AospSurfaceCapture final : public PerceptionBackend {
+class AospSingleFrameCapture final : public PerceptionBackend {
 public:
-  explicit AospSurfaceCapture(std::shared_ptr<AgentBinderService> service)
+  explicit AospSingleFrameCapture(std::shared_ptr<AgentBinderService> service)
       : service_(std::move(service)) {}
 
   bool Capture(const Deadline &deadline, Perception *perception,

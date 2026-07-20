@@ -52,6 +52,10 @@ StepResult AgentLoop::Step(std::chrono::milliseconds budget) {
   Perception current;
   std::string error;
   if (!perception_->Capture(deadline, &current, &error)) {
+    if (pending_action_.has_value()) {
+      input_->CancelActiveGesture();
+      pending_action_.reset();
+    }
     return {.ok = false, .error = std::move(error)};
   }
   const NodeId current_node = graph_.Observe(current);

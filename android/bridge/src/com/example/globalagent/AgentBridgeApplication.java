@@ -16,6 +16,7 @@ public final class AgentBridgeApplication extends Application {
 
   private final AtomicReference<IAgentService> service =
       new AtomicReference<>();
+  private AgentSessionClient sessionClient;
   private HandlerThread workerThread;
   private Handler worker;
   private InputController inputController;
@@ -34,6 +35,11 @@ public final class AgentBridgeApplication extends Application {
         inputController.cancelActiveGesture();
       }
     }
+
+    @Override
+    public void onSessionStateChanged(SessionStatus status) {
+      sessionClient.acceptCallback(status);
+    }
   };
 
   private final IBinder.DeathRecipient deathRecipient = () -> {
@@ -41,6 +47,7 @@ public final class AgentBridgeApplication extends Application {
       inputController.cancelActiveGesture();
     }
     service.set(null);
+    sessionClient.detach();
     if (worker != null) {
       worker.post(this::connectToNativeService);
     }
@@ -49,6 +56,15 @@ public final class AgentBridgeApplication extends Application {
   @Override
   public void onCreate() {
     super.onCreate();
+    sessionClient = new AgentSessionClient(status -> {
+      if (status == null) {
+        Log.i(TAG, "session service disconnected");
+      } else {
+        Log.i(TAG, "session state=" + status.state +
+            " active=" + status.active + " revision=" + status.revision);
+      }
+    });
+    SessionClientRegistry.install(sessionClient);
     inputController = new InputController(this);
     workerThread = new HandlerThread("global-agent-bridge");
     workerThread.start();
@@ -75,14 +91,26 @@ public final class AgentBridgeApplication extends Application {
       binder.linkToDeath(deathRecipient, 0);
       final IAgentService candidate = IAgentService.Stub.asInterface(binder);
       candidate.registerBridge(bridge);
+      sessionClient.attach(candidate);
       service.set(candidate);
       windowPublisher.publishNow();
       Log.i(TAG, "registered platform input bridge");
     } catch (RemoteException exception) {
       Log.w(TAG, "native service unavailable", exception);
       service.set(null);
+      sessionClient.detach();
       worker.postDelayed(this::connectToNativeService, RETRY_MILLIS);
     }
+  }
+
+  AgentSessionClient sessionClient() {
+    return sessionClient;
+  }
+
+  @Override
+  public void onTerminate() {
+    SessionClientRegistry.clear(sessionClient);
+    super.onTerminate();
   }
 
   private void notifySettingChanged(String key) {
@@ -95,6 +123,7 @@ public final class AgentBridgeApplication extends Application {
     } catch (RemoteException exception) {
       Log.w(TAG, "failed to publish setting change", exception);
       service.set(null);
+      sessionClient.detach();
       worker.post(this::connectToNativeService);
     }
   }
@@ -109,7 +138,9 @@ public final class AgentBridgeApplication extends Application {
     } catch (RemoteException exception) {
       Log.w(TAG, "failed to publish window metadata", exception);
       service.set(null);
+      sessionClient.detach();
       worker.post(this::connectToNativeService);
     }
   }
+
 }

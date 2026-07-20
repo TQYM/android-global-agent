@@ -26,7 +26,8 @@ struct WindowMetadata {
 
 struct Perception {
   std::uint64_t monotonic_ns = 0;
-  std::uint64_t visual_hash = 0;
+  // One bounded sample from the current step, not a video stream.
+  std::uint64_t single_frame_visual_hash = 0;
   std::uint16_t confidence_milli = 0;
   WindowMetadata window;
 };

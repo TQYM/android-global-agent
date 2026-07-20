@@ -1,0 +1,22 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.example.globalagent.gateway">
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:allowBackup="false"
+        android:hasCode="true"
+        android:label="Global Agent Model Gateway"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:supportsRtl="true"
+        android:usesCleartextTraffic="false">
+        <provider
+            android:name=".PublicConfigProvider"
+            android:authorities="com.example.globalagent.gateway.config"
+            android:exported="true"
+            android:grantUriPermissions="false" />
+        <service
+            android:name=".ModelGatewayService"
+            android:exported="true"
+            android:permission="com.example.globalagent.permission.OPEN_MODEL_SESSION" />
+    </application>
+</manifest>
