@@ -1,5 +1,6 @@
 /build/
 /outputs/
+/aosp-android-15*/
 *.bin
 *.log
 GlobalAgent-KernelSU-*.zip

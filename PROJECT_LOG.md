@@ -1,6 +1,6 @@
 # 完整项目日志
 
-更新时间：2026-07-19
+更新时间：2026-07-20
 
 本文提供项目从便携核心到当前会话 AIDL 控制面的完整迭代索引。每次命令结果、
 设备 fingerprint、工具版本和限制声明的权威记录位于 `docs/VALIDATION.md`；面向
@@ -179,6 +179,40 @@
   缺失测试或待确认问题。
 - 控制协议仍是 v1，且没有 HTTP client、Keystore 凭据 UI、CaptureGrant、
   截图入站或输入执行；生产继续使用 `NoopDecision`。
+
+## Iteration 24：protocol v2 与一次性 CaptureGrant 本地契约
+
+- 新增 25 个 v2 AIDL 文件，覆盖会话 handle/status、Bridge capability、private
+  native service、Gateway callback、CaptureGrant、脱敏 perception、ActionPlan、
+  PlanValidation 和 ExecutionGrant；接口保持 `unstable`，未注册运行时服务。
+- 新增便携 `CaptureGrantStore`，仅保存 32 字节 token 摘要，绑定 service instance、
+  UID、capability、session、revision、focus、display、crop、TTL 和脱敏策略；合法
+  grant 在 I/O 前锁内移除，16 线程并发重放测试保证仅一次成功。
+- ModelGateway 增加 v2 DTO fail-closed 校验，限制 3 秒 TTL、2 MiB 图像、8 个动作、
+  OCR/脱敏数组、UTF-8 文本、归一化坐标、时长、摘要和 secure-content 排除标志。
+- Java/NDK AIDL 生成、API 34/35/36 Java 矩阵、host ASan/UBSan、API 34 arm64 NDK
+  stub、AIDL boundary 和静态项目门通过。v2 Binder、真实截图、HTTP、Keystore 与
+  输入执行仍未实现，运行时继续使用 v1 与 `NoopDecision`。
+
+## Iteration 25：v2 capability 与三版 Gateway AVD
+
+- Bridge 新增 per-session `V2SessionCapability`，Gateway 只能调用绑定 session 的
+  capture、plan validation、取消和状态查询；start、focus、grant approval、input
+  等 Bridge-only 方法稳定返回 `SecurityException`。
+- capability factory 在创建前校验 Gateway 实际 UID、包名和单一当前签名证书
+  SHA-256；token 在跨线程/嵌套 Binder 前复制，调用 native 前后成对 clear/restore
+  calling identity。
+- Gateway APK 新增 signature 权限保护的 `IModelGateway` Service。当前只接受
+  text-only v2 request，Provider/Keystore 尚未完成时返回 `STATUS_DISABLED`，不发起
+  网络请求，也不调用输入。
+- private native v2 service 的全部方法签名已纳入 API 34 arm64 NDK `-Werror`
+  编译；在 exact-tree calling SID 验证与注册完成前，固定 fail-closed。
+- 新增无 Gradle 的公共 SDK Gateway APK 构建和 AVD 验证脚本。API 34/35/36
+  Enforcing AVD 均验证独立非 system UID、`untrusted_app` 域、Manifest 只请求
+  `INTERNET`、配置导入/原子落盘成功和未知方法拒绝。
+- API 35 无权限 probe 的 Gateway bind 未成功；畸形配置未覆盖已验证配置。
+  capability 增加 native Binder death 失效，证书 authorizer 支持显式批准的轮换摘要。
+- DeepSeek `deepseek-chat` 第三轮独立复核最终返回 `pass`。
 
 ## 当前验证快照
 

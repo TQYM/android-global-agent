@@ -1,5 +1,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.example.globalagent">
+    <permission
+        android:name="com.example.globalagent.permission.OPEN_MODEL_SESSION"
+        android:protectionLevel="signature" />
+    <uses-permission android:name="com.example.globalagent.permission.OPEN_MODEL_SESSION" />
     <uses-permission android:name="android.permission.INJECT_EVENTS" />
     <uses-permission android:name="android.permission.REAL_GET_TASKS" />
 

@@ -1,2 +1,2 @@
 global_agent                                 u:object_r:global_agent_service:s0
-
+global_agent_v2                              u:object_r:global_agent_v2_service:s0

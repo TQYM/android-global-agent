@@ -188,6 +188,128 @@
 - DeepSeek `deepseek-chat` 第四轮复核最终 `pass`。该结果不替代 Soong APK 构建、
   独立 UID/权限设备验收、Keystore、TLS/mock server 或 CaptureGrant 测试。
 
+### 阶段 15：protocol v2 与一次性 CaptureGrant 本地契约
+
+- 新增未冻结的 `com.example.globalagent.v2` AIDL 契约，包含 Bridge 会话
+  capability、private native service、Gateway callback、CaptureGrant、脱敏
+  PerceptionEnvelope、ActionPlan、PlanValidation 和 ExecutionGrant。现有 v1 服务
+  保持不变，v2 尚未注册 Binder 运行时。
+- 新增便携 `CaptureGrantStore`。记录只持有固定 32 字节 token 摘要，并绑定 service
+  instance、实际 caller UID、capability、session、revision、focus、display、crop、
+  3 秒 TTL、2 MiB 输出上限与 redaction policy；授权成功后在任何 I/O 前锁内移除。
+- 新增 ModelGateway v2 DTO validator，拒绝错误协议、摘要长度、过期 deadline、
+  超限动作/OCR/脱敏数组、重复 action id、非法坐标/时长/UTF-8、未声明安全内容排除
+  和无界图像元数据。
+- host 测试覆盖错误 UID 不制造取消 DoS、错误 token、不合法 TTL/crop/image limit、
+  stale/expiry/revoke、串行重放和 16 线程并发重放；Java 负测覆盖 grant、plan 与
+  perception 的关键上下界。
+- 本轮未加入 HTTP、Keystore 凭据、真实截图 FD、v2 Binder 实现或输入执行；
+  ModelGateway 权限不变，生产继续使用 v1 和 `NoopDecision`。
+- DeepSeek `deepseek-chat` 四轮独立复核最终返回 `pass`，未报告问题、缺失测试或
+  待确认项；最终报告保存在 `outputs/ai-review.md`。
+
+### 阶段 16：v2 capability、Gateway Service 与 AVD 验证
+
+- 新增 Gateway 包名/UID/当前签名证书 SHA-256 authorizer 和 per-session Java
+  capability。错误 UID、跨 session、错误 token 长度和所有 Bridge-only 方法均在
+  进入 private native service 前拒绝。
+- Gateway APK 注册由 Bridge signature permission 保护的 `IModelGateway` Service；
+  request validator 约束 v2 session、2 秒 deadline、4096-byte transcript、包名和
+  provider profile。`imageAllowed` 当前固定拒绝，服务只返回 disabled receipt。
+- native `BnPlatformAgentV2` 全方法边界已实现为 pinned UID 后的 fail-closed stub，
+  并由 API 34 arm64 NDK 编译。它没有注册；exact-tree 版本必须先启用 calling SID
+  并验证 `global_agent_bridge` domain。
+- `build-model-gateway-debug-apk.sh` 使用 aapt2/aidl/javac/d8/zipalign/apksigner
+  生成公共 SDK 调试 APK；`verify-model-gateway-avd.sh` 执行安装、Enforcing、权限、
+  UID/domain、公开配置正向和未知方法负向检查。
+- API 34/35/36 Enforcing AVD 结果分别为 UID 10192/10210/10213，均运行于
+  `untrusted_app`，只请求并获授 `INTERNET`，配置导入成功。该证据不覆盖 Bridge
+  platform 签名、native service、SurfaceFlinger、输入或产品 sepolicy。
+- API 35 另安装无权限 probe APK；其 bind 返回 `bind-failed`，未连接受 signature
+  permission 保护的 Gateway Service。畸形配置稳定拒绝，之前持久化的 JSON 保持
+  逐字节不变。
+- capability 监听 private native Binder death 并在断开后失效；Gateway authorizer
+  支持显式批准的证书摘要集合，证书轮换不会隐式信任历史 key。
+- DeepSeek `deepseek-chat` 第三轮复核返回 `pass`，无问题、缺失测试或待确认项。
+
+## Iteration 26: DeepSeek V4 text-only dry-run and Ehviewer allowlist
+
+- Confirmed the supplied API 35 AVD is Android 15/API 35, userdebug and
+  Enforcing. The initial Downloads search did not contain an AOSP checkout;
+  Iteration 27 later located the r36 tree in the current workspace.
+- Built the authorized test APK with `bash ./gradlew
+  :app:assembleAppReleaseDebug`, installed it on API 35 and reached
+  `com.xjs.ehviewer.debug/com.hippo.ehviewer.ui.MainActivity`. The UI dump shows
+  the EhViewer home screen. No click, text input, screenshot upload or model
+  request was performed.
+- Added provider-neutral `TextOnlyDryRunAdapter` and `DeepSeekV4TextAdapter`.
+  Request construction is text-only with `deepseek-v4`, JSON response mode, no
+  image field and no credential. Response parsing rejects model mismatch, tool
+  calls, malformed/truncated JSON and non-stop choices.
+- Added `EhviewerDryRunPolicy` for release/debug package identity, session,
+  revision and focus binding, confidence >= 800, unique actions and the narrow
+  `FIND_TEXT`, `TAP_CANDIDATE`, `PRESS_BACK`, `WAIT`, `VERIFY` set. It returns
+  `injectedEvents=0` for every result and never calls input APIs.
+- Added a DeepSeek/Ehviewer public config fixture with `dryRun=true`,
+  `sendImage=never`, Keystore alias only and no secret fields. API 34/35/36
+  Java matrix and project gates passed; API 35 Gateway config import and the
+  unauthorized bind probe still pass.
+- This iteration does not close exact-tree Soong/SELinux, Keystore enrollment,
+  provider approval, real HTTPS, capture, confirmation grants or execution.
+- DeepSeek / `deepseek-chat` independent review finished with `pass`, no issues,
+  missing tests or questions. The final verbatim report is in
+  `outputs/ai-review.md`; it does not replace exact-tree or device gates.
+
+## Iteration 27: Android 15 r36 exact-tree discovery and SID boundary
+
+- Located the complete HFS+ case-sensitive checkout at `aosp-android-15`:
+  1031 manifest projects, tag `android-15.0.0_r36`, build ID
+  `BP1A.250505.005.D1`. Critical framework/native/sepolicy/Soong paths exist;
+  selected core projects are clean detached HEADs.
+- Added an exact-tree check which compiles v1/v2 Binder boundaries against the
+  r36 platform `binder_ibinder_platform.h` and verifies the Android 15
+  `ScreenshotClient::captureDisplay(DisplayId, CaptureArgs, listener)` shape.
+- Replaced v1 first-caller UID trust with exact
+  `u:r:global_agent_bridge:s0` validation followed by UID pinning. Root, system,
+  shell, null SID, wrong SID and later UID changes fail closed. Both v1 and v2
+  local binders request calling SID before registration.
+- Registered a separate `global_agent_v2` name using the same private service
+  type. Its methods remain `UNSUPPORTED` in P1, so this does not enable capture,
+  network or input execution.
+- Added deterministic staging, an isolated Cuttlefish-derived product and a
+  Linux-only build wrapper. The staged tree is under
+  `aosp-android-15/system_ext/global_agent`; upstream AOSP projects were not
+  modified.
+- Host tests, API 34 public-NDK boundary, API 34--36 Java matrix and the r36
+  exact-header gate pass. Full Soong remains blocked by the arm64 macOS host,
+  absence of an x86_64 Linux VM and only about 14 GB free in the source bundle.
+
+## Iteration 28: canonical caller identity and AVD revalidation
+
+- Tightened the Bridge SID parser to accept only canonical MLS category values,
+  increasing non-overlapping lists and `cN.cM` ranges inside `c0..c1023`.
+  Leading zeros, descending/overlapping ranges, duplicates and malformed
+  separators fail closed.
+- Added exact appId boundary tests for `0`, `9999`, `10000`, `19999`, `20000`
+  and `99000`, plus user 1/user 10 Android multiuser equivalents and 16-thread
+  valid/invalid SID calls. Both v1 and v2 still route every transaction through
+  this shared policy while pinning the full UID under their service mutex.
+- Added a product-policy `neverallow` which prohibits every domain except
+  `global_agent_bridge` from finding `global_agent_v2_service`. The project gate
+  also requires exactly one matching `allow` rule. This is static evidence;
+  merged-policy compilation and a runtime unauthorized lookup remain Linux
+  Soong/custom-image gates.
+- Host ASan/UBSan, API 34 native v1/v2 compilation, API 34--36 Java tests,
+  r36 platform-header compilation, staging, `AOSP_TREE_35` project checks and
+  `git diff --check` passed. The API 35 AVD remained userdebug/Enforcing; Gateway
+  import passed and the unprivileged probe returned `bind-failed`.
+- Ehviewer debug remained installed and resolvable. No input, capture upload,
+  Provider request or production execution path was enabled.
+- DeepSeek review iteration 2 requested explicit `c5.c3`, `c0.c0`, `c.1` and
+  user-10 cases; they were added. Its runtime Binder and compiled neverallow
+  requests remain accepted external gates because the prebuilt AVD has no
+  custom native service and this tree has no runnable macOS SELinux compiler.
+
 ## 已验证的门
 
 在当前工作区可重复执行：

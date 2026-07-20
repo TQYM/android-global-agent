@@ -9,6 +9,7 @@
 #include "agent_binder_service.h"
 #include "aosp_surface_capture.h"
 #include "bridge_input_injector.h"
+#include "v2_platform_agent_service.h"
 #include "global_agent/agent_loop.h"
 #include "global_agent/state_store.h"
 
@@ -38,6 +39,12 @@ int main() {
   std::string error;
   const auto binder_service = platform::AgentBinderService::Register(&error);
   if (binder_service == nullptr) {
+    std::cerr << error << '\n';
+    return 1;
+  }
+  const auto v2_binder_service =
+      platform::V2PlatformAgentService::Register(&error);
+  if (v2_binder_service == nullptr) {
     std::cerr << error << '\n';
     return 1;
   }

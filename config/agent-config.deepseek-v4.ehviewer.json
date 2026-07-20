@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 2,
+  "runtime": "openclaw-host",
+  "dryRun": true,
+  "providers": {
+    "deepseek-v4-text": {
+      "kind": "openai-compatible-text-only",
+      "apiBase": "https://api.deepseek.com/v1",
+      "credentialRef": "keystore://global_agent_deepseek_v4",
+      "model": "deepseek-v4"
+    }
+  },
+  "agents": {
+    "planner": {
+      "provider": "deepseek-v4-text",
+      "timeoutMs": 1800
+    }
+  },
+  "privacy": {
+    "sendImage": "never",
+    "redactNotifications": true,
+    "redactKeyboard": true,
+    "allowPackages": [
+      "com.xjs.ehviewer",
+      "com.xjs.ehviewer.debug"
+    ],
+    "retainScreenshots": false
+  },
+  "limits": {
+    "maxActionsPerPlan": 8,
+    "maxOutputTokens": 1024,
+    "maxImageLongEdge": 1280,
+    "maxRetries": 0,
+    "maxRequestsPerMinute": 6,
+    "dailyTokenBudget": 200000,
+    "endToEndDeadlineMs": 2000
+  },
+  "tools": [
+    "observe_screen",
+    "get_ui_context",
+    "find_text",
+    "tap",
+    "press_back",
+    "wait_for",
+    "verify"
+  ]
+}

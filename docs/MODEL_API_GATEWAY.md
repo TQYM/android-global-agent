@@ -6,8 +6,17 @@ The production AOSP daemon still uses `NoopDecision`. The project does not yet
 send network requests and does not store an API key. A separate
 `GlobalAgentModelGateway` APK now exists with `INTERNET` only, a strict public
 configuration schema v2, a root/shell-only `ContentProvider.call()` import and
-`AtomicFile` persistence. This is a local configuration boundary, not a
-Provider HTTP client or control-protocol v2 implementation.
+`AtomicFile` persistence. The repository also has an unstable protocol-v2 AIDL
+contract, bounded DTO validator and portable single-use capture-grant state
+machine. The Gateway APK now exposes a Bridge-signature-permission-protected
+`IModelGateway` service which validates v2 text-only requests and returns an
+explicit disabled result. The per-session Java capability binds UID, package
+and certificate identity. The private native v2 service remains unregistered
+and fail-closed, so this is not a Provider HTTP client or a working capture path.
+The local dry-run layer now has a provider-neutral `TextOnlyDryRunAdapter`, a
+DeepSeek V4 text-only adapter, strict bounded response parsing, and an
+Ehviewer-only release/debug plan policy. It is mock-only: no credential is read,
+no image is accepted, and every result reports zero injected events.
 
 ## Required architecture
 
@@ -52,13 +61,15 @@ to the input bridge.
 
 ## Remaining work
 
-1. Select provider and authentication type: API key, OAuth or device-bound
-   token.
-2. Add the protocol-v2 narrow AIDL, single-use `CaptureGrant` and redacted
-   perception DTOs without granting the gateway capture/input permissions.
+1. Confirm the DeepSeek V4 model identifier and authentication/compliance
+   approval: API key, OAuth or device-bound token.
+2. Wire the existing Bridge capability to the private native v2 service after
+   exact-tree calling-SID validation, without granting the gateway capture/input
+   permissions.
 3. Implement Android Keystore credential encryption and user-visible config UI.
-4. Implement provider-specific HTTPS request/response mapping with cancellation,
-   timeout, certificate rules and redacted logging.
+4. Implement the approved provider-specific HTTPS request/response mapping with
+   cancellation, timeout, certificate rules and redacted logging. The current
+   adapter deliberately stops at a mock response.
 5. Connect the validated intent to a session-aware local planner behind a
    feature flag; default builds retain `NoopDecision`.
 6. Add mock-server, malformed response, stale revision, timeout, TLS failure,

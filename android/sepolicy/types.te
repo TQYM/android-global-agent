@@ -1,3 +1,4 @@
 type global_agent_service, service_manager_type;
+type global_agent_v2_service, service_manager_type;
 type global_agent_data_file, file_type, data_file_type, core_data_file_type;
 system_internal_prop(agent_enabled_prop)

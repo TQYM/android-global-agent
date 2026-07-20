@@ -14,9 +14,16 @@ Android 14 Agent 边界实现。路线图优先保证可停止、可恢复、可
 便携核心和 bridge 骨架已有本地验证。手势限制、失败路径测试、单帧 API 命名和
 验证元数据已在 P0 收敛；P3 的会话 AIDL 控制面和显式 bridge Activity 也已提前
 完成本地实现，但没有麦克风。独立 ModelGateway APK 与公开配置 schema v2
-导入边界也已本地完成，但控制协议仍为 v1，没有 HTTP/Keystore/CaptureGrant。
-下一步不是直接加入“会自己操作 App”的模型，而是
-取得目标 AOSP/设备输入；没有目标源码和设备时，P1 之后的运行能力不能可靠完成。
+导入边界也已本地完成。protocol v2 AIDL、一次性 `CaptureGrant` 便携状态机和脱敏
+DTO 校验、Gateway Service 和包名/证书绑定的 Java capability 已完成本地边界；
+private native v2 service 已实现 r36 calling-SID 注册边界、规范 MLS SID/多用户
+appId 校验和独立 service type 的 Bridge-only `find` 约束，但全部 v2 方法仍固定
+`UNSUPPORTED`；当前已部署运行时仍为 v1，也没有 HTTP/Keystore/截图入站。已收到授权测试 App
+`com.xjs.ehviewer`/`com.xjs.ehviewer.debug`；当前只增加 text-only DeepSeek V4
+mock dry-run 和严格动作 allowlist，执行计数固定为零。
+Android 15 `android-15.0.0_r36` 源码已在当前目录找到并完成 exact-header 核对；
+下一步是在 x86_64 Linux VM 完成定制 Cuttlefish Soong/镜像构建与 enforcing 验收。
+在该设备证据前，P1 之后的运行能力仍不能宣称完成。
 
 ## 阶段路线
 
@@ -40,9 +47,14 @@ Android 14 Agent 边界实现。路线图优先保证可停止、可恢复、可
 - AIDL 与 Java/native 对限制值没有漂移；
 - 文档不再把设计骨架描述为已接入能力。
 
-可并行的下一个本地契约是 protocol-v2 AIDL、一次性 `CaptureGrant` 和脱敏
-perception/action DTO。该工作不得让 ModelGateway 获得截屏/输入权限，也不在
-Provider 与认证方式未确认时接入真实网络。
+- [本地完成] protocol-v2 AIDL、一次性 `CaptureGrant` 状态机和脱敏
+  perception/action DTO 校验；grant 绑定 UID/capability/session/revision/focus/
+  display/TTL，并在 I/O 前原子消费。
+
+calling SID 和 private native v2 service 注册源码已进入 exact tree 编译边界；下一个
+平台工作是在完整 Soong/policy 构建和启动镜像中验证真实 SID、服务发现负向路径，
+再将 Bridge capability 接到该服务。ModelGateway 不得查找 native service 或获得
+截屏/输入权限；DeepSeek V4 的认证、区域和 DPA 未确认前仍不接真实网络。
 
 ### P1：目标 AOSP 集成（当前阻塞）
 

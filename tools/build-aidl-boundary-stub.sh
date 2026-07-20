@@ -34,4 +34,15 @@ mkdir -p "$OUT"
     -c "$ROOT/src/platform/aosp/agent_binder_service.cpp" \
     -o "$OUT/agent_binder_service.o"
 
-echo "API 34 arm64 AIDL service boundary compiled successfully"
+"$CLANG" \
+    --target=aarch64-none-linux-android34 \
+    --sysroot="$(dirname "$(dirname "$CLANG")")/sysroot" \
+    -std=c++20 \
+    -Wall -Wextra -Werror -Wpedantic \
+    -I"$ROOT/include" \
+    -I"$ROOT/src/platform/aosp" \
+    -I"$ROOT/build/aidl-ndk/include" \
+    -c "$ROOT/src/platform/aosp/v2_platform_agent_service.cpp" \
+    -o "$OUT/v2_platform_agent_service.o"
+
+echo "API 34 arm64 v1/v2 AIDL service boundaries compiled successfully"

@@ -14,5 +14,9 @@
             android:authorities="com.example.globalagent.gateway.config"
             android:exported="true"
             android:grantUriPermissions="false" />
+        <service
+            android:name=".ModelGatewayService"
+            android:exported="true"
+            android:permission="com.example.globalagent.permission.OPEN_MODEL_SESSION" />
     </application>
 </manifest>

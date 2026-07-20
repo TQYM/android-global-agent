@@ -15,11 +15,31 @@ aidl_interface {
     },
 }
 
+aidl_interface {
+    name: "global_agent_v2_aidl",
+    srcs: ["android/aidl/com/example/globalagent/v2/*.aidl"],
+    local_include_dir: "android/aidl",
+    unstable: true,
+    backend: {
+        cpp: {
+            enabled: false,
+        },
+        java: {
+            enabled: true,
+        },
+        ndk: {
+            enabled: true,
+        },
+    },
+}
+
 cc_library_static {
     name: "libglobal_agent_core",
     srcs: [
         "src/agent_loop.cpp",
         "src/bezier.cpp",
+        "src/bridge_caller_policy.cpp",
+        "src/capture_grant.cpp",
         "src/crc32.cpp",
         "src/dumpsys_parser.cpp",
         "src/gesture_validation.cpp",
@@ -44,6 +64,8 @@ cc_binary {
     srcs: [
         "src/platform/aosp/agent_binder_registration.cpp",
         "src/platform/aosp/agent_binder_service.cpp",
+        "src/platform/aosp/v2_platform_agent_registration.cpp",
+        "src/platform/aosp/v2_platform_agent_service.cpp",
         "src/platform/aosp/aosp_surface_capture.cpp",
         "src/platform/aosp/bridge_input_injector.cpp",
         "src/platform/aosp/main_aosp.cpp",
@@ -51,6 +73,7 @@ cc_binary {
     local_include_dirs: ["src/platform/aosp"],
     static_libs: [
         "global_agent_bridge_aidl-ndk",
+        "global_agent_v2_aidl-ndk",
         "libglobal_agent_core",
     ],
     header_libs: [
@@ -79,7 +102,10 @@ android_app {
     system_ext_specific: true,
     manifest: "android/bridge/AndroidManifest.xml",
     srcs: ["android/bridge/src/**/*.java"],
-    static_libs: ["global_agent_bridge_aidl-java"],
+    static_libs: [
+        "global_agent_bridge_aidl-java",
+        "global_agent_v2_aidl-java",
+    ],
     certificate: "platform",
     platform_apis: true,
     privileged: true,
@@ -94,6 +120,7 @@ android_app {
     manifest: "android/model-gateway/AndroidManifest.xml",
     resource_dirs: ["android/model-gateway/res"],
     srcs: ["android/model-gateway/src/**/*.java"],
+    static_libs: ["global_agent_v2_aidl-java"],
     certificate: "shared",
     min_sdk_version: "34",
     sdk_version: "current",

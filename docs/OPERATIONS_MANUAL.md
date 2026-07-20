@@ -199,6 +199,27 @@ could not install *smartsocket* listener: Operation not permitted
 解决；记录为环境阻断，改跑 `tools/run-tests.sh` 和主机 Demo，并在有可用 ADB
 的工程环境重试。
 
+### 4.6 ModelGateway 公共 SDK AVD 验证
+
+无需 platform key 即可构建和验证低权限 Gateway APK：
+
+```sh
+tools/build-model-gateway-debug-apk.sh
+tools/verify-model-gateway-avd.sh emulator-5554
+```
+
+验证脚本要求 API 34+ userdebug AVD、root adbd 和 SELinux Enforcing。它会重新构建
+并安装 debug APK，确认 Gateway 是独立非 system UID、运行于 `untrusted_app`、
+Manifest 只请求 `INTERNET`，然后以 shell 身份导入有界 schema-v2 公开配置、检查
+原子落盘并验证未知 method 被拒绝。该流程不会导入 API Key、发起 HTTP、注册
+private native v2 service 或测试输入注入。
+
+这些是 development-only 边界证据，不等价于匹配 platform key、exact AOSP tree、
+产品 SELinux 或量产签名验收。
+
+API 34/35/36 可分别启动后运行同一命令。不要并行运行多个会写 `build/aidl-*` 或
+`build/model-gateway-debug` 的构建脚本；它们共享生成目录。
+
 ## 5. 完整 AOSP 14 集成
 
 ### 5.1 放置源码

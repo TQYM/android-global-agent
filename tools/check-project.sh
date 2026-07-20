@@ -10,6 +10,12 @@ for script in \
     "$ROOT/tools/check-java-api-matrix.sh" \
     "$ROOT/tools/build-aidl-boundary-stub.sh" \
     "$ROOT/tools/build-android-stub.sh" \
+    "$ROOT/tools/build-model-gateway-debug-apk.sh" \
+    "$ROOT/tools/build-model-gateway-probe-apk.sh" \
+    "$ROOT/tools/check-aosp15-exact-tree.sh" \
+    "$ROOT/tools/stage-aosp15-tree.sh" \
+    "$ROOT/tools/build-global-agent-aosp15.sh" \
+    "$ROOT/tools/verify-model-gateway-avd.sh" \
     "$ROOT/tools/package-kernelsu.sh" \
     "$ROOT/tools/validation-metadata.sh" \
     "$ROOT/tools/push-debug-stub.sh" \
@@ -22,6 +28,9 @@ done
 
 "$ROOT/tools/check-api-compat.sh"
 "$ROOT/tools/check-java-api-matrix.sh"
+if [ -n "${AOSP_TREE_35:-}" ]; then
+    "$ROOT/tools/check-aosp15-exact-tree.sh" "$AOSP_TREE_35"
+fi
 
 xmllint --noout "$ROOT/android/bridge/AndroidManifest.xml"
 xmllint --noout "$ROOT/android/bridge/privapp-permissions-com.example.globalagent.xml"
@@ -42,12 +51,41 @@ if sed -n '/name: "GlobalAgentModelGateway"/,/^}/p' "$ROOT/Android.bp" | \
     echo "ModelGateway must not use the platform certificate or privileged install" >&2
     exit 1
 fi
+if ! rg -q 'android:permission="com.example.globalagent.permission.OPEN_MODEL_SESSION"' \
+    "$ROOT/android/model-gateway/AndroidManifest.xml"; then
+    echo "ModelGateway v2 service must require the bridge signature permission" >&2
+    exit 1
+fi
 
 test -s "$ROOT/PROJECT_PROGRESS.md"
 test -s "$ROOT/PROJECT_LOG.md"
 test -s "$ROOT/PROJECT_ISSUES.md"
 test -s "$ROOT/docs/MODEL_API_GATEWAY.md"
-
+test -f "$ROOT/android/aidl/com/example/globalagent/v2/CaptureGrant.aidl"
+test -f "$ROOT/android/aidl/com/example/globalagent/v2/PerceptionEnvelope.aidl"
+test -f "$ROOT/android/aidl/com/example/globalagent/v2/ActionPlan.aidl"
+if ! rg -q 'const int PROTOCOL_VERSION = 2;' \
+    "$ROOT/android/aidl/com/example/globalagent/v2/IV2GlobalAgent.aidl"; then
+    echo "protocol v2 AIDL version contract is missing" >&2
+    exit 1
+fi
+rg -q '^type global_agent_v2_service, service_manager_type;' \
+    "$ROOT/android/sepolicy/types.te"
+rg -q '^add_service\(agentd, global_agent_v2_service\)' \
+    "$ROOT/android/sepolicy/agentd.te"
+rg -q '^allow global_agent_bridge global_agent_v2_service:service_manager find;' \
+    "$ROOT/android/sepolicy/global_agent_bridge.te"
+rg -Fqx 'neverallow { domain -global_agent_bridge } global_agent_v2_service:service_manager find;' \
+    "$ROOT/android/sepolicy/global_agent_bridge.te"
+v2_find_rule_count="$(rg -n \
+    '^allow [^ ]+ global_agent_v2_service:service_manager find;' \
+    "$ROOT/android/sepolicy" -g '*.te' | wc -l | tr -d ' ')"
+if test "$v2_find_rule_count" != "1"; then
+    echo "global_agent_v2 service lookup must be granted only to the bridge" >&2
+    exit 1
+fi
+rg -q '^global_agent_v2[[:space:]]+u:object_r:global_agent_v2_service:s0$' \
+    "$ROOT/android/sepolicy/service_contexts"
 test -f "$ROOT/deploy/magisk/webroot/index.html"
 test -f "$ROOT/deploy/magisk/webroot/styles.css"
 test -f "$ROOT/deploy/magisk/webroot/app.js"

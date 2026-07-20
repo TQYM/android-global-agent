@@ -133,7 +133,7 @@ public final class PublicAgentConfigSchema {
       throw invalid("screenshot-retention");
     }
     final List<Object> packages = array(privacy.get("allowPackages"));
-    if (packages.size() > MAX_ALLOW_PACKAGES) {
+    if (packages.isEmpty() || packages.size() > MAX_ALLOW_PACKAGES) {
       throw invalid("package-count");
     }
     final Set<String> seen = new HashSet<>();

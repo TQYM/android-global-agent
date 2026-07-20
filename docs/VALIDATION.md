@@ -442,3 +442,156 @@ metadata indicates later API-34 tags exist, but this session's network policy
 blocked fetching their source; no unverified security-patch commit or later-tag
 permission behavior is claimed. Re-run the SurfaceFlinger permission check from
 the target checkout and record its fingerprint/SPL before deployment.
+
+## Iteration 24: protocol-v2 local contract and single-use CaptureGrant
+
+- Added 25 structured AIDL files under `com.example.globalagent.v2`. Java and
+  NDK generation passed with build-tools 35.0.0 and `-Werror`.
+- Added `CaptureGrantStore` to the portable C++ core. Host ASan/UBSan CTest
+  passed validation, stale/expiry/revoke, serial replay and 16-thread concurrent
+  replay cases; exactly one contender consumed the grant.
+- Added `ProtocolV2Validator` and negative JVM checks for token/service/digest
+  lengths, clock/TTL, image bounds, duplicate actions, coordinates, text,
+  secure-content exclusion and OCR bounds.
+- `tools/run-tests.sh`, `tools/build-android-stub.sh`,
+  `tools/build-aidl-boundary-stub.sh`, `tools/check-project.sh`, and
+  `git diff --check` passed on 2026-07-20. The generated AIDL and validators
+  compiled against API 34, 35 and 36 public SDK jars.
+- This evidence does not cover a registered v2 Binder service, sealed image FD,
+  SurfaceFlinger capture, platform certificate, SELinux caller SID, Provider
+  HTTP, Keystore or input execution. The runtime remains protocol v1 with
+  `NoopDecision`.
+- DeepSeek / `deepseek-chat` review iteration 4 returned `pass` with no issues,
+  missing tests or questions. The verbatim report is in `outputs/ai-review.md`.
+
+## Iteration 25: v2 capability and ModelGateway AVD matrix
+
+- Added package/certificate-bound `V2SessionCapability`, its factory and pure
+  JVM policy tests. Seven identity checks and seventeen capability-scope checks
+  passed; Java sources compiled against API 34, 35 and 36.
+- Added a signature-permission-protected `IModelGateway` Android Service. It
+  validates bounded text-only v2 requests and returns `STATUS_DISABLED`; no HTTP,
+  credential access, capture or input path is active.
+- Added a pinned-UID `BnPlatformAgentV2` native boundary. All methods remain
+  unsupported until exact-tree calling-SID validation; API 34 arm64 NDK C++20
+  compilation passed with `-Werror`.
+- `tools/build-model-gateway-debug-apk.sh` produced a signed public-SDK debug APK.
+  `tools/verify-model-gateway-avd.sh` passed on Enforcing Google APIs arm64 AVDs:
+  API 34 UID 10192, API 35 UID 10210 and API 36 UID 10213. All three used an
+  `untrusted_app` domain, requested only `INTERNET`, imported schema-v2 public
+  config, persisted the exact validated JSON and rejected an unknown method.
+- `tools/run-tests.sh`, `tools/build-android-stub.sh`,
+  `tools/build-aidl-boundary-stub.sh`, `tools/check-java-api-matrix.sh`,
+  `tools/check-project.sh`, XML/Shell checks and `git diff --check` passed.
+- The three AVDs do not contain matching platform keys or exact AOSP trees. This
+  result therefore does not close native service registration, calling SID,
+  private capture/input, Bridge lifecycle or product SELinux gates.
+- API 35 additionally installed an unprivileged probe APK. Its attempt to bind
+  the signature-permission-protected Gateway service returned `bind-failed`,
+  never `unexpected-bind`. A malformed `{}` config was rejected and the exact
+  previously persisted JSON remained unchanged.
+- DeepSeek / `deepseek-chat` review iteration 3 returned `pass` with no issues,
+  missing tests or questions. The report is in `outputs/ai-review.md`.
+
+## Iteration 26: API 35 Ehviewer dry-run fixture
+
+Environment and evidence:
+
+- API 35 fingerprint:
+  `google/sdk_gphone64_arm64/emu64a:15/AE3A.240806.043/12960925:userdebug/dev-keys`;
+  SELinux `Enforcing`.
+- The initial Downloads search found no AOSP tree. The later current-workspace
+  audit located `aosp-android-15`; see Iteration 27 below.
+- `bash ./gradlew --no-daemon :app:assembleAppReleaseDebug` in the supplied
+  Ehviewer project passed. Installing the resulting APK and starting its splash
+  activity reached `com.xjs.ehviewer.debug/com.hippo.ehviewer.ui.MainActivity`;
+  the UI dump contained `EhViewer` and no input action was sent.
+
+Local dry-run gates:
+
+```sh
+./tools/check-java-api-matrix.sh
+./tools/verify-model-gateway-avd.sh emulator-5554
+./tools/check-project.sh
+git diff --check
+```
+
+API 34/35/36 Java compilation and policy tests passed. The fixture enforces
+DeepSeek V4 text-only, the Ehviewer release/debug allowlist, `dryRun=true`,
+`sendImage=never` and no API key. API 35 Gateway import passed, the unprivileged
+probe returned `bind-failed`, and every mock plan reports `injectedEvents=0`.
+The Gateway service still returns `STATUS_DISABLED`.
+
+Not proven: exact-tree native v2 calling SID/registration, platform signature,
+Keystore credential enrollment, real Provider HTTPS, screenshots/OCR, user
+confirmation, ExecutionGrant or input injection.
+
+DeepSeek / `deepseek-chat` final independent review returned `pass` with no
+issues, missing tests or questions after the caller/capability, zero-injection,
+deadline integer-extreme and UTF-8 byte-boundary tests were added. The verbatim
+report is in `outputs/ai-review.md`.
+
+## Iteration 27: Android 15 r36 exact-tree boundary
+
+Source facts:
+
+- checkout: `aosp-android-15`, 106 GiB, case-sensitive journaled HFS+;
+- manifest: 1031 project paths, all present;
+- tag/build: `android-15.0.0_r36`, `BP1A.250505.005.D1`;
+- source bundle free space at validation: about 14 GB;
+- host: arm64 macOS; no local x86_64 Linux VM was found.
+
+Commands:
+
+```sh
+./tools/check-aosp15-exact-tree.sh ./aosp-android-15
+./tools/stage-aosp15-tree.sh ./aosp-android-15
+./tools/run-tests.sh
+git diff --check
+```
+
+Results: r36 platform calling-SID headers compiled for v1/v2 service and
+registration boundaries; the Android 15 capture overload with `CaptureArgs`
+was found; host C++ tests, API 34 public-NDK boundary and API 34/35/36 Java
+matrix passed. The custom product staged as
+`aosp_global_agent_arm64_phone-trunk_staging-userdebug` without modifying the
+tracked AOSP projects.
+
+Not proven: full x86_64 Linux Soong build, generated platform AIDL link,
+platform APK signing, merged product sepolicy/neverallow, booted custom image,
+runtime SID value, capture/input behavior or enforcing AVC results.
+
+## Iteration 28: caller-policy hardening and API 35 AVD rerun
+
+Commands:
+
+```sh
+./tools/run-tests.sh
+./tools/check-aosp15-exact-tree.sh ./aosp-android-15
+./tools/stage-aosp15-tree.sh ./aosp-android-15
+AOSP_TREE_35="$PWD/aosp-android-15" ./tools/check-project.sh
+./tools/verify-model-gateway-avd.sh emulator-5554
+git diff --check
+```
+
+Results:
+
+- Host ASan/UBSan CTest passed canonical SID category, exact appId/multiuser UID
+  boundaries (including user 1 and user 10), explicit descending/empty range
+  cases and 16-thread valid/invalid policy calls.
+- API 34 arm64 v1/v2 AIDL boundaries compiled with `-Werror`; API 34/35/36 Java
+  policy matrices passed.
+- Android 15 r36 calling-SID service/registration boundaries compiled against
+  the exact platform header, and the staged product was refreshed.
+- `check-project.sh` required a single Bridge `find` allow plus the v2
+  `neverallow`; with `AOSP_TREE_35` it also reran the exact-tree gate.
+- `emulator-5554` reported API 35, the documented Google userdebug fingerprint
+  and SELinux Enforcing. Gateway config import passed; the unprivileged probe
+  returned `bind-failed`. Ehviewer debug was installed and its splash Activity
+  resolved without sending input.
+
+Not proven: full merged SELinux policy compilation, custom image boot, actual
+`global_agent_bridge` runtime SID, native v2 service lookup/transaction denial,
+platform signing, capture/input, real DeepSeek HTTPS or credentials. The host
+is arm64 macOS, no x86_64 Linux VM tool was found, and the AOSP sparsebundle had
+about 13 GB free; full Soong remains blocked.

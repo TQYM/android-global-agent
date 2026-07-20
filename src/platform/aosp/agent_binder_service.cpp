@@ -4,15 +4,16 @@
 #include <chrono>
 #include <cstdint>
 #include <limits>
+#include <optional>
+#include <string_view>
 
 #include <android/binder_ibinder.h>
+#include "binder_calling_sid.h"
+#include "global_agent/bridge_caller_policy.h"
 #include "global_agent/hash.h"
 
 namespace global_agent::aosp {
 namespace {
-
-constexpr std::int32_t kRootUid = 0;
-constexpr std::int32_t kSystemUid = 1000;
 
 ndk::ScopedAStatus SecurityError() {
   return ndk::ScopedAStatus::fromExceptionCodeWithMessage(
@@ -38,10 +39,15 @@ ndk::ScopedAStatus AgentBinderService::registerBridge(
         EX_ILLEGAL_ARGUMENT, "bridge must not be null");
   }
   const std::int32_t caller = CallingUid();
+  const char *const sid = CallingSid();
   {
     std::lock_guard lock(mutex_);
-    if (registered_bridge_uid_ >= 0 && caller != registered_bridge_uid_ &&
-        caller != kRootUid && caller != kSystemUid) {
+    const std::optional<std::int32_t> pinned_uid =
+        registered_bridge_uid_ >= 0
+        ? std::optional<std::int32_t>(registered_bridge_uid_)
+        : std::nullopt;
+    if (sid == nullptr || !IsAuthorizedBridgeIdentity(
+                              caller, std::string_view(sid), pinned_uid)) {
       return SecurityError();
     }
     registered_bridge_uid_ = caller;
@@ -268,11 +274,11 @@ void AgentBinderService::ResetSession() {
 
 bool AgentBinderService::IsAuthorizedCaller() const {
   const std::int32_t caller = CallingUid();
-  if (caller == kRootUid || caller == kSystemUid) {
-    return true;
-  }
+  const char *const sid = CallingSid();
   std::lock_guard lock(mutex_);
-  return registered_bridge_uid_ >= 0 && caller == registered_bridge_uid_;
+  return sid != nullptr && registered_bridge_uid_ >= 0 &&
+      IsAuthorizedBridgeIdentity(caller, std::string_view(sid),
+                                 registered_bridge_uid_);
 }
 
 aidl::com::example::globalagent::SessionStatus

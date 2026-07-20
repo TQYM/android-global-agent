@@ -22,8 +22,14 @@
   transcript、状态显示、取消和退后台自动取消。
 - 平台任务元数据发布器，无需向守护进程授予宽泛的 dumpsys 权限。
 - 独立低权限 ModelGateway APK，仅声明 `INTERNET`，并实现严格的公开配置
-  schema v2、root/shell 调用方校验和原子持久化；尚未实现 HTTP
-  client、凭据保存或 capture grant 路径。
+  schema v2、root/shell 调用方校验和原子持久化；尚未实现 HTTP client 或凭据保存。
+- 未冻结的 protocol v2 AIDL 本地契约，覆盖会话 capability、一次性
+  `CaptureGrant`、脱敏 perception 和有界 action plan，并提供便携 grant 状态机与
+  API 34/35/36 DTO 校验。signature 权限保护的 Gateway Service 与包名/证书绑定的
+  Java capability 已可编译；private native v2 service 和真实截图路径仍固定禁用，
+  运行时仍为 v1。
+- ModelGateway 公共 SDK 调试 APK 已在 API 34/35/36 Enforcing AVD 验证为独立
+  `untrusted_app` UID，Manifest 只请求 `INTERNET`，公开配置导入成功。
 - init、SELinux、属性和服务上下文集成脚手架。
 - 主机单元测试和 Android NDK 桩交叉编译。
 

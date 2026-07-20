@@ -4,6 +4,7 @@ type agentd_exec, system_file_type, exec_type, file_type;
 init_daemon_domain(agentd)
 binder_use(agentd)
 add_service(agentd, global_agent_service)
+add_service(agentd, global_agent_v2_service)
 binder_call(agentd, global_agent_bridge)
 
 allow agentd surfaceflinger_service:service_manager find;
@@ -14,4 +15,3 @@ allow agentd global_agent_data_file:file create_file_perms;
 
 # The implementation uses the platform-signed Java bridge for input injection.
 # Do not grant system_app or agentd broad access to uinput_device.
-

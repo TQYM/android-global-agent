@@ -33,7 +33,16 @@ third-party anti-tamper controls.
   access.
 - A separate low-privilege ModelGateway APK with `INTERNET` only, strict public
   config schema v2 import, root/shell caller checks and atomic persistence. It
-  still has no HTTP client, credential storage or capture grant path.
+  still has no HTTP client or credential storage.
+- An unstable protocol-v2 AIDL contract for session capabilities, single-use
+  capture grants, redacted perception and bounded action plans, plus a portable
+  grant state machine and API 34/35/36 DTO validation. A signature-protected
+  Gateway service and package/certificate-bound Java capability now compile;
+  the private native v2 service and real capture path remain disabled, so the
+  runtime remains v1.
+- A public-SDK debug APK path for the ModelGateway, verified on API 34, 35 and
+  36 Enforcing AVDs as an independent `untrusted_app` UID requesting only
+  `INTERNET`, including successful bounded public-config import.
 - init, SELinux, property and service context integration skeletons.
 - Host unit tests and Android NDK stub cross-build.
 

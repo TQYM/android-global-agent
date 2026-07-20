@@ -1,0 +1,19 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.example.globalagent.gatewayprobe">
+    <application
+        android:allowBackup="false"
+        android:hasCode="true"
+        android:label="Global Agent Gateway Probe">
+        <activity
+            android:name=".GatewayBindProbeActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <action android:name="com.example.globalagent.gatewayprobe.BIND" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
