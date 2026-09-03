@@ -12,7 +12,7 @@ Usage:
     python ui_dump.py dump --json          # machine-readable
     python ui_dump.py dump --all           # include non-interactive nodes
     python ui_dump.py screen out.png       # PNG screenshot via exec-out
-    python ui_dump.py dump --serial DEVICE
+    python ui_dump.py --serial DEVICE dump # pick a specific device
 
 Notes:
     * `uiautomator dump` needs no AccessibilityService toggle; it runs
@@ -38,7 +38,10 @@ def run_adb(argv, serial=None, binary=False):
     if serial:
         cmd += ["-s", serial]
     cmd += argv
-    result = subprocess.run(cmd, capture_output=True)
+    try:
+        result = subprocess.run(cmd, capture_output=True)
+    except FileNotFoundError:
+        raise RuntimeError("adb not found in PATH; install platform-tools")
     if result.returncode != 0:
         detail = result.stderr.decode("utf-8", errors="replace").strip()
         raise RuntimeError("adb failed: " + " ".join(cmd) + " :: " + detail)
@@ -142,7 +145,7 @@ def command_dump(args):
         print(render_markdown(nodes))
         print()
         print("tap:    adb shell input tap <x> <y>")
-        print("text:   adb shell input text 'hello%%sworld'   (%s = space)")
+        print("text:   adb shell input text 'hello%sworld'   (%s = space)")
         print("key:    adb shell input keyevent 4            (BACK)")
 
 

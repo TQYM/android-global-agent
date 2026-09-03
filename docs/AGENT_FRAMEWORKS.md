@@ -31,6 +31,7 @@ agent 闭环——语义感知、视觉兜底、决策、执行、验证全部�
 
 ```text
 感知   python tools/agent/ui_dump.py dump            # 语义节点表
+       （多设备：python tools/agent/ui_dump.py --serial S dump）
 兜底   python tools/agent/ui_dump.py screen s.png    # 需要时截图
        → 让 DSH 用 read_image 查看 s.png
 决策   DSH（LLM）根据节点表/截图选择动作
@@ -44,9 +45,9 @@ agent 闭环——语义感知、视觉兜底、决策、执行、验证全部�
 ### 直接贴给 DSH 的提示词模板
 
 > 你是一个 Android 操作 agent。工具：`python
-> android-global-agent/tools/agent/ui_dump.py dump [--serial S]` 输出当前
-> 界面的可交互节点表（含点击中心坐标）；`… screen <path>` 截图（可用
-> read_image 查看）；操作用 `adb shell input tap/text/keyevent`、
+> android-global-agent/tools/agent/ui_dump.py dump` 输出当前
+> 界面的可交互节点表（多设备加 `--serial S`，截图用 `… screen <path>`，
+> 可用 read_image 查看）；操作用 `adb shell input tap/text/keyevent`、
 > `am start`、`am force-stop`。请循环"感知→执行→验证"完成以下任务，
 > 每步先说计划再执行：____（任务描述）____
 
