@@ -10,18 +10,19 @@ import (
 	"strings"
 )
 
-// Node is one interactive (or text-bearing) element on screen.
+// Node is one interactive (or text-bearing) element on screen. The JSON
+// tags mirror the on-device AccessibilityService protocol (port 8081).
 type Node struct {
-	Index      int
-	Text       string
-	Desc       string
-	ID         string
-	Class      string
-	Clickable  bool
-	Scrollable bool
-	CenterX    int
-	CenterY    int
-	HasBounds  bool
+	Index      int    `json:"index"`
+	Text       string `json:"text"`
+	Desc       string `json:"desc"`
+	ID         string `json:"id"`
+	Class      string `json:"class"`
+	Clickable  bool   `json:"clickable"`
+	Scrollable bool   `json:"scrollable"`
+	CenterX    int    `json:"cx"`
+	CenterY    int    `json:"cy"`
+	HasBounds  bool   `json:"-"`
 }
 
 type xmlNode struct {

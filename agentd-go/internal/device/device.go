@@ -74,13 +74,32 @@ func Home() error  { return Key(3) }
 func Wake() error  { return Key(224) }
 
 func GetSetting(key string) string {
-	out, _ := run("settings", "get", "global", key)
+	out, _ := run("settings", "get", "secure", key)
 	return strings.TrimSpace(out)
 }
 
 func SetSetting(key, value string) error {
-	_, err := run("settings", "put", "global", key, value)
+	_, err := run("settings", "put", "secure", key, value)
 	return err
+}
+
+// EnsureA11yService appends the bundled AccessibilityService APK to the
+// enabled-services list (colon separated), preserving services the user
+// already enabled, and flips the master accessibility switch.
+func EnsureA11yService() error {
+	const svc = "com.dsh.agentd/.AgentA11yService"
+	cur := GetSetting("enabled_accessibility_services")
+	if strings.Contains(cur, svc) {
+		return nil
+	}
+	next := svc
+	if cur != "" && cur != "null" {
+		next = cur + ":" + svc
+	}
+	if err := SetSetting("enabled_accessibility_services", next); err != nil {
+		return err
+	}
+	return SetSetting("accessibility_enabled", "1")
 }
 
 var animationKeys = []string{

@@ -4,6 +4,7 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"regexp"
 	"strings"
 	"sync/atomic"
@@ -156,6 +157,35 @@ func (r *Runner) sense() (string, error) {
 // settle lets screen transitions finish before the next perception pass.
 func settle() { time.Sleep(2500 * time.Millisecond) }
 
+const a11yServiceURL = "http://127.0.0.1:8081/nodes"
+
+var a11yClient = &http.Client{Timeout: 4 * time.Second}
+
+// senseViaService reads the node tree from the on-device AccessibilityService
+// APK — a first-class a11y connection that survives ColorOS killing the
+// uiautomator instrumentation bridge.
+func (r *Runner) senseViaService() ([]semantics.Node, error) {
+	resp, err := a11yClient.Get(a11yServiceURL)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("a11y service status %d", resp.StatusCode)
+	}
+	var nodes []semantics.Node
+	if err := json.NewDecoder(resp.Body).Decode(&nodes); err != nil {
+		return nil, err
+	}
+	if len(nodes) == 0 {
+		return nil, fmt.Errorf("a11y service returned no nodes")
+	}
+	for i := range nodes {
+		nodes[i].HasBounds = true // the service always reports centers
+	}
+	return nodes, nil
+}
+
 // Run executes the task loop and returns a completion summary.
 func (r *Runner) Run(task string) (string, error) {
 	restore := device.QuietAnimations()
@@ -176,25 +206,14 @@ func (r *Runner) Run(task string) (string, error) {
 			settle() // let the previous action's transition finish
 		}
 
-		xmlText, senseErr := r.sense()
 		var nodes []semantics.Node
 		prompt := ""
-		if senseErr != nil {
-			// The ColorOS launcher never reaches an idle state, so the home
-			// screen cannot be dumped; degrade to blind actions (app/key/
-			// back/home need no coordinates) and let perception recover
-			// once we land inside a real app.
-			r.Log("感知失败，降级为盲操作模式：" + senseErr.Error())
-			prompt = "当前屏幕语义不可用（桌面动画导致）。" +
-				"请使用不需要坐标的动作：app 启动应用 / key 按键 / back / home。"
-			if strings.Contains(senseErr.Error(), "null root") {
-				blinded++
-				if blinded >= 3 {
-					return "", fmt.Errorf(
-						"感知通道疑似被系统禁用（连续 %d 次 null root）。请重启手机后重试任务", blinded)
-				}
-			}
-		} else {
+		if viaService, err := r.senseViaService(); err == nil {
+			blinded = 0
+			nodes = viaService
+			r.Log(fmt.Sprintf("第 %d 步：感知到 %d 个节点（a11y 服务）", step, len(nodes)))
+			prompt = semantics.ToPrompt(nodes, 40)
+		} else if xmlText, senseErr := r.sense(); senseErr == nil {
 			blinded = 0
 			parsed, err := semantics.Parse(xmlText)
 			if err != nil {
@@ -203,6 +222,20 @@ func (r *Runner) Run(task string) (string, error) {
 			nodes = parsed
 			r.Log(fmt.Sprintf("第 %d 步：感知到 %d 个节点", step, len(nodes)))
 			prompt = semantics.ToPrompt(nodes, 40)
+		} else {
+			// Both channels failed: the ColorOS launcher never idles and the
+			// uiautomator bridge gets killed by the OS; degrade to blind
+			// actions (app/key/back/home need no coordinates).
+			r.Log("感知失败，降级为盲操作模式：" + senseErr.Error())
+			prompt = "当前屏幕语义不可用（桌面动画或通道受限导致）。" +
+				"请使用不需要坐标的动作：app 启动应用 / key 按键 / back / home。"
+			if strings.Contains(senseErr.Error(), "null root") {
+				blinded++
+				if blinded >= 3 {
+					return "", fmt.Errorf(
+						"感知通道疑似被系统禁用（连续 %d 次 null root）。请重启手机后重试任务", blinded)
+				}
+			}
 		}
 
 		messages = append(messages, llm.Message{Role: "user", Content: prompt})

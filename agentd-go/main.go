@@ -256,6 +256,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Enable the bundled AccessibilityService APK (first-class perception
+	// channel); non-fatal — uiautomator remains the fallback.
+	if err := device.EnsureA11yService(); err != nil {
+		fmt.Printf("a11y service enable failed: %v\n", err)
+	} else {
+		fmt.Println("a11y service ensured (com.dsh.agentd/.AgentA11yService)")
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", app.handleIndex)
 	mux.HandleFunc("/api/config", func(w http.ResponseWriter, r *http.Request) {
