@@ -53,15 +53,16 @@ agent 闭环——语义感知、视觉兜底、决策、执行、验证全部�
 
 ### 真机实测记录（Android 16 / ColorOS）
 
-在 OPPO PKX110（Find X8 系）、Android 16（SDK 36）、ColorOS
-`PKX110_16.0.7.202(CN01)`、KernelSU 环境实测：
+在 OnePlus 13T（PKX110，骁龙 8 至尊版）、Android 16（SDK 36）、ColorOS
+`PKX110_16.0.7.202(CN01)`、KernelSU 管理器 v3.2.4、bootloader 已解锁
+（unlocked/orange）环境实测：
 
 | 管线 | 结果 | 备注 |
 | --- | --- | --- |
-| 语义 `uiautomator dump` | ⚠️ 部分可用 | 授权后最初几分钟正常（33 节点带坐标），之后被系统静默禁用：stderr 报 `null root node returned by UiTestAutomationBridge`，**退出码仍为 0 且不落盘**——判定成功必须检查文件内容含 `<hierarchy`，不能信退出码。锁屏/解锁、`pkill -f uiautomator`、换页面均无法恢复，需重启设备 |
+| 语义 `uiautomator dump` | ⚠️ 需注意 | 授权后正常，多步任务全闭环验证通过（滚动查找「关于本机」→ 语义点击 (643,1883) → 提取整页设备信息）。之后被系统静默禁用：stderr 报 `null root node returned by UiTestAutomationBridge`，**退出码仍为 0 且不落盘**——判定成功必须检查文件内容含 `<hierarchy`，不能信退出码。锁屏/解锁、`pkill -f uiautomator`、换页面均无法恢复，**重启设备后恢复** |
 | 视觉 `screencap -p` | ✅ | 315–337 KB 有效 PNG，字节级取回需 `exec-out` + cmd/二进制安全重定向（PowerShell `>` 会转 UTF-16 损坏） |
 | 控制 `input tap/swipe/keyevent/text` + `am start` | ✅ 全绿 | 无需 ColorOS「USB 调试（安全设置）」开关；语义坐标点击闭环验证通过（dump 选节点 → tap 中心 → dump+焦点双复验） |
-| root（KernelSU） | 未授权验证 | `/data/adb` 0700；需在管理器→超级用户给 Shell 授权后 `su` 才可见 |
+| root（KernelSU） | ❌ 未生效 | 管理器在跑但**内核模块未加载**（`/proc/ksu` 不存在、GKI 内核无 KSU 痕迹），su 不可见、App profile 更新失败皆源于此；BL 已解锁，按原方式重新修补刷入 boot 镜像即可修复 |
 
 运维启示：长会话里语义通道可能随时被 OEM 静默掐断，agent 循环必须把
 「dump 失败」当作可观测状态转换（视觉/重试/提示重启），而不是异常退出。
