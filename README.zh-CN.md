@@ -55,6 +55,12 @@ build/host/global-agentd \
   --demo-action
 ```
 
+## Agent 框架与 DSH 直驱
+
+不想自研纯视觉方案时，可直接用 DSH 语义直驱真机（零框架），或选用
+uiautomator2 / droidrun 等成熟开源框架：选型对比与操作手册见
+[Agent 框架选型与 DSH 直驱指南](docs/AGENT_FRAMEWORKS.md)。
+
 ## Android NDK 桩构建
 
 ```sh

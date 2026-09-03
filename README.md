@@ -66,6 +66,14 @@ build/host/global-agentd \
   --demo-action
 ```
 
+## Agent frameworks and direct DSH control
+
+Instead of a homegrown vision-only loop, drive the device semantically
+straight from a DSH session, or adopt a mature open-source framework
+(uiautomator2, droidrun, ...). See
+[AGENT_FRAMEWORKS.md](docs/AGENT_FRAMEWORKS.md) for the comparison and
+the operating handbook.
+
 ## Android NDK stub build
 
 ```sh
