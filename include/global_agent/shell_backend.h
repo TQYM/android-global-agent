@@ -53,8 +53,8 @@ public:
 };
 
 // BuildArgv prefixes device arguments with the selected transport. On-device
-// arguments are made absolute against bin_dir because execv-family calls do
-// not search PATH for names without a slash.
+// command names are made absolute against bin_dir so behavior does not depend
+// on the daemon's PATH; bare host names such as adb resolve through PATH.
 std::vector<std::string> BuildArgv(const Config &config, AdbChannel channel,
                                    const std::vector<std::string> &device_argv);
 
