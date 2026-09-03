@@ -133,6 +133,7 @@ func (r *Runner) exec(a Action) (string, error) {
 // back off longer on null-root errors and never hammer the channel.
 func (r *Runner) sense() (string, error) {
 	var lastErr error
+	resetDone := false
 	for attempt := 0; attempt < 4; attempt++ {
 		if r.Stopped != nil && r.Stopped.Load() {
 			return "", fmt.Errorf("任务已被用户停止")
@@ -143,7 +144,14 @@ func (r *Runner) sense() (string, error) {
 		}
 		lastErr = err
 		if strings.Contains(err.Error(), "null root") {
-			time.Sleep(4 * time.Second) // channel distress: back off hard
+			if !resetDone && attempt >= 1 {
+				// self-heal: cycling the a11y master switch revives the
+				// bridge without a reboot (ColorOS kills it silently)
+				r.Log("a11y 桥疑似被系统禁用，循环无障碍开关自愈…")
+				device.ResetA11y()
+				resetDone = true
+			}
+			time.Sleep(4 * time.Second)
 		} else {
 			if !strings.Contains(err.Error(), "idle") {
 				_ = device.Wake()

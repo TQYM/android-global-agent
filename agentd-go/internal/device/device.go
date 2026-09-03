@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func run(name string, args ...string) (string, error) {
@@ -73,14 +74,24 @@ func Back() error  { return Key(4) }
 func Home() error  { return Key(3) }
 func Wake() error  { return Key(224) }
 
-func GetSetting(key string) string {
-	out, _ := run("settings", "get", "secure", key)
+func getSetting(namespace, key string) string {
+	out, _ := run("settings", "get", namespace, key)
 	return strings.TrimSpace(out)
 }
 
-func SetSetting(key, value string) error {
-	_, err := run("settings", "put", "secure", key, value)
+func setSetting(namespace, key, value string) error {
+	_, err := run("settings", "put", namespace, key, value)
 	return err
+}
+
+// ResetA11y cycles the accessibility master switch (secure namespace), which
+// revives the uiautomator instrumentation bridge after ColorOS kills it —
+// verified on OnePlus 13T / ColorOS 16: no reboot needed.
+func ResetA11y() {
+	_ = setSetting("secure", "accessibility_enabled", "0")
+	time.Sleep(2 * time.Second)
+	_ = setSetting("secure", "accessibility_enabled", "1")
+	time.Sleep(1 * time.Second)
 }
 
 // EnsureA11yService appends the bundled AccessibilityService APK to the
@@ -88,7 +99,7 @@ func SetSetting(key, value string) error {
 // already enabled, and flips the master accessibility switch.
 func EnsureA11yService() error {
 	const svc = "com.dsh.agentd/.AgentA11yService"
-	cur := GetSetting("enabled_accessibility_services")
+	cur := getSetting("secure", "enabled_accessibility_services")
 	if strings.Contains(cur, svc) {
 		return nil
 	}
@@ -96,10 +107,10 @@ func EnsureA11yService() error {
 	if cur != "" && cur != "null" {
 		next = cur + ":" + svc
 	}
-	if err := SetSetting("enabled_accessibility_services", next); err != nil {
+	if err := setSetting("secure", "enabled_accessibility_services", next); err != nil {
 		return err
 	}
-	return SetSetting("accessibility_enabled", "1")
+	return setSetting("secure", "accessibility_enabled", "1")
 }
 
 var animationKeys = []string{
@@ -114,13 +125,13 @@ var animationKeys = []string{
 func QuietAnimations() func() {
 	prev := map[string]string{}
 	for _, k := range animationKeys {
-		prev[k] = GetSetting(k)
-		_ = SetSetting(k, "0")
+		prev[k] = getSetting("global", k)
+		_ = setSetting("global", k, "0")
 	}
 	return func() {
 		for _, k := range animationKeys {
 			if v, ok := prev[k]; ok && v != "" {
-				_ = SetSetting(k, v)
+				_ = setSetting("global", k, v)
 			}
 		}
 	}
