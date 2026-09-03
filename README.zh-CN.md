@@ -40,6 +40,21 @@ build/host/global-agentd \
 
 主机可执行文件使用合成帧和仅记录日志的输入注入器。它可以在不向电脑或设备发送输入的情况下验证状态转换。
 
+## Shell 指令后端（免 AOSP 构建）
+
+可移植循环同样可以通过纯 Android shell 指令驱动真机：感知用 `screencap`，
+注入用 `input tap`/`swipe`/`keyevent`，支持 adb 转发或设备端直跑，无需
+AOSP 源码树或平台签名。命令映射、延迟预算与限制详见
+[Shell 指令后端](docs/SHELL_BACKEND.md)。
+
+```sh
+build/host/global-agentd \
+  --backend shell-adb \
+  --state /tmp/global-agent-demo.bin \
+  --iterations 4 \
+  --demo-action
+```
+
 ## Android NDK 桩构建
 
 ```sh

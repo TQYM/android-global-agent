@@ -7,6 +7,7 @@
 #include "global_agent/state_graph.h"
 #include "global_agent/state_store.h"
 #include "global_agent/session_context.h"
+#include "global_agent/shell_backend.h"
 #include "global_agent/subprocess.h"
 
 #include <algorithm>
@@ -373,6 +374,208 @@ void TestSessionContext() {
   CHECK(!context.Snapshot().active);
 }
 
+class FakeShellRunner final : public ga::shell::CommandRunner {
+public:
+  struct Call {
+    std::vector<std::string> argv;
+  };
+
+  CommandResult Run(const std::vector<std::string> &argv,
+                    std::chrono::milliseconds /*timeout*/,
+                    std::size_t /*max_output_bytes*/) override {
+    calls.push_back({argv});
+    CommandResult result;
+    result.started = true;
+    const std::string joined = Join(argv);
+    if (joined.find("screencap") != std::string::npos) {
+      result.exit_code = fail_screencap_ ? 1 : 0;
+      result.output = std::string(64, '\xAB');
+      return result;
+    }
+    if (joined.find("dumpsys activity top") != std::string::npos) {
+      result.exit_code = 0;
+      result.output =
+          "TASK com.example pid=4321\n"
+          "  ACTIVITY com.example/.MainActivity 22a71e8 pid=4321\n"
+          "  View Hierarchy:\n"
+          "    android.widget.LinearLayout{abc}\n";
+      return result;
+    }
+    if (joined.find("dumpsys window") != std::string::npos) {
+      result.exit_code = 0;
+      result.output =
+          "  mCurrentFocus=Window{7f1a001 u0 com.example/.MainActivity}\n";
+      return result;
+    }
+    result.exit_code = fail_input_ ? 1 : 0;
+    result.output = "device rejected the gesture";
+    return result;
+  }
+
+  std::vector<Call> calls;
+  bool fail_screencap_ = false;
+  bool fail_input_ = false;
+
+private:
+  static std::string Join(const std::vector<std::string> &argv) {
+    std::string joined;
+    for (const std::string &argument : argv) {
+      if (!joined.empty()) {
+        joined += ' ';
+      }
+      joined += argument;
+    }
+    return joined;
+  }
+};
+
+ga::Gesture TapGesture(std::uint64_t action_id) {
+  const std::vector<ga::TimedPoint> path{{0, {100.0F, 200.0F}},
+                                         {40, {101.0F, 200.0F}},
+                                         {80, {100.0F, 201.0F}}};
+  return ga::BuildSinglePointerGesture(action_id, 0, path);
+}
+
+ga::Gesture MultiPointerGesture() {
+  ga::Gesture gesture;
+  gesture.action_id = 9;
+  gesture.display_id = 0;
+  gesture.frames.resize(5);
+  gesture.frames[0].action = ga::GestureAction::kDown;
+  gesture.frames[0].elapsed_ms = 0;
+  gesture.frames[0].pointers = {{0, {10.0F, 10.0F}}};
+  gesture.frames[1].action = ga::GestureAction::kPointerDown;
+  gesture.frames[1].action_index = 1;
+  gesture.frames[1].elapsed_ms = 50;
+  gesture.frames[1].pointers = {{0, {10.0F, 10.0F}}, {1, {20.0F, 20.0F}}};
+  gesture.frames[2].action = ga::GestureAction::kMove;
+  gesture.frames[2].elapsed_ms = 100;
+  gesture.frames[2].pointers = {{0, {11.0F, 11.0F}}, {1, {21.0F, 21.0F}}};
+  gesture.frames[3].action = ga::GestureAction::kPointerUp;
+  gesture.frames[3].action_index = 1;
+  gesture.frames[3].elapsed_ms = 150;
+  gesture.frames[3].pointers = {{0, {12.0F, 12.0F}}, {1, {22.0F, 22.0F}}};
+  gesture.frames[4].action = ga::GestureAction::kUp;
+  gesture.frames[4].elapsed_ms = 200;
+  gesture.frames[4].pointers = {{0, {12.0F, 12.0F}}};
+  return gesture;
+}
+
+void TestShellBuildArgv() {
+  ga::shell::Config on_device;
+  CHECK(ga::shell::BuildArgv(on_device, ga::shell::AdbChannel::kShell,
+                             {"input", "tap", "5", "6"}) ==
+        (std::vector<std::string>{"/system/bin/input", "tap", "5", "6"}));
+  CHECK(ga::shell::BuildArgv(on_device, ga::shell::AdbChannel::kExecOut,
+                             {"/system/bin/dumpsys", "window"}) ==
+        (std::vector<std::string>{"/system/bin/dumpsys", "window"}));
+
+  ga::shell::Config adb;
+  adb.transport = ga::shell::Transport::kAdb;
+  CHECK(ga::shell::BuildArgv(adb, ga::shell::AdbChannel::kShell, {"input"}) ==
+        (std::vector<std::string>{"adb", "shell", "input"}));
+  CHECK(ga::shell::BuildArgv(adb, ga::shell::AdbChannel::kExecOut,
+                             {"screencap"}) ==
+        (std::vector<std::string>{"adb", "exec-out", "screencap"}));
+  adb.adb_serial = "ZX1G22";
+  CHECK(ga::shell::BuildArgv(adb, ga::shell::AdbChannel::kShell, {"input"}) ==
+        (std::vector<std::string>{"adb", "-s", "ZX1G22", "shell", "input"}));
+}
+
+void TestShellGesturePlanning() {
+  ga::shell::Config config;
+  const auto tap = ga::shell::PlanGestureCommand(config, TapGesture(3), nullptr);
+  CHECK(tap.has_value());
+  CHECK(tap->is_tap);
+  CHECK(tap->device_argv ==
+        (std::vector<std::string>{"input", "tap", "100", "200"}));
+
+  const ga::CubicBezier curve{{0, 0}, {0, 100}, {100, 100}, {100, 0}};
+  const auto swipe = ga::shell::PlanGestureCommand(
+      config, ga::BuildSinglePointerGesture(4, 0,
+                                            ga::SampleBezierByArcLength(curve, 160, 8)),
+      nullptr);
+  CHECK(swipe.has_value());
+  CHECK(!swipe->is_tap);
+  CHECK(swipe->device_argv ==
+        (std::vector<std::string>{"input", "swipe", "0", "0", "100", "0", "160"}));
+
+  ga::shell::Config adb;
+  adb.transport = ga::shell::Transport::kAdb;
+  adb.adb_serial = "S1";
+  const auto forwarded = ga::shell::PlanGestureCommand(adb, TapGesture(5), nullptr);
+  CHECK(forwarded.has_value());
+  CHECK((forwarded->argv ==
+        std::vector<std::string>{"adb", "-s", "S1", "shell", "input", "tap",
+                                 "100", "200"}));
+
+  std::string error;
+  CHECK(!ga::shell::PlanGestureCommand(config, MultiPointerGesture(), &error)
+            .has_value());
+  CHECK(error.find("single-pointer") != std::string::npos);
+
+  ga::Gesture negative = TapGesture(6);
+  for (ga::GestureFrame &frame : negative.frames) {
+    frame.pointers[0].position.x = -5.0F;
+  }
+  error.clear();
+  CHECK(!ga::shell::PlanGestureCommand(config, negative, &error).has_value());
+  CHECK(error.find("non-negative") != std::string::npos);
+}
+
+void TestShellPerception() {
+  auto runner = std::make_shared<FakeShellRunner>();
+  ga::shell::Config config;
+  ga::shell::ShellPerception perception(runner, config);
+  ga::Deadline deadline(std::chrono::milliseconds(4000));
+  ga::Perception out;
+  std::string error;
+  CHECK(perception.Capture(deadline, &out, &error));
+  CHECK(error.empty());
+  CHECK(runner->calls.size() == 3);
+  CHECK(runner->calls[0].argv ==
+        (std::vector<std::string>{"/system/bin/screencap"}));
+  const std::string frame(64, '\xAB');
+  CHECK(out.visual_hash == ga::HashBytes(frame.data(), frame.size()));
+  CHECK(out.window.component_hash ==
+        ga::HashString("com.example/.MainActivity"));
+  CHECK(out.window.focused_pid == 4321);
+  CHECK(out.window.view_hash != 0);
+  CHECK(out.confidence_milli == 600);
+
+  runner->fail_screencap_ = true;
+  error.clear();
+  CHECK(!perception.Capture(deadline, &out, &error));
+  CHECK(error.find("screencap") != std::string::npos);
+}
+
+void TestShellInjector() {
+  auto runner = std::make_shared<FakeShellRunner>();
+  ga::shell::Config config;
+  ga::shell::ShellInputInjector injector(runner, config);
+  ga::Deadline deadline(std::chrono::milliseconds(4000));
+  std::string error;
+
+  CHECK(injector.Inject(TapGesture(11), deadline, &error));
+  CHECK(error.empty());
+  CHECK(runner->calls.back().argv ==
+        (std::vector<std::string>{"/system/bin/input", "tap", "100", "200"}));
+
+  CHECK(injector.InjectKeycode(4, deadline, &error));
+  CHECK(runner->calls.back().argv ==
+        (std::vector<std::string>{"/system/bin/input", "keyevent", "4"}));
+
+  CHECK(injector.InjectText("hello world", deadline, &error));
+  CHECK(runner->calls.back().argv ==
+        (std::vector<std::string>{"/system/bin/input", "text", "hello%sworld"}));
+  CHECK(!injector.InjectText("bad\ntext", deadline, &error));
+
+  error.clear();
+  runner->fail_input_ = true;
+  CHECK(!injector.Inject(TapGesture(12), deadline, &error));
+  CHECK(error.find("exit 1") != std::string::npos);
+}
+
 } // namespace
 
 int main() {
@@ -387,6 +590,10 @@ int main() {
   TestBoundedSubprocess();
   TestAgentLoop();
   TestSessionContext();
+  TestShellBuildArgv();
+  TestShellGesturePlanning();
+  TestShellPerception();
+  TestShellInjector();
   if (failures != 0) {
     std::cerr << failures << " test assertion(s) failed\n";
     return 1;

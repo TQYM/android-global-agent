@@ -19,6 +19,7 @@ add_library(global_agent_core STATIC
     src/state_graph.cpp
     src/state_store.cpp
     src/subprocess.cpp
+    src/platform/shell/shell_backend.cpp
 )
 
 target_include_directories(global_agent_core PUBLIC include)

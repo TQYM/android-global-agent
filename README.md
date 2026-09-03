@@ -50,6 +50,22 @@ build/host/global-agentd \
 The host executable uses synthetic frames and a logging-only input injector. It
 exercises state transitions without sending input to the computer or a device.
 
+## Shell command backend (no AOSP build required)
+
+The portable loop also drives real devices through plain Android shell
+commands — `screencap` for perception, `input tap`/`swipe`/`keyevent` for
+injection — over adb or directly on-device. See
+[docs/SHELL_BACKEND.md](docs/SHELL_BACKEND.md) for the command mapping, latency
+budgets, and limitations.
+
+```sh
+build/host/global-agentd \
+  --backend shell-adb \
+  --state /tmp/global-agent-demo.bin \
+  --iterations 4 \
+  --demo-action
+```
+
 ## Android NDK stub build
 
 ```sh
