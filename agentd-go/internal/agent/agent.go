@@ -127,8 +127,9 @@ func (r *Runner) exec(a Action) (string, error) {
 	}
 }
 
-// sense dumps the UI hierarchy with retries; the a11y channel is flaky on
-// animated screens and can silently die on OEM ROMs.
+// sense dumps the UI hierarchy with retries. Dumping mid-transition is the
+// suspected trigger that permanently bricks the a11y bridge on ColorOS, so
+// back off longer on null-root errors and never hammer the channel.
 func (r *Runner) sense() (string, error) {
 	var lastErr error
 	for attempt := 0; attempt < 4; attempt++ {
@@ -140,13 +141,20 @@ func (r *Runner) sense() (string, error) {
 			return xmlText, nil
 		}
 		lastErr = err
-		if !strings.Contains(err.Error(), "idle") {
-			_ = device.Wake()
+		if strings.Contains(err.Error(), "null root") {
+			time.Sleep(4 * time.Second) // channel distress: back off hard
+		} else {
+			if !strings.Contains(err.Error(), "idle") {
+				_ = device.Wake()
+			}
+			time.Sleep(1500 * time.Millisecond)
 		}
-		time.Sleep(1500 * time.Millisecond)
 	}
 	return "", lastErr
 }
+
+// settle lets screen transitions finish before the next perception pass.
+func settle() { time.Sleep(2500 * time.Millisecond) }
 
 // Run executes the task loop and returns a completion summary.
 func (r *Runner) Run(task string) (string, error) {
@@ -157,10 +165,15 @@ func (r *Runner) Run(task string) (string, error) {
 		{Role: "system", Content: r.Cfg.SystemPrompt + actionSchema},
 		{Role: "user", Content: "任务：" + task},
 	}
+	blinded := 0 // consecutive null-root perception failures
 
 	for step := 1; step <= r.Cfg.MaxSteps; step++ {
 		if r.Stopped != nil && r.Stopped.Load() {
 			return "", fmt.Errorf("任务已被用户停止")
+		}
+
+		if step > 1 {
+			settle() // let the previous action's transition finish
 		}
 
 		xmlText, senseErr := r.sense()
@@ -174,7 +187,15 @@ func (r *Runner) Run(task string) (string, error) {
 			r.Log("感知失败，降级为盲操作模式：" + senseErr.Error())
 			prompt = "当前屏幕语义不可用（桌面动画导致）。" +
 				"请使用不需要坐标的动作：app 启动应用 / key 按键 / back / home。"
+			if strings.Contains(senseErr.Error(), "null root") {
+				blinded++
+				if blinded >= 3 {
+					return "", fmt.Errorf(
+						"感知通道疑似被系统禁用（连续 %d 次 null root）。请重启手机后重试任务", blinded)
+				}
+			}
 		} else {
+			blinded = 0
 			parsed, err := semantics.Parse(xmlText)
 			if err != nil {
 				return "", err
