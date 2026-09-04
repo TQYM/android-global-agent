@@ -6,7 +6,11 @@
 package device
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"regexp"
@@ -64,10 +68,74 @@ func Key(code int) error {
 }
 
 // Text types printable ASCII, escaping spaces as %s (the `input` convention).
+// input text cannot deliver CJK/Unicode — see TypeText for the full path.
 func Text(s string) error {
 	s = strings.ReplaceAll(s, " ", "%s")
 	_, err := run("input", "text", s)
 	return err
+}
+
+const a11yBase = "http://127.0.0.1:8081"
+
+var a11yHTTP = &http.Client{Timeout: 5 * time.Second}
+
+// SetTextViaA11y delivers text to the focused editable node through the
+// bundled AccessibilityService (ACTION_SET_TEXT) — the only channel that
+// handles CJK/Unicode and punctuation that `input text` mangles. The text
+// replaces the field content unless append is true.
+func SetTextViaA11y(text string, appendMode bool) error {
+	body, _ := json.Marshal(map[string]interface{}{
+		"text": text, "append": appendMode,
+	})
+	resp, err := a11yHTTP.Post(a11yBase+"/settext", "application/json",
+		bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("a11y 服务不可达（agentd-apk 未运行？）: %w", err)
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+	var r struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(data, &r); err != nil {
+		return fmt.Errorf("a11y settext 响应非法: %s", trim120(string(data)))
+	}
+	if !r.OK {
+		return fmt.Errorf("a11y settext 被拒绝: %s", r.Error)
+	}
+	return nil
+}
+
+func trim120(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) > 120 {
+		return s[:120] + "..."
+	}
+	return s
+}
+
+// isASCII reports whether s contains only printable ASCII + whitespace
+// (i.e. characters `input text` can deliver).
+func isASCII(s string) bool {
+	for _, r := range s {
+		if r < 32 || r > 126 {
+			return false
+		}
+	}
+	return true
+}
+
+// TypeText routes text into the focused field: the a11y service first
+// (full Unicode, replaces content), `input text` as the ASCII fallback.
+func TypeText(s string) error {
+	if err := SetTextViaA11y(s, false); err != nil {
+		if isASCII(s) {
+			return Text(s)
+		}
+		return fmt.Errorf("中文/特殊字符输入需要 agentd-apk 无障碍服务: %w", err)
+	}
+	return nil
 }
 
 func Back() error  { return Key(4) }
@@ -137,11 +205,37 @@ func QuietAnimations() func() {
 	}
 }
 
+// appAliases maps AOSP/Play package names LLMs tend to guess onto their
+// OEM counterparts actually shipped on this device family (ColorOS 16 /
+// OnePlus 13T verified via pm). Tried in order after the guessed package
+// fails to resolve.
+var appAliases = map[string][]string{
+	"com.android.gallery3d":          {"com.coloros.gallery3d", "com.oneplus.gallery"},
+	"com.google.android.apps.photos": {"com.coloros.gallery3d", "com.oneplus.gallery"},
+	"com.android.camera2":            {"com.oplus.camera", "com.oneplus.camera"},
+	"com.android.calculator2":        {"com.coloros.calculator"},
+	"com.android.music":              {"com.heytap.music"},
+}
+
 // StartApp launches an app by package name. It resolves the launcher
 // activity first (am start needs no monkey), and falls back to running the
 // monkey script through sh — direct exec fails with ENOEXEC since monkey is
-// a script wrapper, not a binary.
+// a script wrapper, not a binary. When the guessed package is absent, OEM
+// aliases from appAliases are tried before giving up.
 func StartApp(pkg, activity string) error {
+	if err := startAppOnce(pkg, activity); err == nil {
+		return nil
+	}
+	for _, alt := range appAliases[pkg] {
+		if err := startAppOnce(alt, ""); err == nil {
+			return nil
+		}
+	}
+	// report the original failure so the LLM sees the alias attempt too
+	return startAppOnce(pkg, activity)
+}
+
+func startAppOnce(pkg, activity string) error {
 	if activity != "" {
 		_, err := run("am", "start", "-n", pkg+"/"+activity)
 		return err

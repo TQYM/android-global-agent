@@ -21,9 +21,39 @@ import (
 	"time"
 )
 
+// Message is one chat message. Content is normally a plain string; for
+// vision models it can be a []ContentPart mixing text and image parts
+// (OpenAI-compatible multimodal shape, accepted by GLM-4V series).
 type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role    string      `json:"role"`
+	Content interface{} `json:"content"`
+}
+
+// ContentPart is one element of a multimodal content array.
+type ContentPart struct {
+	Type     string    `json:"type"` // "text" | "image_url"
+	Text     string    `json:"text,omitempty"`
+	ImageURL *ImageURL `json:"image_url,omitempty"`
+}
+
+// ImageURL carries a data: URL (base64 JPEG) for vision requests.
+type ImageURL struct {
+	URL string `json:"url"`
+}
+
+// TextMessage builds a plain text message.
+func TextMessage(role, text string) Message {
+	return Message{Role: role, Content: text}
+}
+
+// VisionMessage builds a multimodal message: text plus one screenshot
+// data URL. Non-vision models reject this shape, so callers gate it on
+// the config's vision switch.
+func VisionMessage(role, text, dataURL string) Message {
+	return Message{Role: role, Content: []ContentPart{
+		{Type: "text", Text: text},
+		{Type: "image_url", ImageURL: &ImageURL{URL: dataURL}},
+	}}
 }
 
 type Client struct {

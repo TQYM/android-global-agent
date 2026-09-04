@@ -14,6 +14,7 @@ import (
 	"agentd/internal/device"
 	"agentd/internal/llm"
 	"agentd/internal/semantics"
+	"agentd/internal/vision"
 )
 
 // Action is the single JSON step the LLM emits.
@@ -54,8 +55,8 @@ const actionSchema = `
 - {"action":"swipe","x1":<int>,"y1":<int>,"x2":<int>,"y2":<int>,"dur":<int>} 滑动
 - {"action":"scroll","direction":"up"|"down"}    翻页
 - {"action":"key","code":<int>}                  按键(4=返回,3=主页)
-- {"action":"text","text":"..."}                 输入文字(空格用 %s)
-- {"action":"app","package":"包名"}               启动应用(如 com.android.settings)
+- {"action":"text","text":"..."}                 输入文字(支持中文，会替换输入框内容；先 tap 聚焦输入框)
+- {"action":"app","package":"包名"}               启动应用(如 com.android.settings；OEM 机型请优先 tap 桌面图标)
 - {"action":"done","summary":"完成说明"}          任务已完成
 只输出 JSON，不要输出任何其他文字、解释或 markdown 代码块。`
 
@@ -114,7 +115,7 @@ func (r *Runner) exec(a Action) (string, error) {
 	case "key":
 		return fmt.Sprintf("key %d", a.Code), device.Key(a.Code)
 	case "text":
-		return "text", device.Text(a.Text)
+		return "text", device.TypeText(a.Text)
 	case "app":
 		return "app " + a.Package, device.StartApp(a.Package, a.Activity)
 	case "back":
@@ -246,7 +247,7 @@ func (r *Runner) Run(task string) (string, error) {
 			}
 		}
 
-		messages = append(messages, llm.Message{Role: "user", Content: prompt})
+		messages = append(messages, r.perceptionMessage(prompt))
 		reply, err := r.Client.Chat(messages)
 		if err != nil {
 			return "", fmt.Errorf("LLM 调用失败: %v", err)
@@ -266,8 +267,15 @@ func (r *Runner) Run(task string) (string, error) {
 
 		label, execErr := r.exec(action)
 		if execErr != nil {
+			// non-fatal: tell the LLM what failed so it can pick another
+			// route (wrong package name, missing a11y service, …)
 			r.Log(fmt.Sprintf("执行 %s 失败：%v", label, execErr))
-			return "", execErr
+			messages = append(messages,
+				llm.TextMessage("assistant", reply),
+				llm.TextMessage("user", "动作执行失败："+trimErr(execErr)+
+					"。请换一种方式继续（例如 tap 屏幕上的图标/元素，而不是猜包名），或 done。"),
+			)
+			continue
 		}
 		r.Log(fmt.Sprintf("第 %d 步：执行 %s%s", step, label, reason(action.Reason)))
 		if r.OnStep != nil {
@@ -277,8 +285,8 @@ func (r *Runner) Run(task string) (string, error) {
 
 		// trim conversation to keep the context bounded
 		messages = append(messages,
-			llm.Message{Role: "assistant", Content: reply},
-			llm.Message{Role: "user", Content: "已执行动作，这是执行后的屏幕，请继续下一步（或 done）。"},
+			llm.TextMessage("assistant", reply),
+			llm.TextMessage("user", "已执行动作，这是执行后的屏幕，请继续下一步（或 done）。"),
 		)
 		if len(messages) > 10 {
 			// keep system + first task message + last 8
@@ -286,6 +294,30 @@ func (r *Runner) Run(task string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("达到最大步数 %d，任务未确认完成", r.Cfg.MaxSteps)
+}
+
+// perceptionMessage wraps the node-table prompt, attaching the current
+// screenshot when vision is enabled. The screenshot is refreshed here so
+// the image the model sees matches the nodes it was built from.
+func (r *Runner) perceptionMessage(prompt string) llm.Message {
+	if !r.Cfg.Vision {
+		return llm.TextMessage("user", prompt)
+	}
+	if err := device.Screenshot(r.ScreenPath); err == nil {
+		if dataURL, derr := vision.DataURL(r.ScreenPath, 768, 70); derr == nil {
+			return llm.VisionMessage("user", prompt+"\n\n同时附上了当前屏幕截图。", dataURL)
+		}
+	}
+	// screenshot/compress failed: degrade gracefully to text-only
+	return llm.TextMessage("user", prompt)
+}
+
+func trimErr(err error) string {
+	s := err.Error()
+	if len(s) > 300 {
+		return s[:300] + "..."
+	}
+	return s
 }
 
 func reason(s string) string {

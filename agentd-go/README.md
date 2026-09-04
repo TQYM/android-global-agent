@@ -70,6 +70,19 @@ adb shell "su -c 'mkdir -p /data/local/tmp/agentd && \
 ## 路线图
 
 - [ ] KernelSU/Magisk 模块打包，开机自启
-- [ ] AccessibilityService APK 替代 uiautomator 做感知（根治 a11y 桥被掐）
-- [ ] 视觉多模态：截图喂给 GLM-4V 系模型，语义+视觉双通道
+- [x] AccessibilityService APK 替代 uiautomator 做感知（根治 a11y 桥被掐）
+      —— v1.1 起 APK 同时提供 `POST /settext`（ACTION_SET_TEXT 中文输入）
+- [x] 视觉多模态：截图喂给 GLM-4V 系模型，语义+视觉双通道
+      —— 配置里开 `vision`，截图降采样为 ≤768 宽 JPEG 随每步感知一起发送
 - [ ] 任务队列与历史
+
+## v1.1 变更（OnePlus 13T / ColorOS 16 实测通过）
+
+- **agentd-apk 必须声明 `INTERNET` 权限**：Android 的 paranoid networking
+  要求 INTERNET 才能绑定监听 socket，否则 ServerSocket 报 EPERM。
+- **HTTP 体按字节读**：Content-Length 是字节数；char Reader 会在 CJK
+  UTF-8 正文中饿死（字节≠字符），导致 settext 请求挂死。
+- `text` 动作路由：优先 a11y `ACTION_SET_TEXT`（支持中文，替换内容），
+  纯 ASCII 时回退 `input text`。
+- 执行失败不再中止任务：错误反馈给 LLM 换路继续（例如包名猜错时改 tap 图标）。
+- OEM 包名别名：gallery3d/photos → `com.coloros.gallery3d` 等。

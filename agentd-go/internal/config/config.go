@@ -15,6 +15,10 @@ type Config struct {
 	Port         string `json:"port"`
 	MaxSteps     int    `json:"max_steps"`
 	SystemPrompt string `json:"system_prompt"`
+	// Vision sends the current screenshot (compressed JPEG) with every
+	// perception message. Requires a vision-capable model (GLM-4V series);
+	// text-only models will reject the multimodal shape.
+	Vision bool `json:"vision"`
 }
 
 // Default returns sane defaults (no key until the user fills it in).

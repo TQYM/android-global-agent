@@ -52,6 +52,9 @@ th { color:var(--dim); font-weight:600; }
       <input id="model" placeholder="gpt-5.4">
       <label>最大步数</label>
       <input id="max_steps" type="number" value="20">
+      <label style="display:flex;align-items:center;gap:6px;color:var(--fg);cursor:pointer">
+        <input id="vision" type="checkbox" style="width:auto"> 视觉模式（把截图发给模型，需视觉模型如 glm-4.5v / glm-4v-plus）
+      </label>
       <div class="row">
         <button id="saveCfg">保存配置</button>
         <button id="testBtn" class="secondary">测试感知</button>
@@ -97,6 +100,7 @@ async function loadConfig() {
   $('api_key').value = c.api_key || '';
   $('model').value = c.model || '';
   $('max_steps').value = c.max_steps || 20;
+  $('vision').checked = !!c.vision;
 }
 
 $('saveCfg').onclick = async () => {
@@ -105,6 +109,7 @@ $('saveCfg').onclick = async () => {
     api_key: $('api_key').value.trim(),
     model: $('model').value.trim(),
     max_steps: parseInt($('max_steps').value) || 20,
+    vision: $('vision').checked,
   };
   const r = await fetch('/api/config', {
     method: 'POST', headers: {'Content-Type':'application/json'},
