@@ -47,9 +47,19 @@ adb install -r build/agent-client.apk
 配置（Base URL / API Key / 模型 / ASR 模型 / 步数 / 视觉开关）在 App 内「设置」面板，
 存于本地 SharedPreferences。
 
+## 纯视觉模式（应用屏蔽无障碍时的兜底）
+
+部分应用（实测：微信 @ ColorOS 16）对**所有**无障碍服务隐藏视图层级
+（连 shell 权限的 uiautomator 都只能读到 1 个空节点），但 `takeScreenshot`
+仍能拿到像素。引擎检测到「连续 2 步 0 节点 + 截图非黑屏」即自动进入纯视觉模式：
+提示词改为比例坐标驱动（`tap px,py` / `swipe px1,py1,px2,py2`，0~1 相对屏幕宽高），
+模型看截图估计目标位置。实测任务「打开微信朋友圈给最新一条点赞」10 步完成。
+限制：纯视觉模式下无法 ACTION_SET_TEXT（没有节点可写），输入类任务仍需节点可见。
+
 ## 已知边界
 
 - `Settings.ACTION_NOTIFICATION_SETTINGS` 无公开常量，用字面 action 字符串
 - 无 root 下 WiFi/蓝牙只能弹系统面板而非静默开关
 - ColorOS 截图限频：已内置间隔+重试+降级，极端场景视觉会自动降级为纯节点
 - 与旧版 agentd 栈的无障碍服务互斥（rebind 会互相覆盖 enabled 列表），二选一使用
+- 微信等应用屏蔽无障碍节点树（ColorOS 16 实测）→ 自动纯视觉模式兜底，但无法输入文字

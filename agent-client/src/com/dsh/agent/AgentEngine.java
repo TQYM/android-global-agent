@@ -107,6 +107,7 @@ public class AgentEngine {
             "- {\"action\":\"wake\"}                              点亮屏幕\n" +
             "【界面操作 —— 直达做不到时的兜底】\n" +
             "- {\"action\":\"tap\",\"index\":<节点编号>}            点击节点（首选编号；目标不在表中才用 \"x\",\"y\" 坐标）\n" +
+            "- {\"action\":\"tap\",\"px\":0.50,\"py\":0.42}         比例坐标点击(px,py 为 0~1 的屏幕宽/高比例，从截图估计；仅节点表为空时使用，swipe 同理可用 px1,py1,px2,py2)\n" +
             "- {\"action\":\"longpress\",\"index\":<节点编号>}      长按节点(可带 \"dur\" 毫秒)\n" +
             "- {\"action\":\"swipe\",\"x1\":<int>,\"y1\":<int>,\"x2\":<int>,\"y2\":<int>,\"dur\":<int>} 滑动\n" +
             "- {\"action\":\"scroll\",\"direction\":\"up\"|\"down\"}    翻页\n" +
@@ -117,6 +118,7 @@ public class AgentEngine {
             "- {\"action\":\"done\",\"summary\":\"完成说明\"}          任务已完成\n" +
             "原则：能直达不翻页；页面在加载先 wait；弹窗/广告优先点关闭/跳过；同一动作执行后屏幕没变化必须换策略，不要重复点同一位置。\n" +
             "返回上级界面有三条路，按顺序尝试，一条没反应立刻换下一条：① key 4 系统返回；② tap 节点表里的「返回/←/back」节点（通常在屏幕左上角，坐标 x 很小、y 在顶部）；③ edge_back 边缘手势返回。\n" +
+            "节点数为 0 或屏幕全黑 = 应用正在加载（启动页/开屏广告），必须先 wait 2000~3000ms，绝对不要按 key 3/key 4/edge_back——那会把刚打开的应用退掉。开屏广告出现「跳过」节点时 tap 它。\n" +
             "只输出 JSON，不要输出任何其他文字、解释或 markdown 代码块。";
 
     // OEM 包名别名（ColorOS/一加实测）
@@ -176,7 +178,9 @@ public class AgentEngine {
         int repeats = 0;
         java.util.List<String> fpHistory = new java.util.ArrayList<>();
         int shotFails = 0;
+        int zeroNodeSteps = 0;
         boolean visionOn = vision;
+        boolean visionOnly = false;
 
         for (step = 1; step <= maxSteps; step++) {
             if (stopRequested) { log("任务已被用户停止"); return; }
@@ -185,16 +189,39 @@ public class AgentEngine {
             if (svc == null) { log("无障碍服务断开，任务中止"); return; }
 
             List<NodeInfo> nodes = svc.collectNodes();
-            log("第 " + step + " 步：感知到 " + nodes.size() + " 个节点");
-            String prompt = NodeInfo.toPrompt(nodes, 40);
+            if (nodes.isEmpty()) {   // 加载中的空屏不值得问模型
+                sleep(1500);
+                nodes = svc.collectNodes();
+            }
+            zeroNodeSteps = nodes.isEmpty() ? zeroNodeSteps + 1 : 0;
+            log("第 " + step + " 步：感知到 " + nodes.size() + " 个节点" +
+                    (zeroNodeSteps >= 2 ? "（连续空节点，疑似应用屏蔽无障碍）" : ""));
 
             // 视觉：截图降采样为 ≤640px JPEG data URL；连续失败自动降级纯节点模式
             JSONObject perceive;
+            String prompt;
             if (visionOn) {
                 Bitmap bmp = svc.screenshot();
                 String dataUrl = bmpToDataUrl(bmp, 640, 60);
                 if (dataUrl != null) {
                     shotFails = 0;
+                    int lum = meanLuma(bmp);
+                    log("截图亮度≈" + lum + (lum < 8 ? "（黑屏，截图可能被屏蔽）" : ""));
+                    if (zeroNodeSteps >= 2 && lum >= 8) {
+                        // 纯视觉模式：节点被屏蔽但像素可见 → 坐标驱动
+                        if (!visionOnly) { visionOnly = true; log("进入纯视觉模式：改用比例坐标操作"); }
+                        android.graphics.Rect wb = svc.getSystemService(android.view.WindowManager.class)
+                                .getCurrentWindowMetrics().getBounds();
+                        prompt = "该应用屏蔽了无障碍节点（节点表为空），只能看截图用比例坐标操作。" +
+                                "屏幕宽=" + wb.width() + " 高=" + wb.height() + "。" +
+                                "tap/longpress 用 px,py（0~1 比例），swipe 用 px1,py1,px2,py2。" +
+                                "back/home/key 不受影响仍可用。仔细看截图找到目标位置再动手。";
+                    } else {
+                        visionOnly = false;
+                        prompt = nodes.isEmpty()
+                                ? "当前屏幕没有任何可交互节点（应用正在加载或显示开屏广告）。请 wait 等待加载，或看到「跳过」就点它。"
+                                : NodeInfo.toPrompt(nodes, 40);
+                    }
                     perceive = LlmClient.visionMsg("user", prompt + "\n\n同时附上了当前屏幕截图。", dataUrl);
                     pushScreen(bmp);
                 } else {
@@ -203,10 +230,14 @@ public class AgentEngine {
                         visionOn = false;
                         log("截图连续失败（系统限频），转为纯节点模式");
                     }
-                    perceive = LlmClient.textMsg("user", prompt);
+                    perceive = LlmClient.textMsg("user", nodes.isEmpty()
+                            ? "当前屏幕没有任何可交互节点且截图失败。请 wait 后重试。"
+                            : NodeInfo.toPrompt(nodes, 40));
                 }
             } else {
-                perceive = LlmClient.textMsg("user", prompt);
+                perceive = LlmClient.textMsg("user", nodes.isEmpty()
+                        ? "当前屏幕没有任何可交互节点（应用正在加载或显示开屏广告）。请 wait 等待加载。"
+                        : NodeInfo.toPrompt(nodes, 40));
             }
             messages.put(perceive);
 
@@ -262,7 +293,8 @@ public class AgentEngine {
             lastKey = actKey;
 
             // 无进展看门狗：屏幕指纹连续 6 步不变 → 任务卡死，中止
-            fpHistory.add(NodeInfo.fingerprint(svc.collectNodes()));
+            List<NodeInfo> fpNodes = svc.collectNodes();
+            fpHistory.add(fpNodes.isEmpty() ? "empty-" + (step % 2) : NodeInfo.fingerprint(fpNodes));
             if (fpHistory.size() >= 6) {
                 java.util.List<String> tail = fpHistory.subList(fpHistory.size() - 6, fpHistory.size());
                 boolean allSame = true;
@@ -342,8 +374,17 @@ public class AgentEngine {
                 return "longpress" + (a.has("index") ? "#" + a.optInt("index") : "");
             }
             case "swipe": {
-                boolean ok = svc.swipe(a.optInt("x1"), a.optInt("y1"),
-                        a.optInt("x2"), a.optInt("y2"), a.optInt("dur", 400));
+                int x1 = a.optInt("x1"), y1 = a.optInt("y1"),
+                    x2 = a.optInt("x2"), y2 = a.optInt("y2");
+                if (a.has("px1")) {
+                    android.graphics.Rect wb = svc.getSystemService(android.view.WindowManager.class)
+                            .getCurrentWindowMetrics().getBounds();
+                    x1 = (int) (a.optDouble("px1", 0) * wb.width());
+                    y1 = (int) (a.optDouble("py1", 0) * wb.height());
+                    x2 = (int) (a.optDouble("px2", 0) * wb.width());
+                    y2 = (int) (a.optDouble("py2", 0) * wb.height());
+                }
+                boolean ok = svc.swipe(x1, y1, x2, y2, a.optInt("dur", 400));
                 if (!ok) throw new Exception("滑动手势被系统取消");
                 return "swipe";
             }
@@ -388,6 +429,7 @@ public class AgentEngine {
             case "app": {
                 String pkg = a.optString("package", "");
                 startApp(pkg);
+                sleep(2000);   // 应用启动必有启动页，等它加载完再感知
                 return "app " + pkg;
             }
             case "setting": {
@@ -457,7 +499,7 @@ public class AgentEngine {
         }
     }
 
-    /** 解析点击目标：优先 index → 节点中心；否则 x/y。 */
+    /** 解析点击目标：优先 index → 节点中心；px/py 比例坐标；否则 x/y。 */
     private int[] resolvePoint(AgentA11yService svc, JSONObject a) throws Exception {
         if (a.has("index")) {
             int idx = a.optInt("index");
@@ -467,7 +509,28 @@ public class AgentEngine {
             }
             throw new Exception("节点编号 " + idx + " 不在当前节点表中（共 " + nodes.size() + " 个）");
         }
+        if (a.has("px") || a.has("py")) {
+            android.graphics.Rect wb = svc.getSystemService(android.view.WindowManager.class)
+                    .getCurrentWindowMetrics().getBounds();
+            return new int[]{ (int) (a.optDouble("px", 0.5) * wb.width()),
+                              (int) (a.optDouble("py", 0.5) * wb.height()) };
+        }
         return new int[]{a.optInt("x"), a.optInt("y")};
+    }
+
+    /** 截图平均亮度（抽样），黑屏检测 + 诊断日志用。 */
+    private static int meanLuma(Bitmap bmp) {
+        if (bmp == null) return 0;
+        int w = bmp.getWidth(), h = bmp.getHeight();
+        long sum = 0; int n = 0;
+        for (int y = 0; y < h; y += 40) {
+            for (int x = 0; x < w; x += 40) {
+                int c = bmp.getPixel(x, y);
+                sum += ((c >> 16) & 0xff) * 0.299 + ((c >> 8) & 0xff) * 0.587 + (c & 0xff) * 0.114;
+                n++;
+            }
+        }
+        return n == 0 ? 0 : (int) (sum / n);
     }
 
     private void startApp(String pkg) throws Exception {
