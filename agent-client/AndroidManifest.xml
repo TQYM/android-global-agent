@@ -43,6 +43,19 @@
                 android:resource="@xml/a11y_config"/>
         </service>
 
+        <!-- Agent 键盘：无键盘 IME，广播驱动 commitText，穿透无障碍屏蔽场景 -->
+        <service
+            android:name=".AgentImeService"
+            android:exported="true"
+            android:permission="android.permission.BIND_INPUT_METHOD">
+            <intent-filter>
+                <action android:name="android.view.InputMethod"/>
+            </intent-filter>
+            <meta-data
+                android:name="android.view.im"
+                android:resource="@xml/ime_config"/>
+        </service>
+
         <!-- 前台保活：对抗 ColorOS/国产 ROM 的应用速冻 -->
         <service
             android:name=".KeepAliveService"

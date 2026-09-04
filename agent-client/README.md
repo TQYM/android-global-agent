@@ -19,6 +19,7 @@
 | 亮度 | `Settings.System` | 首次引导授予「修改系统设置」 |
 | 音量 | `AudioManager` | |
 | 亮屏 | `PowerManager` WAKE_LOCK | |
+| 输入法通道 | Agent 键盘（无键盘 IME） | 应用屏蔽无障碍时的中文输入：ACTION_SET_TEXT 被拒自动回退到广播 commitText；设置里启用并切换一次即可 |
 | 语音输入 | `AudioRecord` 16kHz PCM → WAV → `/audio/transcriptions` | 原生录音，无浏览器兼容问题 |
 | 防速冻保活 | `KeepAliveService` 前台服务 | 对抗 ColorOS 应用速冻（老 WebUI 方案 8081 失联的根因） |
 
@@ -54,7 +55,7 @@ adb install -r build/agent-client.apk
 仍能拿到像素。引擎检测到「连续 2 步 0 节点 + 截图非黑屏」即自动进入纯视觉模式：
 提示词改为比例坐标驱动（`tap px,py` / `swipe px1,py1,px2,py2`，0~1 相对屏幕宽高），
 模型看截图估计目标位置。实测任务「打开微信朋友圈给最新一条点赞」10 步完成。
-限制：纯视觉模式下无法 ACTION_SET_TEXT（没有节点可写），输入类任务仍需节点可见。
+输入：纯视觉模式下 ACTION_SET_TEXT 不可用时自动回退 **Agent 键盘**（IME 广播 commitText），实测微信「文件传输助手」发中文消息全链路通过。
 
 ## 已知边界
 
@@ -62,4 +63,4 @@ adb install -r build/agent-client.apk
 - 无 root 下 WiFi/蓝牙只能弹系统面板而非静默开关
 - ColorOS 截图限频：已内置间隔+重试+降级，极端场景视觉会自动降级为纯节点
 - 与旧版 agentd 栈的无障碍服务互斥（rebind 会互相覆盖 enabled 列表），二选一使用
-- 微信等应用屏蔽无障碍节点树（ColorOS 16 实测）→ 自动纯视觉模式兜底，但无法输入文字
+- 微信等应用屏蔽无障碍节点树（ColorOS 16 实测）→ 自动纯视觉模式兜底；文字输入走 Agent 键盘 IME 通道

@@ -47,6 +47,8 @@ public class AgentEngine {
     private volatile Thread thread;
     private volatile Listener listener;
     private int step;
+    private String lastApp;        // 当前任务所在应用包名
+    private boolean visionOnly;    // 纯视觉模式（节点被应用屏蔽）
 
     private AgentEngine(Context ctx) { app = ctx; }
 
@@ -118,6 +120,7 @@ public class AgentEngine {
             "- {\"action\":\"done\",\"summary\":\"完成说明\"}          任务已完成\n" +
             "原则：能直达不翻页；页面在加载先 wait；弹窗/广告优先点关闭/跳过；同一动作执行后屏幕没变化必须换策略，不要重复点同一位置。\n" +
             "返回上级界面有三条路，按顺序尝试，一条没反应立刻换下一条：① key 4 系统返回；② tap 节点表里的「返回/←/back」节点（通常在屏幕左上角，坐标 x 很小、y 在顶部）；③ edge_back 边缘手势返回。\n" +
+            "应用内部的设置页/详情页/聊天页/个人主页等都是该应用的一部分——页面跳转了不代表离开了应用，不要因此返回或重启；判断标准是任务进展。\n" +
             "节点数为 0 或屏幕全黑 = 应用正在加载（启动页/开屏广告），必须先 wait 2000~3000ms，绝对不要按 key 3/key 4/edge_back——那会把刚打开的应用退掉。开屏广告出现「跳过」节点时 tap 它。\n" +
             "只输出 JSON，不要输出任何其他文字、解释或 markdown 代码块。";
 
@@ -180,7 +183,9 @@ public class AgentEngine {
         int shotFails = 0;
         int zeroNodeSteps = 0;
         boolean visionOn = vision;
-        boolean visionOnly = false;
+        lastApp = null;
+        visionOnly = false;
+        boolean prevFailed = false;
 
         for (step = 1; step <= maxSteps; step++) {
             if (stopRequested) { log("任务已被用户停止"); return; }
@@ -196,11 +201,16 @@ public class AgentEngine {
             zeroNodeSteps = nodes.isEmpty() ? zeroNodeSteps + 1 : 0;
             log("第 " + step + " 步：感知到 " + nodes.size() + " 个节点" +
                     (zeroNodeSteps >= 2 ? "（连续空节点，疑似应用屏蔽无障碍）" : ""));
+            String appHint = lastApp == null ? "" :
+                    "（当前在应用 " + lastApp + " 内，其二级/三级页面都是它的一部分，不要因界面变化就返回或重启）\n";
 
             // 视觉：截图降采样为 ≤640px JPEG data URL；连续失败自动降级纯节点模式
             JSONObject perceive;
             String prompt;
-            if (visionOn) {
+            boolean needShot = visionOn && (visionOnly || step == 1 || nodes.size() < 5
+                    || prevFailed || zeroNodeSteps >= 1);
+            prevFailed = false;
+            if (needShot) {
                 Bitmap bmp = svc.screenshot();
                 String dataUrl = bmpToDataUrl(bmp, 640, 60);
                 if (dataUrl != null) {
@@ -212,15 +222,15 @@ public class AgentEngine {
                         if (!visionOnly) { visionOnly = true; log("进入纯视觉模式：改用比例坐标操作"); }
                         android.graphics.Rect wb = svc.getSystemService(android.view.WindowManager.class)
                                 .getCurrentWindowMetrics().getBounds();
-                        prompt = "该应用屏蔽了无障碍节点（节点表为空），只能看截图用比例坐标操作。" +
+                        prompt = appHint + "该应用屏蔽了无障碍节点（节点表为空），只能看截图用比例坐标操作。" +
                                 "屏幕宽=" + wb.width() + " 高=" + wb.height() + "。" +
                                 "tap/longpress 用 px,py（0~1 比例），swipe 用 px1,py1,px2,py2。" +
                                 "back/home/key 不受影响仍可用。仔细看截图找到目标位置再动手。";
                     } else {
                         visionOnly = false;
-                        prompt = nodes.isEmpty()
+                        prompt = appHint + (nodes.isEmpty()
                                 ? "当前屏幕没有任何可交互节点（应用正在加载或显示开屏广告）。请 wait 等待加载，或看到「跳过」就点它。"
-                                : NodeInfo.toPrompt(nodes, 40);
+                                : NodeInfo.toPrompt(nodes, 40));
                     }
                     perceive = LlmClient.visionMsg("user", prompt + "\n\n同时附上了当前屏幕截图。", dataUrl);
                     pushScreen(bmp);
@@ -235,9 +245,9 @@ public class AgentEngine {
                             : NodeInfo.toPrompt(nodes, 40));
                 }
             } else {
-                perceive = LlmClient.textMsg("user", nodes.isEmpty()
+                perceive = LlmClient.textMsg("user", appHint + (nodes.isEmpty()
                         ? "当前屏幕没有任何可交互节点（应用正在加载或显示开屏广告）。请 wait 等待加载。"
-                        : NodeInfo.toPrompt(nodes, 40));
+                        : NodeInfo.toPrompt(nodes, 40)));
             }
             messages.put(perceive);
 
@@ -275,6 +285,7 @@ public class AgentEngine {
             }
 
             if (execErr != null) {
+                prevFailed = true;
                 log("执行 " + label + " 失败：" + execErr);
                 messages.put(LlmClient.textMsg("assistant", reply));
                 messages.put(LlmClient.textMsg("user", "动作执行失败：" + trim(execErr, 300) +
@@ -337,8 +348,8 @@ public class AgentEngine {
 
     private void waitForChange(AgentA11yService svc, List<NodeInfo> prev) {
         String fp = NodeInfo.fingerprint(prev);
-        sleep(350);
-        long deadline = System.currentTimeMillis() + 1600;
+        sleep(250);
+        long deadline = System.currentTimeMillis() + 1200;
         while (System.currentTimeMillis() < deadline) {
             if (stopRequested) return;
             List<NodeInfo> cur = svc.collectNodes();
@@ -420,16 +431,25 @@ public class AgentEngine {
                 return "edge_back " + (fromLeft ? "left" : "right");
             }
             case "back": svc.goBack(); return "back";
-            case "home": svc.goHome(); return "home";
+            case "home": svc.goHome(); lastApp = null; return "home";
             case "text": {
-                String err = svc.setText(a.optString("text", ""), a.optBoolean("append", false));
-                if (err != null) throw new Exception(err);
-                return "text";
+                String text = a.optString("text", "");
+                if (!visionOnly) {
+                    String err = svc.setText(text, a.optBoolean("append", false));
+                    if (err == null) return "text";
+                    // ACTION_SET_TEXT 被拒 → 尝试 Agent 键盘通道
+                }
+                if (AgentImeService.commit(app, text, !a.optBoolean("append", false))) {
+                    return "text(键盘通道)";
+                }
+                throw new Exception("输入失败：目标拒绝无障碍写入且未启用 Agent 键盘"
+                        + "（请在系统设置-输入法中启用并切换到 Agent 键盘）");
             }
             case "app": {
                 String pkg = a.optString("package", "");
                 startApp(pkg);
                 sleep(2000);   // 应用启动必有启动页，等它加载完再感知
+                lastApp = pkg;
                 return "app " + pkg;
             }
             case "setting": {

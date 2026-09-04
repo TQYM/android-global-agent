@@ -165,6 +165,15 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
             startActivity(new Intent(Settings.Panel.ACTION_WIFI).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
             onLog("WiFi 面板 ✓");
         });
+        dbg(R.id.btnDbgIme, () -> {
+            boolean active = AgentImeService.isActive(this);
+            onLog(active ? "Agent 键盘已是当前输入法 ✓" : "Agent 键盘未激活，弹出切换器…");
+            if (!active) {
+                android.view.inputmethod.InputMethodManager imm =
+                        (android.view.inputmethod.InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+                ui.post(imm::showInputMethodPicker);
+            }
+        });
         dbg(R.id.btnDbgText, () -> {
             AgentA11yService s = svc();
             if (s == null) return;
