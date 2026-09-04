@@ -162,21 +162,42 @@ $('testBtn').onclick = async () => {
 // ---- 语音输入：MediaRecorder(webm) → decode → 16kHz WAV → /api/asr ----
 let mediaRec = null, recChunks = [], micStream = null;
 
+// 能力自检：页面加载时把浏览器录音能力写进日志，问题一眼定位
+(function () {
+  const caps = [];
+  caps.push(window.isSecureContext ? '安全上下文✓' : '安全上下文✗(需用 127.0.0.1 打开)');
+  caps.push((navigator.mediaDevices && navigator.mediaDevices.getUserMedia) ? '麦克风✓' : '麦克风✗');
+  caps.push(typeof MediaRecorder !== 'undefined' ? '录音✓' : '录音✗');
+  caps.push((window.AudioContext || window.webkitAudioContext) ? '解码✓' : '解码✗');
+  appendLog('语音能力自检：' + caps.join(' '));
+})();
+
 $('mic').onclick = async () => {
   if (mediaRec && mediaRec.state === 'recording') { mediaRec.stop(); return; }
-  try {
-    micStream = await navigator.mediaDevices.getUserMedia({audio: true});
-  } catch (e) {
-    appendLog('✗ 麦克风不可用：' + e.message);
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    appendLog('✗ 当前浏览器不支持麦克风（请用 Chrome/系统浏览器，地址必须是 http://127.0.0.1:8080）');
     return;
   }
-  recChunks = [];
-  mediaRec = new MediaRecorder(micStream);
-  mediaRec.ondataavailable = e => { if (e.data.size) recChunks.push(e.data); };
-  mediaRec.onstop = onRecStop;
-  mediaRec.start();
-  $('mic').textContent = '● 录音中…点击结束';
-  $('mic').classList.add('recording');
+  if (typeof MediaRecorder === 'undefined') {
+    appendLog('✗ 当前浏览器不支持 MediaRecorder，换 Chrome 试试');
+    return;
+  }
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({audio: true});
+    recChunks = [];
+    mediaRec = new MediaRecorder(micStream);
+    mediaRec.ondataavailable = e => { if (e.data.size) recChunks.push(e.data); };
+    mediaRec.onstop = onRecStop;
+    mediaRec.onerror = e => appendLog('✗ 录音出错：' + (e.error && e.error.name || 'unknown'));
+    mediaRec.start();
+    $('mic').textContent = '● 录音中…点击结束';
+    $('mic').classList.add('recording');
+  } catch (e) {
+    appendLog('✗ 录音启动失败：' + e.name + ' ' + e.message +
+      (e.name === 'NotAllowedError' ? '（请在浏览器里允许麦克风权限）' : ''));
+    if (micStream) micStream.getTracks().forEach(t => t.stop());
+    mediaRec = null;
+  }
 };
 
 async function onRecStop() {
@@ -205,7 +226,9 @@ async function onRecStop() {
 
 async function blobToWav16k(blob) {
   const ab = await blob.arrayBuffer();
-  const ac = new (window.AudioContext || window.webkitAudioContext)({sampleRate: 16000});
+  let ac;
+  try { ac = new (window.AudioContext || window.webkitAudioContext)({sampleRate: 16000}); }
+  catch (e) { ac = new (window.AudioContext || window.webkitAudioContext)(); }
   const buf = await ac.decodeAudioData(ab);
   const src = buf.getChannelData(0);
   const ratio = buf.sampleRate / 16000;
