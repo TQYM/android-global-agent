@@ -12,6 +12,7 @@
 | 中文输入 | a11y `ACTION_SET_TEXT` | 替换/追加，支持 Unicode |
 | 截图（视觉） | a11y `takeScreenshot`（API 30+） | 自动限频间隔 ≥1.1s，失败重试，连续失败降级纯节点模式 |
 | 返回/主页/最近/通知栏/快捷设置/锁屏/电源菜单 | `performGlobalAction` | |
+| 边缘手势返回 | `edge_back` 动作：左/右缘向内滑动 | 返回上级三策略：key 4 → tap 左上角返回节点 → edge_back，提示词内置按序尝试 |
 | 启动应用 | `getLaunchIntentForPackage` + OEM 别名 | manifest 需 `QUERY_ALL_PACKAGES`（Android 11+ 包可见性） |
 | 设置直达 | `Settings.ACTION_*` ×21 | WiFi/蓝牙/显示/定位/电池… |
 | WiFi/蓝牙开关 | `Settings.Panel.ACTION_WIFI` 系统面板 | 无 root 无法硬开关，面板可一键切换 |

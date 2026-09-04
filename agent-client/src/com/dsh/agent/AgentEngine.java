@@ -111,10 +111,12 @@ public class AgentEngine {
             "- {\"action\":\"swipe\",\"x1\":<int>,\"y1\":<int>,\"x2\":<int>,\"y2\":<int>,\"dur\":<int>} 滑动\n" +
             "- {\"action\":\"scroll\",\"direction\":\"up\"|\"down\"}    翻页\n" +
             "- {\"action\":\"key\",\"code\":<int>}                  按键(4=返回,3=主页,187=最近任务)\n" +
+            "- {\"action\":\"edge_back\",\"side\":\"left|right\"}    边缘手势返回(从屏幕左/右边缘向内滑，全面屏手势的「返回」)\n" +
             "- {\"action\":\"text\",\"text\":\"...\"}                 输入文字(支持中文，替换输入框内容；先 tap 聚焦输入框)\n" +
             "- {\"action\":\"wait\",\"ms\":<int>}                   等待页面加载(最长 8000ms)\n" +
             "- {\"action\":\"done\",\"summary\":\"完成说明\"}          任务已完成\n" +
             "原则：能直达不翻页；页面在加载先 wait；弹窗/广告优先点关闭/跳过；同一动作执行后屏幕没变化必须换策略，不要重复点同一位置。\n" +
+            "返回上级界面有三条路，按顺序尝试，一条没反应立刻换下一条：① key 4 系统返回；② tap 节点表里的「返回/←/back」节点（通常在屏幕左上角，坐标 x 很小、y 在顶部）；③ edge_back 边缘手势返回。\n" +
             "只输出 JSON，不要输出任何其他文字、解释或 markdown 代码块。";
 
     // OEM 包名别名（ColorOS/一加实测）
@@ -363,6 +365,18 @@ public class AgentEngine {
                 else ok = svc.goBack();
                 if (!ok) throw new Exception("全局动作失败");
                 return "key " + code;
+            }
+            case "edge_back": {
+                android.graphics.Rect wb = app.getSystemService(android.view.WindowManager.class)
+                        .getCurrentWindowMetrics().getBounds();
+                int w = wb.width(), h = wb.height();
+                int y = (int) (h * 0.45);
+                boolean fromLeft = !"right".equals(a.optString("side", "left"));
+                boolean ok = fromLeft
+                        ? svc.swipe(2, y, (int) (w * 0.35), y, 300)
+                        : svc.swipe(w - 2, y, (int) (w * 0.65), y, 300);
+                if (!ok) throw new Exception("边缘手势被系统取消");
+                return "edge_back " + (fromLeft ? "left" : "right");
             }
             case "back": svc.goBack(); return "back";
             case "home": svc.goHome(); return "home";

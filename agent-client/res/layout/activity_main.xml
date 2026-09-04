@@ -93,6 +93,7 @@
             <Button android:id="@+id/btnDbgShot" android:text="截图" style="?android:attr/borderlessButtonStyle" android:textSize="12sp" android:layout_width="wrap_content" android:layout_height="40dp"/>
             <Button android:id="@+id/btnDbgTap" android:text="点中心" style="?android:attr/borderlessButtonStyle" android:textSize="12sp" android:layout_width="wrap_content" android:layout_height="40dp"/>
             <Button android:id="@+id/btnDbgBack" android:text="返回" style="?android:attr/borderlessButtonStyle" android:textSize="12sp" android:layout_width="wrap_content" android:layout_height="40dp"/>
+            <Button android:id="@+id/btnDbgEdge" android:text="手势返回" style="?android:attr/borderlessButtonStyle" android:textSize="12sp" android:layout_width="wrap_content" android:layout_height="40dp"/>
             <Button android:id="@+id/btnDbgHome" android:text="主页" style="?android:attr/borderlessButtonStyle" android:textSize="12sp" android:layout_width="wrap_content" android:layout_height="40dp"/>
             <Button android:id="@+id/btnDbgRecents" android:text="最近" style="?android:attr/borderlessButtonStyle" android:textSize="12sp" android:layout_width="wrap_content" android:layout_height="40dp"/>
             <Button android:id="@+id/btnDbgNotif" android:text="通知栏" style="?android:attr/borderlessButtonStyle" android:textSize="12sp" android:layout_width="wrap_content" android:layout_height="40dp"/>

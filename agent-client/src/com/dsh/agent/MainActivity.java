@@ -150,6 +150,14 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
             onLog("点中心 " + (s.tap(w / 2, h / 2) ? "✓" : "✗"));
         });
         dbg(R.id.btnDbgBack, () -> { AgentA11yService s = svc(); if (s != null) onLog("返回 " + (s.goBack() ? "✓" : "✗")); });
+        dbg(R.id.btnDbgEdge, () -> {
+            AgentA11yService s = svc();
+            if (s == null) return;
+            android.graphics.Rect wb = getSystemService(android.view.WindowManager.class)
+                    .getCurrentWindowMetrics().getBounds();
+            int y = (int) (wb.height() * 0.45);
+            onLog("手势返回(左缘内滑) " + (s.swipe(2, y, (int) (wb.width() * 0.35), y, 300) ? "✓" : "✗"));
+        });
         dbg(R.id.btnDbgHome, () -> { AgentA11yService s = svc(); if (s != null) onLog("主页 " + (s.goHome() ? "✓" : "✗")); });
         dbg(R.id.btnDbgRecents, () -> { AgentA11yService s = svc(); if (s != null) onLog("最近任务 " + (s.goRecents() ? "✓" : "✗")); });
         dbg(R.id.btnDbgNotif, () -> { AgentA11yService s = svc(); if (s != null) onLog("通知栏 " + (s.notifications() ? "✓" : "✗")); });
