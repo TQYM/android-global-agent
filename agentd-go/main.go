@@ -5,6 +5,7 @@ package main
 
 import (
 	"embed"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -47,6 +48,9 @@ type App struct {
 	lastStep  int
 	lastAction string
 	lastNodes []semantics.Node
+	lastTapX  int
+	lastTapY  int
+	lastTapAt time.Time
 	logs      []string
 }
 
@@ -164,6 +168,11 @@ func (a *App) handleTask(w http.ResponseWriter, r *http.Request) {
 			a.lastNodes = nodes
 			a.mu.Unlock()
 		},
+		OnTap: func(x, y int, label string) {
+			a.mu.Lock()
+			a.lastTapX, a.lastTapY, a.lastTapAt = x, y, time.Now()
+			a.mu.Unlock()
+		},
 	}
 
 	a.running.Store(true)
@@ -195,6 +204,10 @@ func (a *App) handleStop(w http.ResponseWriter, r *http.Request) {
 func (a *App) handleStatus(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	var tap interface{}
+	if !a.lastTapAt.IsZero() && time.Since(a.lastTapAt) < 4*time.Second {
+		tap = map[string]int{"x": a.lastTapX, "y": a.lastTapY}
+	}
 	writeJSON(w, map[string]interface{}{
 		"running":    a.running.Load(),
 		"task":       a.task,
@@ -202,7 +215,46 @@ func (a *App) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"last_action": a.lastAction,
 		"logs":       a.logs,
 		"nodes":      a.lastNodes,
+		"last_tap":   tap,
 	})
+}
+
+// handleAsr accepts base64 audio from the WebUI mic and transcribes it via
+// the configured ASR model, returning {text}.
+func (a *App) handleAsr(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		AudioB64 string `json:"audio_b64"`
+		Format   string `json:"format"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.AudioB64 == "" {
+		http.Error(w, "audio_b64 字段不能为空", 400)
+		return
+	}
+	raw, err := base64.StdEncoding.DecodeString(in.AudioB64)
+	if err != nil {
+		http.Error(w, "audio_b64 解码失败: "+err.Error(), 400)
+		return
+	}
+	if len(raw) > 8<<20 {
+		http.Error(w, "音频过大（上限 8MB）", 413)
+		return
+	}
+	a.mu.Lock()
+	cfg := *a.cfg
+	a.mu.Unlock()
+	filename := "audio.wav"
+	if in.Format != "" && in.Format != "wav" {
+		filename = "audio." + in.Format
+	}
+	client := &llm.Client{BaseURL: cfg.BaseURL, APIKey: cfg.APIKey, Model: cfg.Model}
+	text, err := client.Transcribe(raw, filename, cfg.AsrModel)
+	if err != nil {
+		a.logf("语音识别失败: %v", err)
+		http.Error(w, err.Error(), 502)
+		return
+	}
+	a.logf("语音识别: %s", text)
+	writeJSON(w, map[string]string{"text": text})
 }
 
 func (a *App) handleScreen(w http.ResponseWriter, r *http.Request) {
@@ -278,6 +330,7 @@ func main() {
 	mux.HandleFunc("/api/status", app.handleStatus)
 	mux.HandleFunc("/api/screen", app.handleScreen)
 	mux.HandleFunc("/api/test", app.handleTest)
+	mux.HandleFunc("/api/asr", app.handleAsr)
 
 	addr := ":" + cfg.Port
 	fmt.Printf("agentd listening on http://127.0.0.1%s  (data dir %s)\n", addr, dir)

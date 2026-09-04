@@ -279,3 +279,150 @@ func ScreenSize() (int, int, error) {
 	h, _ := strconv.Atoi(m[2])
 	return w, h, nil
 }
+
+// ---- 全功能控制层（小布/小爱式直达能力）----
+
+// LongPress holds a point for durMs (a zero-duration swipe is how
+// `input` expresses a long-press gesture).
+func LongPress(x, y, durMs int) error {
+	if durMs <= 0 {
+		durMs = 900
+	}
+	_, err := run("input", "swipe",
+		strconv.Itoa(x), strconv.Itoa(y),
+		strconv.Itoa(x), strconv.Itoa(y), strconv.Itoa(durMs))
+	return err
+}
+
+// OpenURL opens a URL or app scheme via the VIEW intent — deep links like
+// alipay://, weixin://, tel:, https:// jump straight into the target app.
+func OpenURL(url string) error {
+	out, err := run("am", "start", "-a", "android.intent.action.VIEW",
+		"-d", url)
+	if err != nil {
+		return fmt.Errorf("am start VIEW: %v: %s", err, strings.TrimSpace(out))
+	}
+	return nil
+}
+
+// settingsPages maps short page keys to android.settings intents so the
+// agent jumps straight to a Settings page instead of tapping through
+// menus — the way 小布/小爱 serve “打开WLAN设置”.
+var settingsPages = map[string]string{
+	"wifi":          "android.settings.WIFI_SETTINGS",
+	"wlan":          "android.settings.WIFI_SETTINGS",
+	"bluetooth":     "android.settings.BLUETOOTH_SETTINGS",
+	"display":       "android.settings.DISPLAY_SETTINGS",
+	"brightness":    "android.settings.DISPLAY_SETTINGS",
+	"sound":         "android.settings.SOUND_SETTINGS",
+	"apps":          "android.settings.MANAGE_APPLICATIONS_SETTINGS",
+	"notifications": "android.settings.NOTIFICATION_SETTINGS",
+	"location":      "android.settings.LOCATION_SOURCE_SETTINGS",
+	"security":      "android.settings.SECURITY_SETTINGS",
+	"battery":       "android.settings.BATTERY_SAVER_SETTINGS",
+	"storage":       "android.settings.INTERNAL_STORAGE_SETTINGS",
+	"date":          "android.settings.DATE_SETTINGS",
+	"language":      "android.settings.LOCALE_SETTINGS",
+	"accessibility": "android.settings.ACCESSIBILITY_SETTINGS",
+	"airplane":      "android.settings.AIRPLANE_MODE_SETTINGS",
+	"network":       "android.settings.WIRELESS_SETTINGS",
+	"vpn":           "android.settings.VPN_SETTINGS",
+	"nfc":           "android.settings.NFC_SETTINGS",
+	"cast":          "android.settings.CAST_SETTINGS",
+	"developer":     "android.settings.APPLICATION_DEVELOPMENT_SETTINGS",
+	"deviceinfo":    "android.settings.DEVICE_INFO_SETTINGS",
+	"home":          "android.settings.HOME_SETTINGS",
+}
+
+// OpenSettingsPage jumps straight to a Settings page by key.
+func OpenSettingsPage(page string) error {
+	action, ok := settingsPages[strings.ToLower(strings.TrimSpace(page))]
+	if !ok {
+		return fmt.Errorf("未知设置页 %q（可用: wifi bluetooth display sound apps notifications location security battery storage date language accessibility airplane network vpn nfc cast developer deviceinfo home）", page)
+	}
+	out, err := run("am", "start", "-a", action)
+	if err != nil {
+		return fmt.Errorf("打开设置页 %s 失败: %v: %s", page, err, strings.TrimSpace(out))
+	}
+	return nil
+}
+
+// StatusBar expands/collapses the notification shade or quick settings.
+// mode: notifications | settings | collapse
+func StatusBar(mode string) error {
+	var sub string
+	switch strings.ToLower(mode) {
+	case "notifications", "notification", "通知":
+		sub = "expand-notifications"
+	case "settings", "quick", "快捷":
+		sub = "expand-settings"
+	case "collapse", "收起":
+		sub = "collapse"
+	default:
+		return fmt.Errorf("未知状态栏模式 %q", mode)
+	}
+	_, err := run("cmd", "statusbar", sub)
+	return err
+}
+
+// Volume adjusts media volume: up | down | mute.
+func Volume(dir string) error {
+	code := map[string]string{"up": "24", "down": "25", "mute": "164"}[strings.ToLower(dir)]
+	if code == "" {
+		return fmt.Errorf("未知音量方向 %q（up/down/mute）", dir)
+	}
+	_, err := run("input", "keyevent", code)
+	return err
+}
+
+// Brightness sets manual screen brightness (0-255).
+func Brightness(level int) error {
+	if level < 0 {
+		level = 0
+	}
+	if level > 255 {
+		level = 255
+	}
+	if _, err := run("settings", "put", "system", "screen_brightness_mode", "0"); err != nil {
+		return err
+	}
+	_, err := run("settings", "put", "system", "screen_brightness",
+		strconv.Itoa(level))
+	return err
+}
+
+// SetWiFi toggles the Wi-Fi radio directly (root svc call — no UI).
+func SetWiFi(on bool) error {
+	op := "disable"
+	if on {
+		op = "enable"
+	}
+	_, err := run("svc", "wifi", op)
+	return err
+}
+
+// SetBluetooth toggles the Bluetooth radio directly.
+func SetBluetooth(on bool) error {
+	op := "disable"
+	if on {
+		op = "enable"
+	}
+	_, err := run("svc", "bluetooth", op)
+	return err
+}
+
+
+// RebindA11yService force-rebinds the bundled service. ColorOS's own
+// freezer (not AOSP doze) suspends the a11y process after ~15min idle —
+// the deviceidle whitelist does NOT prevent it — and a frozen process can
+// never serve 8081 again. Removing and re-adding the service entry makes
+// AMS start a fresh, unfrozen process; agentd runs as root and can do
+// this any time.
+func RebindA11yService() {
+	_, _ = run("settings", "put", "secure", "enabled_accessibility_services", "")
+	time.Sleep(1200 * time.Millisecond)
+	_, _ = run("settings", "put", "secure", "enabled_accessibility_services",
+		"com.dsh.agentd/.AgentA11yService")
+	_, _ = run("settings", "put", "secure", "accessibility_enabled", "1")
+	time.Sleep(2500 * time.Millisecond) // let the new process bind + listen
+}

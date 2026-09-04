@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net"
 	"net/http"
 	"net/url"
@@ -67,6 +68,9 @@ type chatRequest struct {
 	Model       string    `json:"model"`
 	Messages    []Message `json:"messages"`
 	Temperature float64   `json:"temperature"`
+	// MaxTokens caps completion length: one action JSON needs ~80
+	// tokens; a cap trims tail latency and runaway generations.
+	MaxTokens int `json:"max_tokens,omitempty"`
 	// Thinking disables chain-of-thought on GLM thinking models
 	// ({"type":"disabled"}) — roughly halves step latency for UI agents
 	// whose decisions are shallow. Only sent to Zhipu's endpoint; other
@@ -171,7 +175,7 @@ func (c *Client) Chat(messages []Message) (string, error) {
 			return "", err
 		}
 	}
-	body := chatRequest{Model: c.Model, Messages: messages, Temperature: 0.1}
+	body := chatRequest{Model: c.Model, Messages: messages, Temperature: 0.1, MaxTokens: 300}
 	if strings.Contains(c.BaseURL, "bigmodel.cn") {
 		body.Thinking = &thinkingParam{Type: "disabled"}
 	}
@@ -205,4 +209,57 @@ func (c *Client) Chat(messages []Message) (string, error) {
 		return "", fmt.Errorf("api returned no choices: %s", truncate(string(raw), 300))
 	}
 	return cr.Choices[0].Message.Content, nil
+}
+
+// Transcribe sends audio bytes to an OpenAI-compatible
+// /audio/transcriptions endpoint (Zhipu glm-asr series) and returns the
+// recognized text. Reuses the DNS-pinned HTTP client.
+func (c *Client) Transcribe(audio []byte, filename, model string) (string, error) {
+	if c.HC == nil {
+		if err := c.init(); err != nil {
+			return "", err
+		}
+	}
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	fw, err := w.CreateFormFile("file", filename)
+	if err != nil {
+		return "", err
+	}
+	if _, err := fw.Write(audio); err != nil {
+		return "", err
+	}
+	_ = w.WriteField("model", model)
+	if err := w.Close(); err != nil {
+		return "", err
+	}
+	endpoint := strings.TrimRight(c.BaseURL, "/") + "/audio/transcriptions"
+	req, err := http.NewRequest(http.MethodPost, endpoint, &buf)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	resp, err := c.HC.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("asr request: %w", err)
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("asr HTTP %d: %s", resp.StatusCode, truncate(string(data), 200))
+	}
+	var out struct {
+		Text  string `json:"text"`
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(data, &out); err != nil {
+		return "", fmt.Errorf("asr decode: %v", err)
+	}
+	if out.Error.Message != "" {
+		return "", fmt.Errorf("asr: %s", out.Error.Message)
+	}
+	return strings.TrimSpace(out.Text), nil
 }

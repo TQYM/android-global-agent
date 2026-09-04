@@ -50,8 +50,10 @@ adb shell "su -c 'dumpsys deviceidle whitelist +com.dsh.agentd && \
   am set-standby-bucket com.dsh.agentd active'"
 ```
 
-如遇失联：`settings put secure enabled_accessibility_services ""` 后再写回
-`com.dsh.agentd/.AgentA11yService` 强制重绑即可恢复，无需重启手机。
+**注意**：白名单挡不住 ColorOS 自己的应用速冻（约 15 分钟空闲后仍会冻）。
+agentd 任务中发现 8081 不可达会**自动强制重绑**（移除再写回服务条目），
+无需人工干预；手动重绑命令：`settings put secure
+enabled_accessibility_services ""` 后再写回 `com.dsh.agentd/.AgentA11yService`。
 
 ## 使用
 
@@ -59,8 +61,21 @@ adb shell "su -c 'dumpsys deviceidle whitelist +com.dsh.agentd && \
 2. 「LLM API 配置」填 Base URL / API Key / 模型 → 保存
    - 智谱：`https://open.bigmodel.cn/api/paas/v4`，模型如 `glm-4.6`
    - 其他 OpenAI 兼容网关：Base URL 填到 `/v1` 前缀
-3. 输入任务（如「打开设置，查看 WLAN 已连接的网络名称，然后回到桌面」）→ 运行
-4. 实时看日志 / 屏幕截图 / 语义节点表；「测试感知」可独立自检感知通道
+3. 输入任务 → 运行；也可以点「🎤 语音输入」说话（录 16kHz WAV 走
+   `/api/asr` → 智谱 glm-asr 识别，识别模型可在配置里改）
+4. 实时看日志 / 屏幕截图 / 语义节点表；agent 每次点击会在截图上显示
+   蓝色脉冲标记；「测试感知」可独立自检感知通道
+
+### 动作空间（v2）
+
+- **直达（小布/小爱式，优先）**：`setting` 直达设置页（wifi/bluetooth/
+  display/apps/battery…21 个页面）、`app` 启动应用、`open_url` 打开
+  scheme/链接（alipay:// weixin:// tel: https://）、`wifi`/`bluetooth`
+  直接开关、`brightness`、`volume`、`statusbar`（通知栏/快捷设置）、`wake`
+- **界面操作（兜底）**：`tap`（优先按节点 index）、`longpress`、`swipe`、
+  `scroll`、`key`、`text`（中文走 a11y）、`wait`、`back`/`home`、`done`
+- 任务期间**不再关闭系统动画**；点击后自适应等待页面变化（通常 ~0.5s，
+  上限 1.6s），a11y 服务被 ColorOS 冻结时自动强制重绑恢复
 
 ## 已知问题（OnePlus 13T / ColorOS 16 实测）
 
@@ -68,8 +83,8 @@ adb shell "su -c 'dumpsys deviceidle whitelist +com.dsh.agentd && \
   `null root node returned by UiTestAutomationBridge`（stderr 报错但退出码
   可能为 0 且不落盘，判定必须查文件内容）。锁屏/解锁、pkill 均无法恢复，
   **重启手机恢复**。疑似触发条件：屏幕转场动画期间执行 dump。agentd 已内置
-  防护：动作后 settle 2.5s 再感知、null-root 时 4s 大退避、连续 3 次盲模式
-  主动止损并提示重启。
+  防护：首选 a11y 服务通道（不经该桥）、null-root 时 4s 大退避、连续失败后
+  进入快速盲模式（不再每步烧 20-50s 重试）。
 - **ColorOS 桌面永远等不到 idle**（`could not get idle state`）：桌面无法
   dump 属预期；agentd 降级为「盲操作模式」，LLM 只用 app/key/back/home 等
   无坐标动作，进入应用后感知自然恢复。
