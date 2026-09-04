@@ -20,6 +20,7 @@ import (
 // Action is the single JSON step the LLM emits.
 type Action struct {
 	Action    string `json:"action"`
+	Index     *int   `json:"index"`
 	X         int    `json:"x"`
 	Y         int    `json:"y"`
 	X1        int    `json:"x1"`
@@ -46,18 +47,22 @@ type Runner struct {
 	Log      func(string)
 	OnStep   func(step int, action string, nodes []semantics.Node)
 	Stopped  *atomic.Bool
+
+	curNodes []semantics.Node // last perceived nodes, for index taps
 }
 
 const actionSchema = `
 
 动作必须是单个 JSON 对象，字段 action 取值：
-- {"action":"tap","x":<int>,"y":<int>}           点击坐标
+- {"action":"tap","index":<节点编号>}            点击节点（首选，直接用节点表里的编号）
+- {"action":"tap","x":<int>,"y":<int>}           点击坐标（仅当目标不在节点表中时用）
 - {"action":"swipe","x1":<int>,"y1":<int>,"x2":<int>,"y2":<int>,"dur":<int>} 滑动
 - {"action":"scroll","direction":"up"|"down"}    翻页
 - {"action":"key","code":<int>}                  按键(4=返回,3=主页)
 - {"action":"text","text":"..."}                 输入文字(支持中文，会替换输入框内容；先 tap 聚焦输入框)
 - {"action":"app","package":"包名"}               启动应用(如 com.android.settings；OEM 机型请优先 tap 桌面图标)
 - {"action":"done","summary":"完成说明"}          任务已完成
+注意：同一个动作执行后屏幕没有变化时，必须换策略，不要重复点击同一位置。
 只输出 JSON，不要输出任何其他文字、解释或 markdown 代码块。`
 
 var jsonRe = regexp.MustCompile(`\{[^{}]*\}`)
@@ -104,6 +109,16 @@ func (r *Runner) scroll(direction string) error {
 func (r *Runner) exec(a Action) (string, error) {
 	switch a.Action {
 	case "tap":
+		if a.Index != nil {
+			for _, n := range r.curNodes {
+				if n.Index == *a.Index {
+					return fmt.Sprintf("tap#%d", *a.Index),
+						device.Tap(n.CenterX, n.CenterY)
+				}
+			}
+			return "tap", fmt.Errorf("节点编号 %d 不在当前节点表中（共 %d 个）",
+				*a.Index, len(r.curNodes))
+		}
 		return "tap", device.Tap(a.X, a.Y)
 	case "swipe":
 		if a.Dur == 0 {
@@ -164,7 +179,10 @@ func (r *Runner) sense() (string, error) {
 }
 
 // settle lets screen transitions finish before the next perception pass.
-func settle() { time.Sleep(2500 * time.Millisecond) }
+// 1.2s is enough with the first-class a11y service channel (the old 2.5s
+// protected the flaky uiautomator bridge); the a11y self-heal still guards
+// the rare mid-transition null-root case.
+func settle() { time.Sleep(1200 * time.Millisecond) }
 
 const a11yServiceURL = "http://127.0.0.1:8081/nodes"
 
@@ -205,6 +223,8 @@ func (r *Runner) Run(task string) (string, error) {
 		{Role: "user", Content: "任务：" + task},
 	}
 	blinded := 0 // consecutive null-root perception failures
+	lastKey := ""
+	repeats := 0 // consecutive identical actions (stuck detector)
 
 	for step := 1; step <= r.Cfg.MaxSteps; step++ {
 		if r.Stopped != nil && r.Stopped.Load() {
@@ -220,6 +240,7 @@ func (r *Runner) Run(task string) (string, error) {
 		if viaService, err := r.senseViaService(); err == nil {
 			blinded = 0
 			nodes = viaService
+			r.curNodes = nodes
 			r.Log(fmt.Sprintf("第 %d 步：感知到 %d 个节点（a11y 服务）", step, len(nodes)))
 			prompt = semantics.ToPrompt(nodes, 40)
 		} else if xmlText, senseErr := r.sense(); senseErr == nil {
@@ -229,9 +250,11 @@ func (r *Runner) Run(task string) (string, error) {
 				return "", err
 			}
 			nodes = parsed
+			r.curNodes = nodes
 			r.Log(fmt.Sprintf("第 %d 步：感知到 %d 个节点", step, len(nodes)))
 			prompt = semantics.ToPrompt(nodes, 40)
 		} else {
+			r.curNodes = nil
 			// Both channels failed: the ColorOS launcher never idles and the
 			// uiautomator bridge gets killed by the OS; degrade to blind
 			// actions (app/key/back/home need no coordinates).
@@ -283,10 +306,29 @@ func (r *Runner) Run(task string) (string, error) {
 		}
 		_ = device.Screenshot(r.ScreenPath)
 
+		// stuck detector: identical action repeated without progress
+		idxStr := "nil"
+		if action.Index != nil {
+			idxStr = fmt.Sprintf("%d", *action.Index)
+		}
+		actKey := fmt.Sprintf("%s|%s|%d,%d", action.Action, idxStr, action.X, action.Y)
+		if actKey == lastKey {
+			repeats++
+		} else {
+			repeats = 0
+		}
+		lastKey = actKey
+		nextMsg := "已执行动作，这是执行后的屏幕，请继续下一步（或 done）。"
+		if repeats >= 2 {
+			nextMsg = fmt.Sprintf("警告：你已连续 %d 次执行完全相同但没有进展的动作。"+
+				"必须换策略——用 index 点击节点表中真正的目标节点，或 scroll 翻页，"+
+				"不要再点同一位置。", repeats+1)
+		}
+
 		// trim conversation to keep the context bounded
 		messages = append(messages,
 			llm.TextMessage("assistant", reply),
-			llm.TextMessage("user", "已执行动作，这是执行后的屏幕，请继续下一步（或 done）。"),
+			llm.TextMessage("user", nextMsg),
 		)
 		if len(messages) > 10 {
 			// keep system + first task message + last 8
@@ -304,7 +346,7 @@ func (r *Runner) perceptionMessage(prompt string) llm.Message {
 		return llm.TextMessage("user", prompt)
 	}
 	if err := device.Screenshot(r.ScreenPath); err == nil {
-		if dataURL, derr := vision.DataURL(r.ScreenPath, 768, 70); derr == nil {
+		if dataURL, derr := vision.DataURL(r.ScreenPath, 640, 60); derr == nil {
 			return llm.VisionMessage("user", prompt+"\n\n同时附上了当前屏幕截图。", dataURL)
 		}
 	}

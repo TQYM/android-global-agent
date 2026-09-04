@@ -67,6 +67,15 @@ type chatRequest struct {
 	Model       string    `json:"model"`
 	Messages    []Message `json:"messages"`
 	Temperature float64   `json:"temperature"`
+	// Thinking disables chain-of-thought on GLM thinking models
+	// ({"type":"disabled"}) — roughly halves step latency for UI agents
+	// whose decisions are shallow. Only sent to Zhipu's endpoint; other
+	// OpenAI-compatible gateways may reject the unknown field.
+	Thinking *thinkingParam `json:"thinking,omitempty"`
+}
+
+type thinkingParam struct {
+	Type string `json:"type"`
 }
 
 type chatResponse struct {
@@ -163,6 +172,9 @@ func (c *Client) Chat(messages []Message) (string, error) {
 		}
 	}
 	body := chatRequest{Model: c.Model, Messages: messages, Temperature: 0.1}
+	if strings.Contains(c.BaseURL, "bigmodel.cn") {
+		body.Thinking = &thinkingParam{Type: "disabled"}
+	}
 	data, err := json.Marshal(body)
 	if err != nil {
 		return "", err
