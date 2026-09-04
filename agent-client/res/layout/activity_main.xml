@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:orientation="vertical"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#0F1115"
+    android:padding="10dp">
+
+    <!-- 状态行 -->
+    <LinearLayout android:orientation="horizontal"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:gravity="center_vertical">
+        <TextView android:id="@+id/tvStatus"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="空闲" android:textColor="#8B93A3" android:textSize="13sp"/>
+        <TextView android:id="@+id/tvA11y"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:layout_marginLeft="10dp" android:textSize="13sp"/>
+        <Space android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1"/>
+        <Button android:id="@+id/btnConfig"
+            android:layout_width="wrap_content" android:layout_height="36dp"
+            android:text="设置" android:textSize="12sp"/>
+    </LinearLayout>
+
+    <!-- 配置面板（默认收起） -->
+    <ScrollView android:id="@+id/llConfig"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:visibility="gone" android:background="#171A21"
+        android:padding="8dp" android:layout_marginTop="6dp">
+        <LinearLayout android:orientation="vertical"
+            android:layout_width="match_parent" android:layout_height="wrap_content">
+            <EditText android:id="@+id/etBase" android:hint="Base URL"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:textSize="12sp" android:singleLine="true"/>
+            <EditText android:id="@+id/etKey" android:hint="API Key"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:textSize="12sp" android:singleLine="true"/>
+            <EditText android:id="@+id/etModel" android:hint="模型（如 glm-4.5v）"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:textSize="12sp" android:singleLine="true"/>
+            <EditText android:id="@+id/etAsr" android:hint="语音识别模型（如 glm-asr-2512）"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:textSize="12sp" android:singleLine="true"/>
+            <EditText android:id="@+id/etMaxSteps" android:hint="最大步数（20）"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:textSize="12sp" android:singleLine="true" android:inputType="number"/>
+            <Switch android:id="@+id/swVision" android:text="视觉模式（截图发给模型）"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:textSize="13sp"/>
+            <LinearLayout android:orientation="horizontal"
+                android:layout_width="match_parent" android:layout_height="wrap_content">
+                <Button android:id="@+id/btnSave" android:text="保存配置"
+                    android:layout_width="0dp" android:layout_weight="1"
+                    android:layout_height="40dp" android:textSize="13sp"/>
+                <Button android:id="@+id/btnA11y" android:text="开启无障碍服务"
+                    android:layout_width="0dp" android:layout_weight="1"
+                    android:layout_height="40dp" android:textSize="13sp"
+                    android:layout_marginLeft="8dp"/>
+            </LinearLayout>
+        </LinearLayout>
+    </ScrollView>
+
+    <!-- 屏幕回显 + 点击标记 -->
+    <FrameLayout android:id="@+id/flScreen"
+        android:layout_width="match_parent" android:layout_height="200dp"
+        android:layout_marginTop="8dp" android:background="#000000">
+        <ImageView android:id="@+id/ivScreen"
+            android:layout_width="match_parent" android:layout_height="match_parent"
+            android:scaleType="fitCenter" android:contentDescription="屏幕"/>
+        <View android:id="@+id/vTap"
+            android:layout_width="26dp" android:layout_height="26dp"
+            android:background="@drawable/tap_dot" android:visibility="gone"/>
+    </FrameLayout>
+
+    <!-- 日志 -->
+    <ScrollView android:id="@+id/svLog"
+        android:layout_width="match_parent" android:layout_height="0dp"
+        android:layout_weight="1" android:layout_marginTop="8dp"
+        android:background="#0C0E12" android:padding="6dp">
+        <TextView android:id="@+id/tvLog"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:textSize="11sp" android:textColor="#E6E9EF"
+            android:fontFamily="monospace"/>
+    </ScrollView>
+
+    <!-- 调试台（无 LLM 也可验证全动作链路） -->
+    <HorizontalScrollView
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:layout_marginTop="6dp" android:scrollbars="none">
+        <LinearLayout android:id="@+id/llDebug" android:orientation="horizontal"
+            android:layout_width="wrap_content" android:layout_height="wrap_content">
+            <Button android:id="@+id/btnDbgNodes" android:text="感知" style="?android:attr/borderlessButtonStyle" android:textSize="12sp" android:layout_width="wrap_content" android:layout_height="40dp"/>
+            <Button android:id="@+id/btnDbgShot" android:text="截图" style="?android:attr/borderlessButtonStyle" android:textSize="12sp" android:layout_width="wrap_content" android:layout_height="40dp"/>
+            <Button android:id="@+id/btnDbgTap" android:text="点中心" style="?android:attr/borderlessButtonStyle" android:textSize="12sp" android:layout_width="wrap_content" android:layout_height="40dp"/>
+            <Button android:id="@+id/btnDbgBack" android:text="返回" style="?android:attr/borderlessButtonStyle" android:textSize="12sp" android:layout_width="wrap_content" android:layout_height="40dp"/>
+            <Button android:id="@+id/btnDbgHome" android:text="主页" style="?android:attr/borderlessButtonStyle" android:textSize="12sp" android:layout_width="wrap_content" android:layout_height="40dp"/>
+            <Button android:id="@+id/btnDbgRecents" android:text="最近" style="?android:attr/borderlessButtonStyle" android:textSize="12sp" android:layout_width="wrap_content" android:layout_height="40dp"/>
+            <Button android:id="@+id/btnDbgNotif" android:text="通知栏" style="?android:attr/borderlessButtonStyle" android:textSize="12sp" android:layout_width="wrap_content" android:layout_height="40dp"/>
+            <Button android:id="@+id/btnDbgWifi" android:text="WiFi面板" style="?android:attr/borderlessButtonStyle" android:textSize="12sp" android:layout_width="wrap_content" android:layout_height="40dp"/>
+            <Button android:id="@+id/btnDbgVol" android:text="音量+" style="?android:attr/borderlessButtonStyle" android:textSize="12sp" android:layout_width="wrap_content" android:layout_height="40dp"/>
+            <Button android:id="@+id/btnDbgText" android:text="输中文" style="?android:attr/borderlessButtonStyle" android:textSize="12sp" android:layout_width="wrap_content" android:layout_height="40dp"/>
+        </LinearLayout>
+    </HorizontalScrollView>
+
+    <!-- 输入行 -->
+    <LinearLayout android:orientation="horizontal"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:layout_marginTop="6dp" android:gravity="center_vertical">
+        <EditText android:id="@+id/etTask"
+            android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="wrap_content" android:hint="说点什么，例如：打开WLAN设置"
+            android:textSize="13sp" android:minLines="1" android:maxLines="3"/>
+        <Button android:id="@+id/btnMic" android:text="🎤"
+            android:layout_width="48dp" android:layout_height="44dp"
+            android:layout_marginLeft="6dp"/>
+        <Button android:id="@+id/btnRun" android:text="运行"
+            android:layout_width="72dp" android:layout_height="44dp"
+            android:layout_marginLeft="6dp"/>
+    </LinearLayout>
+</LinearLayout>

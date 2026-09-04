@@ -1,0 +1,10 @@
+src/com/dsh/agent/VoiceRecorder.java
+src/com/dsh/agent/MainActivity.java
+src/com/dsh/agent/NodeInfo.java
+src/com/dsh/agent/AgentA11yService.java
+src/com/dsh/agent/LlmClient.java
+src/com/dsh/agent/KeepAliveService.java
+src/com/dsh/agent/ActionParser.java
+src/com/dsh/agent/Prefs.java
+src/com/dsh/agent/AgentEngine.java
+build/gen/com/dsh/agent/R.java
