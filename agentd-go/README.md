@@ -42,6 +42,17 @@ adb shell "su -c 'mkdir -p /data/local/tmp/agentd && \
 
 数据目录：`/data/local/tmp/agentd/`（config.json / ui.xml / screen.png / 日志）。
 
+**agentd-apk 防冻结（ColorOS 必做）**：无障碍服务进程空闲约半小时后会被
+ColorOS 应用速冻（`do_freezer_trap`）挂起，8081 随之失联。部署后执行：
+
+```sh
+adb shell "su -c 'dumpsys deviceidle whitelist +com.dsh.agentd && \
+  am set-standby-bucket com.dsh.agentd active'"
+```
+
+如遇失联：`settings put secure enabled_accessibility_services ""` 后再写回
+`com.dsh.agentd/.AgentA11yService` 强制重绑即可恢复，无需重启手机。
+
 ## 使用
 
 1. 手机浏览器打开 `http://127.0.0.1:8080`

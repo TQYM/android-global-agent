@@ -212,6 +212,9 @@ func QuietAnimations() func() {
 var appAliases = map[string][]string{
 	"com.android.gallery3d":          {"com.coloros.gallery3d", "com.oneplus.gallery"},
 	"com.google.android.apps.photos": {"com.coloros.gallery3d", "com.oneplus.gallery"},
+	"com.google.android.keep":        {"com.coloros.note", "com.oneplus.note"},
+	"com.android.notes":              {"com.coloros.note", "com.oneplus.note"},
+	"com.coloros.notepad":            {"com.coloros.note"},
 	"com.android.camera2":            {"com.oplus.camera", "com.oneplus.camera"},
 	"com.android.calculator2":        {"com.coloros.calculator"},
 	"com.android.music":              {"com.heytap.music"},
