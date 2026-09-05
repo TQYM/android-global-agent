@@ -103,7 +103,9 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
                     : v.getId() == R.id.btnRootOff ? "off" : "auto";
             prefs.setRootMode(m);
             RootShell.reset();
+            if (!"off".equals(m) && RootShell.available(this)) RootShell.ensureA11y(this);
             paintRootMode();
+            refreshA11y();
             onLog("Root 模式 → " + ("on".equals(m) ? "强制启用" : "off".equals(m) ? "关闭（纯零root）" : "自动"));
         };
         findViewById(R.id.btnRootAuto).setOnClickListener(l);
@@ -330,6 +332,16 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
     }
 
     private void refreshA11y() {
+        boolean rootMode = !"off".equals(prefs.rootMode());
+        if (rootMode) {
+            boolean su = RootShell.available(this);
+            if (su && AgentA11yService.get() == null) {
+                RootShell.ensureA11y(this);   // root 模式：自动开无障碍
+            }
+            tvA11y.setText(su ? "Root ✓" : "Root ✗（未检测到 su）");
+            tvA11y.setTextColor(su ? 0xFF3FB950 : 0xFFF85149);
+            return;
+        }
         boolean on = AgentA11yService.get() != null;
         tvA11y.setText(on ? "无障碍 ✓" : "无障碍 ✗（点「设置」开启）");
         tvA11y.setTextColor(on ? 0xFF3FB950 : 0xFFF85149);

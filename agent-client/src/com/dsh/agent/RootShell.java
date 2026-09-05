@@ -84,4 +84,11 @@ public class RootShell {
     public static boolean paste() {
         return exec("input keyevent 279");
     }
+
+    /** root 自动开启本应用的无障碍服务（幂等）。 */
+    public static boolean ensureA11y(android.content.Context ctx) {
+        String comp = ctx.getPackageName() + "/" + AgentA11yService.class.getName();
+        return exec("settings put secure enabled_accessibility_services " + comp)
+                && exec("settings put secure accessibility_enabled 1");
+    }
 }
