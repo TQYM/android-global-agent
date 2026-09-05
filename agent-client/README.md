@@ -62,13 +62,15 @@ adb install -r build/agent-client.apk
 | 层 | 机制 | 适用 | 依赖 |
 |---|---|---|---|
 | 1 | 无障碍 ACTION_SET_TEXT | 绝大多数 App | 节点可见 |
-| 2 | 缝合 FlorisBoard 广播 | 节点被屏蔽（如微信） | 缝合键盘为默认输入法 |
+| 2 | 缝合 FlorisBoard 广播 | 节点被屏蔽（如微信） | 装了缝合键盘即可（**不在用会自动借用、任务结束归还**） |
 | 3 | 剪贴板 + 长按粘贴 | 任何 App、**任何键盘** | 无（首次写入剪贴板 ColorOS 可能弹一次授权） |
 
 层 3 流程：文字写入剪贴板 → 长按目标输入框 → 模型看截图点「粘贴」。
 切换任何常用键盘（微信键盘/搜狗/百度/豆包/Gboard/FlorisBoard）都不影响层 1/3；
 层 2 只是加速器。闭源键盘不做二进制缝合（许可 + 签名风险），FlorisBoard 是
 Apache-2.0 开源，缝合版构建见 floris-merge/。
+
+兼容性：全 Android 11+ 通用，无厂商私有 API——详见 [COMPATIBILITY.zh-CN.md](COMPATIBILITY.zh-CN.md)（含无 root 装机、各 ROM 差异表）。
 
 ## 已知边界
 

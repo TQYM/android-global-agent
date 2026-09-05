@@ -62,6 +62,13 @@ public class AgentEngine {
         Log.i(TAG, s);
         Listener l = listener;
         if (l != null) l.onLog(s);
+        try {
+            java.io.FileWriter w = new java.io.FileWriter(
+                    new java.io.File(app.getExternalFilesDir(null), "engine.log"), true);
+            w.write(new java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.US)
+                    .format(new java.util.Date()) + " " + s + "\n");
+            w.close();
+        } catch (Exception ignored) { }
     }
 
     private void status() {
@@ -596,6 +603,7 @@ public class AgentEngine {
                     "dev.patrickgold.florisboard/.agent.AgentImeBridge");
             log("自动借用缝合键盘（任务结束归还 " + borrowedIme + "）");
             if (!ok) return false;
+            sleep(900);   // 等系统解绑旧 IME、绑定桥（receiver 才注册）
         }
         try {
             android.content.Intent it = new android.content.Intent("com.dsh.agent.IME_COMMIT")
