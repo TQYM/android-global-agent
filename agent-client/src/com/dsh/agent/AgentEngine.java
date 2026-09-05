@@ -50,6 +50,7 @@ public class AgentEngine {
     private String lastApp;        // 当前任务所在应用包名
     private boolean visionOnly;    // 纯视觉模式（节点被应用屏蔽）
     private boolean clipPending;   // 剪贴板已写入，引导下一步点「粘贴」
+    private String rootPasteDone;  // 已用 keyevent279 粘过的文本（防同文死循环）
     private String borrowedIme;    // 任务中临时借用的输入法（任务结束归还）
 
     private AgentEngine(Context ctx) { app = ctx; }
@@ -576,9 +577,16 @@ public class AgentEngine {
                     (android.content.ClipboardManager) app.getSystemService(android.content.Context.CLIPBOARD_SERVICE);
             if (cm == null) return false;
             cm.setPrimaryClip(android.content.ClipData.newPlainText("agent", text));
-            clipPending = true;
             int[] xy = null;
             try { xy = resolvePoint(svc, a); } catch (Exception ignored) { }
+            if (RootShell.available() && !text.equals(rootPasteDone)) {
+                if (xy != null) { svc.tap(xy[0], xy[1]); sleep(350); }
+                if (RootShell.paste()) {
+                    rootPasteDone = text;   // 同文重复请求说明没粘上，下次走菜单
+                    return true;
+                }
+            }
+            clipPending = true;
             if (xy != null) svc.longPress(xy[0], xy[1], 900);
             return true;
         } catch (Exception e) {

@@ -117,6 +117,7 @@ public class AgentA11yService extends AccessibilityService {
     // ---- 手势（dispatchGesture，同步等待结果） ----
 
     public boolean tap(int x, int y) {
+        if (RootShell.available() && RootShell.tap(x, y)) return true;
         int[] c = clampXY(x, y);
         Path p = new Path();
         p.moveTo(c[0], c[1]);
@@ -127,6 +128,7 @@ public class AgentA11yService extends AccessibilityService {
 
     public boolean longPress(int x, int y, int durMs) {
         if (durMs <= 0) durMs = 900;
+        if (RootShell.available() && RootShell.longPress(x, y, durMs)) return true;
         int[] c = clampXY(x, y);
         Path p = new Path();
         p.moveTo(c[0], c[1]);
@@ -137,6 +139,7 @@ public class AgentA11yService extends AccessibilityService {
 
     public boolean swipe(int x1, int y1, int x2, int y2, int durMs) {
         if (durMs <= 0) durMs = 400;
+        if (RootShell.available() && RootShell.swipe(x1, y1, x2, y2, durMs)) return true;
         int[] a = clampXY(x1, y1), b = clampXY(x2, y2);
         Path p = new Path();
         p.moveTo(a[0], a[1]);
@@ -222,8 +225,17 @@ public class AgentA11yService extends AccessibilityService {
 
     // ---- 截图（API 30+ takeScreenshot） ----
 
-    /** 同步截图；失败返回 null。ColorOS 对 takeScreenshot 有最小间隔限制，自动间隔+重试。 */
+    /** 同步截图；失败返回 null。root 时走 screencap 无限频；否则 takeScreenshot（ColorOS 限频，自动间隔+重试）。 */
+    private boolean shotLogged;
     public Bitmap screenshot() {
+        if (RootShell.available()) {
+            Bitmap fast = RootShell.screenshot(this);
+            if (fast != null) {
+                if (!shotLogged) { shotLogged = true; android.util.Log.i("AgentA11y", "截图通道: root screencap（无限频）"); }
+                sLastShotMs = System.currentTimeMillis();
+                return fast;
+            }
+        }
         for (int attempt = 0; attempt < 2; attempt++) {
             long dt = System.currentTimeMillis() - sLastShotMs;
             if (dt < 1100) {

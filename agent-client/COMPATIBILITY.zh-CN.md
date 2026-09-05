@@ -39,6 +39,19 @@ adb shell appops set com.dsh.agent WRITE_CLIPBOARD allow                     # �
 | HarmonyOS / 荣耀 | a11y API 兼容；华为无 GMS 不影响（不依赖 GMS） |
 | 三星 OneUI | 全功能；侧屏幕手势可能与 edge_back 冲突，三键导航下用 key 4 |
 
+## Root = 可选加速器（有则自动启用，无则全功能可用）
+
+检测到 su 可用时自动升级以下路径（KernelSU/Magisk 首次会弹一次授权）：
+
+| 路径 | 零 root | 有 root |
+|---|---|---|
+| 截图 | takeScreenshot，ColorOS 限频 ~1 张/秒 | `screencap` 直读，无限频，视觉任务快 2-3 倍 |
+| 手势 | dispatchGesture（异步、可被取消） | `input tap/swipe` 同步直达 |
+| 剪贴板粘贴 | 长按弹菜单 + 模型点「粘贴」 | `input keyevent 279` 直接粘贴，确定性完成 |
+| 权限配置 | 需 adb 授权一次 | 运行时自给自足 |
+
+root 不能解决的：应用级无障碍节点屏蔽（如微信）只能视觉兜底，这与 root 无关。
+
 ## 键盘适配策略（全设备通用）
 
 不绑定任何特定键盘：
