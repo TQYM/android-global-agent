@@ -50,6 +50,7 @@ public class AgentEngine {
     private String lastApp;        // 当前任务所在应用包名
     private boolean visionOnly;    // 纯视觉模式（节点被应用屏蔽）
     private boolean clipPending;   // 剪贴板已写入，引导下一步点「粘贴」
+    private String borrowedIme;    // 任务中临时借用的输入法（任务结束归还）
 
     private AgentEngine(Context ctx) { app = ctx; }
 
@@ -340,6 +341,7 @@ public class AgentEngine {
             status();
         }
         } finally {
+            restoreIme();   // 归还借用的输入法
         }
         log("达到最大步数 " + maxSteps + "，任务未确认完成");
     }
@@ -453,7 +455,7 @@ public class AgentEngine {
                 if (injectViaClipboard(svc, a, text)) {
                     return "text(剪贴板待粘贴)";
                 }
-                throw new Exception("输入失败：无障碍写入被拒、缝合键盘不在用、剪贴板通道不可用");
+                throw new Exception("输入失败：无障碍写入被拒、缝合键盘未安装、剪贴板写入被系统拒绝（可在权限管理里允许本应用写剪贴板）");
             }
             case "app": {
                 String pkg = a.optString("package", "");
@@ -551,6 +553,18 @@ public class AgentEngine {
     /** 键盘无关的通用注入：写剪贴板 + 长按目标输入框，模型下一步点「粘贴」。 */
     private boolean injectViaClipboard(AgentA11yService svc, JSONObject a, String text) {
         try {
+            android.app.AppOpsManager aom =
+                    (android.app.AppOpsManager) app.getSystemService(android.content.Context.APP_OPS_SERVICE);
+            int opMode;
+            try {
+                opMode = aom.unsafeCheckOpNoThrow("android:write_clipboard",
+                        android.os.Process.myUid(), app.getPackageName());
+            } catch (Throwable t) {
+                opMode = 0;   // 查询失败不挡路，交给 setPrimaryClip 实测
+            }
+            if (aom != null && opMode != android.app.AppOpsManager.MODE_ALLOWED) {
+                return false;   // ColorOS 剪贴板保护拒绝写入
+            }
             android.content.ClipboardManager cm =
                     (android.content.ClipboardManager) app.getSystemService(android.content.Context.CLIPBOARD_SERVICE);
             if (cm == null) return false;
@@ -565,13 +579,25 @@ public class AgentEngine {
         }
     }
 
-    /** 往缝合版 FlorisBoard（内嵌注入桥）发文字；未安装或桥未激活返回 false。 */
+    /** 缝合键盘注入：不在用则自动借用（任务结束归还）。未安装返回 false。 */
     private boolean commitViaMergedIme(String text, boolean replace) {
         try {
             app.getPackageManager().getPackageInfo("dev.patrickgold.florisboard", 0);
-            String def = Settings.Secure.getString(app.getContentResolver(),
-                    Settings.Secure.DEFAULT_INPUT_METHOD);
-            if (def == null || !def.startsWith("dev.patrickgold.florisboard/")) return false;
+        } catch (Exception e) {
+            return false;
+        }
+        String def = Settings.Secure.getString(app.getContentResolver(),
+                Settings.Secure.DEFAULT_INPUT_METHOD);
+        if (def == null || !def.startsWith("dev.patrickgold.florisboard/")) {
+            // 自动借用缝合键盘，任务结束归还用户原输入法
+            if (borrowedIme == null) borrowedIme = def;
+            boolean ok = Settings.Secure.putString(app.getContentResolver(),
+                    Settings.Secure.DEFAULT_INPUT_METHOD,
+                    "dev.patrickgold.florisboard/.agent.AgentImeBridge");
+            log("自动借用缝合键盘（任务结束归还 " + borrowedIme + "）");
+            if (!ok) return false;
+        }
+        try {
             android.content.Intent it = new android.content.Intent("com.dsh.agent.IME_COMMIT")
                     .setPackage("dev.patrickgold.florisboard")
                     .putExtra("text", text)
@@ -581,6 +607,17 @@ public class AgentEngine {
         } catch (Exception e) {
             return false;
         }
+    }
+
+    /** 归还借用的输入法。 */
+    private void restoreIme() {
+        if (borrowedIme == null) return;
+        try {
+            Settings.Secure.putString(app.getContentResolver(),
+                    Settings.Secure.DEFAULT_INPUT_METHOD, borrowedIme);
+            log("已归还输入法: " + borrowedIme);
+        } catch (Exception ignored) { }
+        borrowedIme = null;
     }
 
 
