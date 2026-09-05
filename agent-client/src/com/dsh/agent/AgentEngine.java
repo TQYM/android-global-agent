@@ -49,6 +49,7 @@ public class AgentEngine {
     private int step;
     private String lastApp;        // 当前任务所在应用包名
     private boolean visionOnly;    // 纯视觉模式（节点被应用屏蔽）
+    private boolean clipPending;   // 剪贴板已写入，引导下一步点「粘贴」
 
     private AgentEngine(Context ctx) { app = ctx; }
 
@@ -294,6 +295,8 @@ public class AgentEngine {
                 continue;
             }
             log("第 " + step + " 步：执行 " + label);
+            boolean guidePaste = clipPending;
+            clipPending = false;
 
             // 自适应等待：感知树变化或超时（通常 ~0.5s，上限 1.6s）
             if (!"wait".equals(kind)) waitForChange(svc, nodes);
@@ -316,7 +319,9 @@ public class AgentEngine {
                     return;
                 }
             }
-            String nextMsg = "已执行动作，这是执行后的屏幕，请继续下一步（或 done）。";
+            String nextMsg = guidePaste
+                    ? "目标文字已写入剪贴板并已长按输入框。屏幕上应弹出了含「粘贴」的菜单——请立即 tap「粘贴」按钮完成输入（节点被屏蔽时用 px/py 比例坐标点它）。没弹菜单就再 longpress 一次输入框，或换其他方式。"
+                    : "已执行动作，这是执行后的屏幕，请继续下一步（或 done）。";
             if (repeats >= 2) {
                 nextMsg = "警告：你已连续 " + (repeats + 1) + " 次执行完全相同但没有进展的动作。" +
                         "必须换策略——用 index 点击节点表中真正的目标节点，或 scroll 翻页，不要再点同一位置。";
@@ -445,7 +450,10 @@ public class AgentEngine {
                 if (commitViaMergedIme(text, !a.optBoolean("append", false))) {
                     return "text(缝合键盘)";
                 }
-                throw new Exception("输入失败：目标拒绝无障碍写入，且缝合键盘不是当前输入法");
+                if (injectViaClipboard(svc, a, text)) {
+                    return "text(剪贴板待粘贴)";
+                }
+                throw new Exception("输入失败：无障碍写入被拒、缝合键盘不在用、剪贴板通道不可用");
             }
             case "app": {
                 String pkg = a.optString("package", "");
@@ -538,6 +546,23 @@ public class AgentEngine {
                               (int) (a.optDouble("py", 0.5) * wb.height()) };
         }
         return new int[]{a.optInt("x"), a.optInt("y")};
+    }
+
+    /** 键盘无关的通用注入：写剪贴板 + 长按目标输入框，模型下一步点「粘贴」。 */
+    private boolean injectViaClipboard(AgentA11yService svc, JSONObject a, String text) {
+        try {
+            android.content.ClipboardManager cm =
+                    (android.content.ClipboardManager) app.getSystemService(android.content.Context.CLIPBOARD_SERVICE);
+            if (cm == null) return false;
+            cm.setPrimaryClip(android.content.ClipData.newPlainText("agent", text));
+            clipPending = true;
+            int[] xy = null;
+            try { xy = resolvePoint(svc, a); } catch (Exception ignored) { }
+            if (xy != null) svc.longPress(xy[0], xy[1], 900);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     /** 往缝合版 FlorisBoard（内嵌注入桥）发文字；未安装或桥未激活返回 false。 */
