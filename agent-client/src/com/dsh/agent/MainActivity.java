@@ -171,9 +171,10 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
             onLog("WiFi 面板 ✓");
         });
         dbg(R.id.btnDbgIme, () -> {
-            boolean active = AgentImeService.isActive(this);
-            onLog(active ? "Agent 键盘已是当前输入法 ✓" : "Agent 键盘未激活，弹出切换器…");
-            if (!active) {
+            String def = Settings.Secure.getString(getContentResolver(), Settings.Secure.DEFAULT_INPUT_METHOD);
+            boolean merged = def != null && def.startsWith("dev.patrickgold.florisboard/");
+            onLog(merged ? "缝合键盘(FlorisBoard+注入桥)已是默认 ✓" : "默认输入法: " + def + "，弹出切换器…");
+            if (!merged) {
                 android.view.inputmethod.InputMethodManager imm =
                         (android.view.inputmethod.InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
                 ui.post(imm::showInputMethodPicker);
