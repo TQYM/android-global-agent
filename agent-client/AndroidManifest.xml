@@ -8,6 +8,8 @@
 
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"/>
+    <permission android:name="dev.patrickgold.florisboard.agent.INJECT" android:protectionLevel="normal"/>
+    <uses-permission android:name="dev.patrickgold.florisboard.agent.INJECT"/>
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS"/>
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>

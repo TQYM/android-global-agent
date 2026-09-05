@@ -444,6 +444,9 @@ public class AgentEngine {
                     if (err == null) return "text";
                     // ACTION_SET_TEXT 被拒 → 尝试 Agent 键盘通道
                 }
+                if (commitViaMergedIme(text, !a.optBoolean("append", false))) {
+                    return "text(缝合键盘)";
+                }
                 if (AgentImeService.commit(app, text, !a.optBoolean("append", false))) {
                     return "text(键盘通道)";
                 }
@@ -545,6 +548,24 @@ public class AgentEngine {
                               (int) (a.optDouble("py", 0.5) * wb.height()) };
         }
         return new int[]{a.optInt("x"), a.optInt("y")};
+    }
+
+    /** 往缝合版 FlorisBoard（内嵌注入桥）发文字；未安装或桥未激活返回 false。 */
+    private boolean commitViaMergedIme(String text, boolean replace) {
+        try {
+            app.getPackageManager().getPackageInfo("dev.patrickgold.florisboard", 0);
+            String def = Settings.Secure.getString(app.getContentResolver(),
+                    Settings.Secure.DEFAULT_INPUT_METHOD);
+            if (def == null || !def.startsWith("dev.patrickgold.florisboard/")) return false;
+            android.content.Intent it = new android.content.Intent("com.dsh.agent.IME_COMMIT")
+                    .setPackage("dev.patrickgold.florisboard")
+                    .putExtra("text", text)
+                    .putExtra("replace", replace);
+            app.sendBroadcast(it);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     /** 借用默认输入法：切到 Agent 键盘并记住原输入法（需 WRITE_SECURE_SETTINGS）。 */
