@@ -579,7 +579,7 @@ public class AgentEngine {
             cm.setPrimaryClip(android.content.ClipData.newPlainText("agent", text));
             int[] xy = null;
             try { xy = resolvePoint(svc, a); } catch (Exception ignored) { }
-            if (RootShell.available() && !text.equals(rootPasteDone)) {
+            if (RootShell.available(app) && !text.equals(rootPasteDone)) {
                 if (xy != null) { svc.tap(xy[0], xy[1]); sleep(350); }
                 if (RootShell.paste()) {
                     rootPasteDone = text;   // 同文重复请求说明没粘上，下次走菜单

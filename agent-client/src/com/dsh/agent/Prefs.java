@@ -47,4 +47,8 @@ public final class Prefs {
     }
 
     public void setApiKey(String key) { sp.edit().putString("api_key", key).apply(); }
+
+    /** Root 模式: auto(自动检测) / on(强制启用) / off(强制关闭)。 */
+    public String rootMode() { return sp.getString("root_mode", "auto"); }
+    public void setRootMode(String m) { sp.edit().putString("root_mode", m).apply(); }
 }

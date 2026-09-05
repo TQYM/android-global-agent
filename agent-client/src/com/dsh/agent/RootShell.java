@@ -15,8 +15,12 @@ import java.io.InputStream;
 public class RootShell {
     private static volatile Boolean sAvailable;
 
-    /** 一次性探测 su 可用性（KernelSU 首次会弹授权框）。 */
-    public static boolean available() {
+    /** 模式变化后调用，重新探测。 */
+    public static void reset() { sAvailable = null; }
+
+    /** 尊重用户设置：off 永不走 root；on/auto 探测 su（KernelSU 首次会弹授权框）。 */
+    public static boolean available(android.content.Context ctx) {
+        if ("off".equals(new Prefs(ctx).rootMode())) return false;
         if (sAvailable == null) {
             synchronized (RootShell.class) {
                 if (sAvailable == null) sAvailable = exec("true");

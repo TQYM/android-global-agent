@@ -47,6 +47,28 @@
             <Switch android:id="@+id/swVision" android:text="视觉模式（截图发给模型）"
                 android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:textSize="13sp"/>
+            <TextView android:text="Root 模式（自动=检测到 su 就用；关=纯零root）"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:textSize="12sp" android:textColor="#8B93A3"/>
+            <LinearLayout android:orientation="horizontal"
+                android:layout_width="match_parent" android:layout_height="wrap_content">
+                <Button android:id="@+id/btnRootAuto" android:text="自动"
+                    android:layout_width="0dp" android:layout_weight="1"
+                    android:layout_height="36dp" android:textSize="12sp"/>
+                <Button android:id="@+id/btnRootOn" android:text="开"
+                    android:layout_width="0dp" android:layout_weight="1"
+                    android:layout_height="36dp" android:textSize="12sp"
+                    android:layout_marginLeft="6dp"/>
+                <Button android:id="@+id/btnRootOff" android:text="关"
+                    android:layout_width="0dp" android:layout_weight="1"
+                    android:layout_height="36dp" android:textSize="12sp"
+                    android:layout_marginLeft="6dp"/>
+                <TextView android:id="@+id/tvRootState"
+                    android:layout_width="0dp" android:layout_weight="1.4"
+                    android:layout_height="36dp" android:gravity="center_vertical"
+                    android:layout_marginLeft="8dp" android:textSize="11sp"
+                    android:textColor="#8B93A3"/>
+            </LinearLayout>
             <LinearLayout android:orientation="horizontal"
                 android:layout_width="match_parent" android:layout_height="wrap_content">
                 <Button android:id="@+id/btnSave" android:text="保存配置"

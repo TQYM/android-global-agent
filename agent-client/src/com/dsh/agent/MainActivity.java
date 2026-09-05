@@ -55,6 +55,7 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
         bind();
         loadCfg();
         wire();
+        wireRootMode();
         KeepAliveService.start(this);
         if (android.os.Build.VERSION.SDK_INT >= 33
                 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
@@ -93,6 +94,39 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
         etAsr.setText(prefs.asrModel());
         etMaxSteps.setText(String.valueOf(prefs.maxSteps()));
         swVision.setChecked(prefs.vision());
+    }
+
+    /** Root 模式选择：自动/开/关，切换后立即重探测。 */
+    private void wireRootMode() {
+        View.OnClickListener l = v -> {
+            String m = v.getId() == R.id.btnRootOn ? "on"
+                    : v.getId() == R.id.btnRootOff ? "off" : "auto";
+            prefs.setRootMode(m);
+            RootShell.reset();
+            paintRootMode();
+            onLog("Root 模式 → " + ("on".equals(m) ? "强制启用" : "off".equals(m) ? "关闭（纯零root）" : "自动"));
+        };
+        findViewById(R.id.btnRootAuto).setOnClickListener(l);
+        findViewById(R.id.btnRootOn).setOnClickListener(l);
+        findViewById(R.id.btnRootOff).setOnClickListener(l);
+        paintRootMode();
+    }
+
+    private void paintRootMode() {
+        String m = prefs.rootMode();
+        int on = 0xFF58A6FF, off = 0xFF30363D;
+        findViewById(R.id.btnRootAuto).getBackground().setTint("auto".equals(m) ? on : off);
+        findViewById(R.id.btnRootOn).getBackground().setTint("on".equals(m) ? on : off);
+        findViewById(R.id.btnRootOff).getBackground().setTint("off".equals(m) ? on : off);
+        TextView tv = findViewById(R.id.tvRootState);
+        if ("off".equals(m)) {
+            tv.setText("已停用");
+            tv.setTextColor(0xFF8B93A3);
+        } else {
+            boolean ok = RootShell.available(this);
+            tv.setText(ok ? "su 可用 ✓" : "未检测到 su");
+            tv.setTextColor(ok ? 0xFF3FB950 : 0xFFF85149);
+        }
     }
 
     private void wire() {
