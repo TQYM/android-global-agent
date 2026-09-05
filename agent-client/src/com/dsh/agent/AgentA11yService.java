@@ -71,6 +71,32 @@ public class AgentA11yService extends AccessibilityService {
         return out;
     }
 
+    /** 在指定屏幕（虚拟屏）的输入框写入文字；成功返回 null。 */
+    public String setTextOnDisplay(int displayId, String text, boolean append) {
+        try {
+            java.util.List<android.view.accessibility.AccessibilityWindowInfo> wins =
+                    getWindowsOnAllDisplays().get(displayId);
+            if (wins == null) return "虚拟屏无窗口";
+            for (android.view.accessibility.AccessibilityWindowInfo w : wins) {
+                if (w == null) continue;
+                AccessibilityNodeInfo root = w.getRoot();
+                if (root == null) continue;
+                AccessibilityNodeInfo focus = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT);
+                AccessibilityNodeInfo target = (focus != null && focus.isEditable()) ? focus : findEditable(root);
+                if (target == null) { root.recycle(); continue; }
+                target.performAction(AccessibilityNodeInfo.ACTION_FOCUS);
+                Bundle args = new Bundle();
+                CharSequence cur = target.getText();
+                args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                        (append && cur != null) ? cur.toString() + text : text);
+                boolean ok = target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args);
+                root.recycle();
+                return ok ? null : "ACTION_SET_TEXT 被目标应用拒绝";
+            }
+            return "虚拟屏页面没有可输入的编辑框";
+        } catch (Exception e) { return e.getMessage(); }
+    }
+
     /** 收集指定屏幕（虚拟屏）上的节点树；该屏无窗口返回空表。 */
     public List<NodeInfo> collectNodesOnDisplay(int displayId) {
         List<NodeInfo> out = new ArrayList<>();

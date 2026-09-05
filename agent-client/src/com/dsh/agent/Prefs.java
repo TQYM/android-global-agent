@@ -57,6 +57,9 @@ public final class Prefs {
 
     /** Root 模式: auto(自动检测) / on(强制启用) / off(强制关闭)。 */
     public String rootMode() { return sp.getString("root_mode", "auto"); }
+    /** 视觉搭档模型：空 = 与主模型相同。 */
+    public String visionModel() { return sp.getString("vision_model", ""); }
+
     public boolean sandbox() { return sp.getBoolean("sandbox", false); }
     public void setSandbox(boolean v) { sp.edit().putBoolean("sandbox", v).apply(); }
     public void setRootMode(String m) { sp.edit().putString("root_mode", m).apply(); }

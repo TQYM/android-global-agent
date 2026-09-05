@@ -19,12 +19,15 @@ public class LlmClient {
     private final String baseUrl;
     private final String apiKey;
     private final String model;
+    private String visionModel;   // 含图消息时切换（纯文本模型配视觉搭档）
 
     public LlmClient(String baseUrl, String apiKey, String model) {
         this.baseUrl = baseUrl.replaceAll("/+$", "");
         this.apiKey = apiKey;
         this.model = model;
     }
+
+    public LlmClient visionModel(String vm) { visionModel = vm; return this; }
 
     public static JSONObject textMsg(String role, String text) throws Exception {
         return new JSONObject().put("role", role).put("content", text);
@@ -41,8 +44,11 @@ public class LlmClient {
 
     /** 一次 chat-completion，返回 assistant 文本。 */
     public String chat(JSONArray messages) throws Exception {
+        boolean hasImage = messages.toString().contains("\"image_url\"");
+        String useModel = (hasImage && visionModel != null && !visionModel.isEmpty())
+                ? visionModel : model;
         JSONObject body = new JSONObject()
-                .put("model", model)
+                .put("model", useModel)
                 .put("messages", messages)
                 .put("temperature", 0.1)
                 .put("max_tokens", 300);

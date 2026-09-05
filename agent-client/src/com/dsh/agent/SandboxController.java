@@ -43,9 +43,9 @@ public class SandboxController {
         c.width = dm.widthPixels;
         c.height = dm.heightPixels;
         c.reader = ImageReader.newInstance(c.width, c.height, PixelFormat.RGBA_8888, 2);
+        // 仅 PUBLIC：OWN_CONTENT_ONLY 会禁止第三方 App 显示，绝不能加
         c.vd = mp.createVirtualDisplay("agent_sandbox", c.width, c.height, dm.densityDpi,
-                DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC
-                        | DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC,
                 c.reader.getSurface(), null, null);
         c.displayId = c.vd.getDisplay().getDisplayId();
         s = c;

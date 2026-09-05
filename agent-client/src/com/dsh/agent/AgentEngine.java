@@ -178,7 +178,8 @@ public class AgentEngine {
 
     private void runLoop(String task) throws Exception {
         Prefs prefs = new Prefs(app);
-        LlmClient llm = new LlmClient(prefs.baseUrl(), prefs.apiKey(), prefs.model());
+        LlmClient llm = new LlmClient(prefs.baseUrl(), prefs.apiKey(), prefs.model())
+                .visionModel(prefs.visionModel());
         int maxSteps = prefs.maxSteps();
         boolean vision = prefs.vision();
 
@@ -335,7 +336,7 @@ public class AgentEngine {
             lastKey = actKey;
 
             // 无进展看门狗：屏幕指纹连续 6 步不变 → 任务卡死，中止
-            List<NodeInfo> fpNodes = svc.collectNodes();
+            List<NodeInfo> fpNodes = sandboxActive() ? svc.collectNodesOnDisplay(sandbox.displayId()) : svc.collectNodes();
             fpHistory.add(fpNodes.isEmpty() ? "empty-" + (step % 2) : NodeInfo.fingerprint(fpNodes));
             if (fpHistory.size() >= 6) {
                 java.util.List<String> tail = fpHistory.subList(fpHistory.size() - 6, fpHistory.size());
@@ -388,7 +389,7 @@ public class AgentEngine {
         long deadline = System.currentTimeMillis() + 1200;
         while (System.currentTimeMillis() < deadline) {
             if (stopRequested) return;
-            List<NodeInfo> cur = svc.collectNodes();
+            List<NodeInfo> cur = sandboxActive() ? svc.collectNodesOnDisplay(sandbox.displayId()) : svc.collectNodes();
             if (!NodeInfo.fingerprint(cur).equals(fp)) return;
             sleep(200);
         }
@@ -423,6 +424,11 @@ public class AgentEngine {
                 return "longpress" + (a.has("index") ? "#" + a.optInt("index") : "");
             }
             case "swipe": {
+                if (sandboxActive()) {
+                    if (!sandbox.swipe(a.optInt("x1"), a.optInt("y1"), a.optInt("x2"), a.optInt("y2"),
+                            a.optInt("dur", 400))) throw new Exception("沙盒滑动失败");
+                    return "swipe(沙盒)";
+                }
                 int x1 = a.optInt("x1"), y1 = a.optInt("y1"),
                     x2 = a.optInt("x2"), y2 = a.optInt("y2");
                 if (a.has("px1")) {
@@ -438,6 +444,13 @@ public class AgentEngine {
                 return "swipe";
             }
             case "scroll": {
+                if (sandboxActive()) {
+                    int sh = app.getResources().getDisplayMetrics().heightPixels;
+                    int sw = app.getResources().getDisplayMetrics().widthPixels;
+                    boolean dn = "down".equals(a.optString("direction", "down"));
+                    sandbox.swipe(sw / 2, (int) (sh * (dn ? 0.7 : 0.3)), sw / 2, (int) (sh * (dn ? 0.3 : 0.7)), 400);
+                    return "scroll(沙盒) " + (dn ? "down" : "up");
+                }
                 int h = app.getResources().getDisplayMetrics().heightPixels;
                 int w = app.getResources().getDisplayMetrics().widthPixels;
                 boolean down = "down".equals(a.optString("direction", "down"));
@@ -449,6 +462,10 @@ public class AgentEngine {
             }
             case "key": {
                 int code = a.optInt("code", 4);
+                if (sandboxActive()) {
+                    if (!sandbox.key(code)) throw new Exception("沙盒按键失败");
+                    return "key(沙盒) " + code;
+                }
                 boolean ok;
                 if (code == 3) ok = svc.goHome();
                 else if (code == 187) ok = svc.goRecents();
@@ -457,6 +474,7 @@ public class AgentEngine {
                 return "key " + code;
             }
             case "edge_back": {
+                if (sandboxActive()) { sandbox.key(4); return "edge_back→沙盒返回"; }
                 android.graphics.Rect wb = app.getSystemService(android.view.WindowManager.class)
                         .getCurrentWindowMetrics().getBounds();
                 int w = wb.width(), h = wb.height();
@@ -468,10 +486,21 @@ public class AgentEngine {
                 if (!ok) throw new Exception("边缘手势被系统取消");
                 return "edge_back " + (fromLeft ? "left" : "right");
             }
-            case "back": svc.goBack(); return "back";
-            case "home": svc.goHome(); lastApp = null; return "home";
+            case "back":
+                if (sandboxActive()) { sandbox.key(4); return "back(沙盒)"; }
+                svc.goBack(); return "back";
+            case "home":
+                if (sandboxActive()) { sandbox.key(3); lastApp = null; return "home(沙盒)"; }
+                svc.goHome(); lastApp = null; return "home";
             case "text": {
                 String text = a.optString("text", "");
+                if (sandboxActive()) {
+                    String serr = svc.setTextOnDisplay(sandbox.displayId(), text, a.optBoolean("append", false));
+                    if (serr == null) return "text(沙盒)";
+                    if (commitViaMergedIme(text, !a.optBoolean("append", false))) return "text(缝合键盘)";
+                    if (injectViaClipboard(svc, a, text)) return "text(剪贴板待粘贴)";
+                    throw new Exception("沙盒输入失败：" + serr);
+                }
                 if (!visionOnly) {
                     String err = svc.setText(text, a.optBoolean("append", false));
                     if (err == null) return "text";
