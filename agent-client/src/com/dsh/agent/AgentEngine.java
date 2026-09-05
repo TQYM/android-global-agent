@@ -31,6 +31,7 @@ public class AgentEngine {
         void onStatus(boolean running, int step);
         void onScreen(Bitmap bmp);   // 动作后截图（可为 null）
         void onTap(int x, int y);    // 点击标记
+        void onAsk(String question); // 模型提问：弹界面等待用户回答
     }
 
     private static final String TAG = "AgentEngine";
@@ -127,6 +128,7 @@ public class AgentEngine {
             "- {\"action\":\"edge_back\",\"side\":\"left|right\"}    边缘手势返回(从屏幕左/右边缘向内滑，全面屏手势的「返回」)\n" +
             "- {\"action\":\"text\",\"text\":\"...\"}                 输入文字(支持中文，替换输入框内容；先 tap 聚焦输入框)\n" +
             "- {\"action\":\"wait\",\"ms\":<int>}                   等待页面加载(最长 8000ms)\n" +
+            "- {\"action\":\"ask\",\"question\":\"问题\"}             向用户提问并等待回答(敏感操作确认/信息不足时用；回答内容会作为下一轮输入)\n" +
             "- {\"action\":\"done\",\"summary\":\"完成说明\"}          任务已完成\n" +
             "原则：能直达不翻页；页面在加载先 wait；弹窗/广告优先点关闭/跳过；同一动作执行后屏幕没变化必须换策略，不要重复点同一位置。\n" +
             "返回上级界面有三条路，按顺序尝试，一条没反应立刻换下一条：① key 4 系统返回；② tap 节点表里的「返回/←/back」节点（通常在屏幕左上角，坐标 x 很小、y 在顶部）；③ edge_back 边缘手势返回。\n" +
@@ -281,6 +283,16 @@ public class AgentEngine {
             }
 
             String kind = action.optString("action", "");
+            if ("ask".equals(kind)) {
+                String q = action.optString("question", "");
+                log("向用户提问: " + q);
+                String answer = askUser(q);
+                log("用户回答: " + answer);
+                messages.put(LlmClient.textMsg("assistant", reply));
+                messages.put(LlmClient.textMsg("user",
+                        "用户回答：「" + trim(answer, 200) + "」。请据此继续（或 done）。"));
+                continue;
+            }
             if ("done".equals(kind)) {
                 String summary = action.optString("summary", "完成");
                 log("任务完成：" + summary);
@@ -557,6 +569,28 @@ public class AgentEngine {
         }
         return new int[]{a.optInt("x"), a.optInt("y")};
     }
+
+    /** 阻塞等待用户回答（5 分钟超时返回「用户未回答」）。 */
+    private String askUser(String question) {
+        askLatch = new java.util.concurrent.CountDownLatch(1);
+        askAnswer = null;
+        Listener l = listener;
+        if (l != null) l.onAsk(question);
+        try {
+            if (askLatch.await(5, java.util.concurrent.TimeUnit.MINUTES) && askAnswer != null
+                    && !askAnswer.isEmpty()) return askAnswer;
+        } catch (InterruptedException ignored) { }
+        return "（用户未回答或超时）";
+    }
+
+    /** UI 层提交回答。 */
+    public void answerAsk(String answer) {
+        askAnswer = answer;
+        if (askLatch != null) askLatch.countDown();
+    }
+
+    private volatile java.util.concurrent.CountDownLatch askLatch;
+    private volatile String askAnswer;
 
     /** 键盘无关的通用注入：写剪贴板 + 长按目标输入框，模型下一步点「粘贴」。 */
     private boolean injectViaClipboard(AgentA11yService svc, JSONObject a, String text) {

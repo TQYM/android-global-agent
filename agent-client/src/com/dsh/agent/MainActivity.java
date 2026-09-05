@@ -326,9 +326,80 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
     }
 
     @Override
+    public void onAsk(String question) {
+        pendingAsk = question;
+        fireAskNotification(question);   // 全屏通知：其他 App 界面也会弹
+        ui.post(this::showAskDialogIfNeeded);
+    }
+
+    /** 模型提问的待回答状态。 */
+    private String pendingAsk;
+    private boolean askDialogShowing;
+
+    private void showAskDialogIfNeeded() {
+        if (pendingAsk == null || askDialogShowing) return;
+        askDialogShowing = true;
+        final android.widget.EditText input = new android.widget.EditText(this);
+        input.setHint("输入回答…");
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("Agent 提问")
+                .setMessage(pendingAsk)
+                .setView(input)
+                .setCancelable(false)
+                .setPositiveButton("回答", (d, w) -> {
+                    engine.answerAsk(input.getText().toString().trim());
+                    pendingAsk = null; askDialogShowing = false;
+                    cancelAskNotification();
+                })
+                .setNegativeButton("跳过", (d, w) -> {
+                    engine.answerAsk("");
+                    pendingAsk = null; askDialogShowing = false;
+                    cancelAskNotification();
+                })
+                .show();
+    }
+
+    private static final int ASK_NOTIF_ID = 9021;
+
+    private void fireAskNotification(String question) {
+        android.app.NotificationManager nm = getSystemService(android.app.NotificationManager.class);
+        if (nm == null) return;
+        String ch = "agent_ask";
+        if (android.os.Build.VERSION.SDK_INT >= 26) {
+            nm.createNotificationChannel(new android.app.NotificationChannel(ch, "Agent 提问",
+                    android.app.NotificationManager.IMPORTANCE_HIGH));
+        }
+        android.content.Intent it = new android.content.Intent(this, MainActivity.class)
+                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+                        | android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        android.app.PendingIntent pi = android.app.PendingIntent.getActivity(this, 0, it,
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE);
+        android.app.Notification n = new android.app.Notification.Builder(this, ch)
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setContentTitle("Agent 需要你的回答")
+                .setContentText(question)
+                .setContentIntent(pi)
+                .setFullScreenIntent(pi, true)   // 来电级弹出（零 root）
+                .setAutoCancel(true)
+                .build();
+        nm.notify(ASK_NOTIF_ID, n);
+    }
+
+    private void cancelAskNotification() {
+        android.app.NotificationManager nm = getSystemService(android.app.NotificationManager.class);
+        if (nm != null) nm.cancel(ASK_NOTIF_ID);
+    }
+
+    @Override
     protected void onResume() {
         super.onResume();
         refreshA11y();
+    }
+
+    @Override
+    protected void onNewIntent(android.content.Intent intent) {
+        super.onNewIntent(intent);
+        ui.post(this::showAskDialogIfNeeded);
     }
 
     private void refreshA11y() {

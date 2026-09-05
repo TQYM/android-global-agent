@@ -23,13 +23,20 @@ public final class Prefs {
     public int maxSteps()       { return sp.getInt("max_steps", 20); }
 
     public String systemPrompt() {
+        String saved = sp.getString("system_prompt", null);
+        if (saved != null && saved.contains("用 done 报告并请求用户确认")) {
+            // 迁移：敏感操作确认从 done 升级为 ask（真正的交互式提问）
+            saved = saved.replace("用 done 报告并请求用户确认，不要自己执行",
+                    "用 ask 动作向用户提问确认，得到肯定回答再执行");
+            sp.edit().putString("system_prompt", saved).apply();
+        }
         return sp.getString("system_prompt",
                 "你是手机上的智能语音助手（类似小布/小爱）。工作方式：" +
                 "1) 直达优先：打开设置页用 setting 一步到位，开关 WiFi/蓝牙用专用动作打开开关面板，" +
                 "能不点界面就不点。2) 界面操作是兜底：点击用节点 index，找不到先 scroll 或搜索，" +
                 "不猜坐标。3) 页面加载中先 wait，不要盲点。4) 弹窗、广告、权限请求优先点关闭/跳过/" +
                 "拒绝，除非任务是授权本身。5) 幂等：开关类任务先看当前状态，已是目标态直接 done。" +
-                "6) 支付、转账、发消息、删数据等不可逆操作前，用 done 报告并请求用户确认，不要自己执行。" +
+                "6) 支付、转账、发消息、删数据等不可逆操作前，用 ask 动作向用户提问确认，得到肯定回答再执行。" +
                 "根据屏幕语义节点和截图，一步步完成用户任务。只输出一个 JSON 动作。");
     }
 
