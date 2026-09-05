@@ -14,16 +14,22 @@ import java.io.InputStream;
  */
 public class RootShell {
     private static volatile Boolean sAvailable;
+    private static volatile long sProbeMs;
+    private static final long PROBE_TTL_MS = 15000;   // 探测缓存 15s：KernelSU 授权后最多 15s 自愈，不再永久卡 false
 
     /** 模式变化后调用，重新探测。 */
-    public static void reset() { sAvailable = null; }
+    public static void reset() { sAvailable = null; sProbeMs = 0; }
 
     /** 尊重用户设置：off 永不走 root；on/auto 探测 su（KernelSU 首次会弹授权框）。 */
     public static boolean available(android.content.Context ctx) {
         if ("off".equals(new Prefs(ctx).rootMode())) return false;
-        if (sAvailable == null) {
+        long now = System.currentTimeMillis();
+        if (sAvailable == null || now - sProbeMs > PROBE_TTL_MS) {
             synchronized (RootShell.class) {
-                if (sAvailable == null) sAvailable = exec("true");
+                if (sAvailable == null || now - sProbeMs > PROBE_TTL_MS) {
+                    sAvailable = exec("true");
+                    sProbeMs = now;
+                }
             }
         }
         return sAvailable;

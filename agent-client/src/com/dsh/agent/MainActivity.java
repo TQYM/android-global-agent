@@ -104,7 +104,8 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
 
     private void wireSandbox() {
         paintSandbox();
-        findViewById(R.id.btnSandbox).setOnClickListener(v -> {
+        final android.widget.Button btnSandbox = findViewById(R.id.btnSandbox);
+        btnSandbox.setOnClickListener(v -> {
             if (prefs.sandbox()) {
                 prefs.setSandbox(false);
                 SandboxController.stop();
@@ -113,20 +114,34 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
                 return;
             }
             if (!RootShell.available(this)) {
-                toast("沙盒需要 root（虚拟屏触摸注入无零root API）");
-                return;
+                // 可能是旧的 false 缓存（用户刚在 KernelSU 授权）→ 强制重探一次再下结论
+                RootShell.reset();
+                if (!RootShell.available(this)) {
+                    toast("沙盒需要 root（Android 10+ 禁止应用虚拟屏承载第三方任务，零root无解）");
+                    return;
+                }
             }
             if (SandboxController.get() == null) {
-                try {
-                    SandboxController.create(this);   // 自持虚拟屏：无需任何授权
-                    prefs.setSandbox(true);
-                    onLog("沙盒模式：开（虚拟屏 " + SandboxController.get().width()
-                            + "x" + SandboxController.get().height() + "）");
-                    paintSandbox();
-                } catch (Exception e) {
-                    toast("沙盒创建失败：" + e.getMessage());
-                    AgentEngine.staticLog("沙盒创建失败: " + e.getMessage());
-                }
+                btnSandbox.setEnabled(false);
+                onLog("沙盒创建中…");
+                new Thread(() -> {
+                    try {
+                        SandboxController.create(this);   // root 守护虚拟屏：无需任何授权弹窗
+                        prefs.setSandbox(true);
+                        ui.post(() -> {
+                            onLog("沙盒模式：开（虚拟屏 " + SandboxController.get().width()
+                                    + "x" + SandboxController.get().height() + "）");
+                            paintSandbox();
+                            btnSandbox.setEnabled(true);
+                        });
+                    } catch (Exception e) {
+                        AgentEngine.staticLog("沙盒创建失败: " + e.getMessage());
+                        ui.post(() -> {
+                            toast("沙盒创建失败：" + e.getMessage());
+                            btnSandbox.setEnabled(true);
+                        });
+                    }
+                }, "sandbox-create").start();
             } else {
                 prefs.setSandbox(true);
                 onLog("沙盒模式：开（Agent 将在虚拟屏后台操作）");
@@ -450,19 +465,17 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
     }
 
     private void refreshA11y() {
+        boolean a11yOn = AgentA11yService.get() != null;
         boolean rootMode = !"off".equals(prefs.rootMode());
-        if (rootMode) {
-            boolean su = RootShell.available(this);
-            if (su && AgentA11yService.get() == null) {
-                RootShell.ensureA11y(this);   // root 模式：自动开无障碍
-            }
-            tvA11y.setText(su ? "Root ✓" : "Root ✗（未检测到 su）");
-            tvA11y.setTextColor(su ? 0xFF3FB950 : 0xFFF85149);
+        if (rootMode && RootShell.available(this)) {
+            if (!a11yOn) RootShell.ensureA11y(this);   // root 模式：自动开无障碍
+            tvA11y.setText("Root ✓ · 无障碍 " + (a11yOn ? "✓" : "✗"));
+            tvA11y.setTextColor(a11yOn ? 0xFF3FB950 : 0xFFF85149);
             return;
         }
-        boolean on = AgentA11yService.get() != null;
-        tvA11y.setText(on ? "无障碍 ✓" : "无障碍 ✗（点「设置」开启）");
-        tvA11y.setTextColor(on ? 0xFF3FB950 : 0xFFF85149);
+        // 无 root（含 auto 探测不到 su 的设备，如无 root 平板）：无障碍状态才是主路径
+        tvA11y.setText(a11yOn ? "无障碍 ✓（零root模式）" : "无障碍 ✗（点「设置」开启）");
+        tvA11y.setTextColor(a11yOn ? 0xFF3FB950 : 0xFFF85149);
     }
 
     private void toast(String s) { Toast.makeText(this, s, Toast.LENGTH_SHORT).show(); }

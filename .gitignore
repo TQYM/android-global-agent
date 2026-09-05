@@ -3,4 +3,7 @@
 *.bin
 *.log
 .DS_Store
+.google_oauth_state.json
+google_oauth_tokens.json
 
+agent-client/debug.keystore

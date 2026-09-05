@@ -5,23 +5,31 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.util.DisplayMetrics;
 import android.view.WindowManager;
+
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 
 /**
- * 虚拟屏沙盒：root 守护进程（assets/vd_daemon.jar, app_process）建 TRUSTED+独立显示组
- * 的 VirtualDisplay，目标 App 启动进去，Agent 在后台操作，用户前台完全不受影响。
+ * 虚拟屏沙盒（root 限定）：root 守护进程（assets/vd_daemon.jar, app_process）建
+ * TRUSTED + 独立显示组的 VirtualDisplay，目标 App 启动进去，Agent 在后台操作，
+ * 用户前台完全不受影响。
  *
- * 为什么必须 root：ColorOS（实测 ColorOS 16）会把普通/投影虚拟屏上的任务
- * "organize" 到物理屏（canHostTasks=false），只有 root 身份 + TRUSTED(1024) +
- * OWN_DISPLAY_GROUP(2048) 能建出真正隔离的虚拟屏。无 root 时沙盒直接不可用。
+ * 为什么必须 root（三重实测证据，2026-09-06）：
+ *  1. Android 10+ 起，App 创建公有虚拟屏被拒（需 ADD_MIRROR_DISPLAY/CAPTURE_VIDEO_OUTPUT
+ *     或 MediaProjection token），OWN_CONTENT_ONLY 屏又只能显示自己内容；
+ *  2. ColorOS（ColorOS 16 实测）会把普通/投影虚拟屏上的任务 organize 到物理屏
+ *     （canHostTasks=false）；
+ *  3. 荣耀 MagicOS（YLP-W00, Android 17 实测）更严：连 adb shell 对虚拟屏
+ *     `am start --display` 都被 SafeActivityOptions.checkPermissions 拒绝。
+ *  结论：只有 root 身份 + TRUSTED(1024) + OWN_DISPLAY_GROUP(2048) 能建出真正隔离的虚拟屏。
  *
  * 通道：
- *   建屏  —— nohup app_process .../vd_daemon.jar（守护进程随宿主 App 死亡自动退出）
+ *   建屏  —— nohup app_process .../vd_daemon.jar（守护进程：宿主死亡自动退出；虚拟屏失效主动退出）
  *   起 App —— root am start --display <id>
  *   截图  —— root screencap -d <SurfaceFlinger display-id>
  *   触控  —— root input -d <displayId>
+ *   看门狗 —— 引擎每步 daemonAlive() 探测，死亡则限频 10s 自动重建（期间不碰真屏）
  */
 public final class SandboxController {
     private static volatile SandboxController s;
@@ -41,7 +49,8 @@ public final class SandboxController {
     /** 开启沙盒：起 root 守护进程建虚拟屏。失败抛异常（调用方提示用户）。 */
     public static synchronized SandboxController create(Context ctx) throws Exception {
         stop();
-        if (!RootShell.available(ctx)) throw new Exception("沙盒模式需要 Root 权限");
+        if (!RootShell.available(ctx))
+            throw new Exception("沙盒需要 root：Android 10+ 禁止应用虚拟屏承载第三方任务（无 root 设备请用全真屏模式）");
 
         WindowManager wm = (WindowManager) ctx.getSystemService(Context.WINDOW_SERVICE);
         DisplayMetrics dm = new DisplayMetrics();
@@ -93,12 +102,30 @@ public final class SandboxController {
         c.dpi = dm.densityDpi;
         c.frameFile = new File(ctx.getFilesDir(), "sandbox_frame.png");
         s = c;
+        sAliveCache = true; sAliveCacheMs = System.currentTimeMillis();
         return c;
     }
 
     public static synchronized void stop() {
         if (s != null) RootShell.exec("pkill -f \"agent_[v]d.jar\"");
         s = null;
+        sAliveCache = false; sAliveCacheMs = 0;
+    }
+
+    /**
+     * 守护进程存活探测（沙盒看门狗用）。结果缓存 2s，避免每步多次 su 开销。
+     * 守护进程死亡原因：系统回收 root 后台进程 / 虚拟屏被系统销毁后守护主动退出（VD_LOST）等。
+     */
+    private static volatile long sAliveCacheMs;
+    private static volatile boolean sAliveCache;
+    public static synchronized boolean daemonAlive() {
+        if (s == null) return false;
+        long now = System.currentTimeMillis();
+        if (now - sAliveCacheMs < 2000) return sAliveCache;
+        String out = RootShell.execOutput("pgrep -f \"agent_[v]d.jar\"");
+        sAliveCache = !out.trim().isEmpty();
+        sAliveCacheMs = now;
+        return sAliveCache;
     }
 
     /** 把应用启动进虚拟屏（root am --display）。 */

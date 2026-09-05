@@ -26,11 +26,13 @@
 - 序列号 `3B15B401NPF00000`
 - **沙盒模式在此设备上开发验证**
 
-### 新平板：华为 YLP-W00
-- Android 17（HarmonyOS 5.0 兼容层），**无 root**
-- 分辨率 2136×3200，密度 420
+### 新平板：荣耀 YLP-W00（MagicOS，hihonor 系包名）
+- Android 17（API 37），**无 root**
+- 分辨率 2136×3200（横屏 3200×2136），密度 420
 - 序列号 `AAQLBB5C03000706`
-- **零 root 适配目标设备**
+- **零 root 全真屏链路已实测通过**（2026-09-06）：节点采集 ✓ / takeScreenshot 3200×2136 ✓ / dispatchGesture ✓ / ACTION_SET_TEXT 中文 ✓ / 默认输入法百度输入法荣耀版
+- **荣耀特性坑**：App 被 `am force-stop` 或覆盖安装后，`enabled_accessibility_services` 里本 App 条目会被系统清空 → 需重新 `settings put` 开启（无需 force-stop，直接启动即可绑定）
+- 默认模型配置已改为 DashScope `qwen3.5-omni-plus`（新装机零配置开箱即用，API Key 仍需手填）
 
 ---
 
@@ -121,14 +123,25 @@ sh build-mac.sh
 
 ## 7. 沙盒模式（Root 限定）
 
-### 为什么必须 root
-ColorOS（实测 ColorOS 16）会把**任何**普通/MediaProjection 虚拟屏的任务投射到物理屏（`canHostTasks=false`）。只有 root 进程 + `TRUSTED`(1024) + `OWN_DISPLAY_GROUP`(2048) + `STEAL_TOP_FOCUS_DISABLED`(65536) 才能建出真正隔离的虚拟屏。
+### 为什么必须 root（三重实测证据）
+1. Android 10+ 起 App 创建公有虚拟屏被拒（需 ADD_MIRROR_DISPLAY/CAPTURE_VIDEO_OUTPUT 或 MediaProjection token），OWN_CONTENT_ONLY 屏只能显示自己内容；
+2. ColorOS（实测 ColorOS 16）会把**任何**普通/MediaProjection 虚拟屏的任务投射到物理屏（`canHostTasks=false`）；
+3. 荣耀 MagicOS（YLP-W00 实测）更严：连 **adb shell** `am start --display <VD>` 都被 `SafeActivityOptions.checkPermissions` 拒绝。
+
+只有 root 进程 + `TRUSTED`(1024) + `OWN_DISPLAY_GROUP`(2048) + `STEAL_TOP_FOCUS_DISABLED`(65536) 才能建出真正隔离的虚拟屏。
 
 ### 实现
 - **守护进程**：`vd-daemon/VdMain.java` → `assets/vd_daemon.jar`
 - 以 `app_process` 在 root 下运行，用 `ActivityThread.systemMain()` 获取系统 Context
-- 守护进程每 10s `pgrep -f com.dsh.agent`，宿主死亡则自动销毁，防止泄漏
+- 守护进程每 10s 探活宿主（`pgrep` 失败自动降级扫 `/proc/*/cmdline`），宿主连续 20s 不在才退出
+- 守护进程每 10s 检查 `vd.getDisplay().isValid()`，虚拟屏被系统销毁则打印 `VD_LOST` 主动退出（exit 2）
 - 沙盒开关 = **纯点按，零弹窗**（删除了 MediaProjection 授权流）
+
+### 看门狗自愈（2026-09-06 新增，已实测）
+- `SandboxController.daemonAlive()`：2s 缓存的 `pgrep` 探活
+- 引擎每步 `sandboxActive()`：守护死亡 → 限频 10s 自动 `create()` 重建（实测杀守护后 1s 内重建出新 VD）
+- **安全红线**：沙盒开关开着但沙盒不可用时，引擎原地等待重试（12 次后中止任务），**绝不回退真屏盲触**；`exec()` 内所有动作走 `requireSandbox()`，拿不到实例直接抛错
+- `resolvePoint` 在沙盒模式下改从虚拟屏收集节点（修复编号错位点错位置的 bug）
 
 ### 通道
 | 操作 | 命令 |
@@ -172,17 +185,22 @@ ColorOS（实测 ColorOS 16）会把**任何**普通/MediaProjection 虚拟屏�
 | 沙盒切出/闪退 | VD 抢焦点 + 主线程 ANR | `STEAL_TOP_FOCUS_DISABLED` + 后台线程创建 |
 | 语音输入失效 | `glm-asr-2512` 在 DashScope 不存在 | 改用 Omni `input_audio`，data-URI 格式 |
 | 模型乱猜包名 | 只有 OEM 别名，缺常用 App | `APP_NAMES` 表 + SCHEMA 内嵌 cheat sheet |
+| 每次构建签名都变 | `build-mac.sh` 每次 `rm -rf build/` 连 keystore 一起删，重装必丢配置 | keystore 固化到 `agent-client/debug.keystore`（已入 .gitignore 同级持久位置） |
+| KernelSU 授权后 App 仍提示无 root | `RootShell.sAvailable` 静态缓存永久记住 false | 探测缓存改 15s TTL + 沙盒按钮点击时强制重探 |
+| 荣耀平板无障碍总是掉 | MagicOS 在 force-stop / 覆盖安装后清空 `enabled_accessibility_services` | 重新 `settings put` 即可；**不要 force-stop**（正常启动不影响） |
+| 模型要"打开设置"报未知页 | `SETTINGS_PAGES` 没有通用 `settings` 别名 | 补 `settings → ACTION_SETTINGS` |
 
 ---
 
 ## 10. 当前待办
 
-- [ ] **平板零 root 适配**：在 YLP-W00（Android 17，2136×3200）上安装、验证零 root 链路（a11y 节点、截图、手势、文本注入、语音）
-- [ ] **沙盒稳定性**：长任务中守护进程偶发死亡（需加持久化/看门狗）
+- [x] **平板零 root 适配**：YLP-W00 全链路实测通过（2026-09-06）
+- [x] **沙盒稳定性**：看门狗自愈已上线并实测（守护死亡 1s 内重建）
+- [ ] **平板 API Key**：需用户手填（与一加相同的 DashScope key），填后即可跑完整任务
 - [ ] **ASR 质量**：Omni 音频转写对实际中文语音的准确率待用户验证
 - [ ] **模型包名 cheat sheet 扩展**：继续补充更多常用 App
 - [ ] **平板横屏/多窗口适配**：分辨率差异、密度差异、横屏布局
-- [ ] **HarmonyOS 兼容性**：确认 Android 17 兼容层下 a11y API 行为是否一致
+- [ ] ~~**HarmonyOS 兼容性**~~ → 实为荣耀 MagicOS（hihonor 系），a11y API 行为与 AOSP 一致，已验证
 
 ---
 

@@ -191,6 +191,7 @@ public class AgentEngine {
 
     private static final Map<String, String> SETTINGS_PAGES = new HashMap<>();
     static {
+        SETTINGS_PAGES.put("settings", Settings.ACTION_SETTINGS);   // 通用设置首页（模型常直接说 settings）
         SETTINGS_PAGES.put("wifi", Settings.ACTION_WIFI_SETTINGS);
         SETTINGS_PAGES.put("wlan", Settings.ACTION_WIFI_SETTINGS);
         SETTINGS_PAGES.put("bluetooth", Settings.ACTION_BLUETOOTH_SETTINGS);
@@ -235,6 +236,7 @@ public class AgentEngine {
         java.util.List<String> fpHistory = new java.util.ArrayList<>();
         int shotFails = 0;
         int zeroNodeSteps = 0;
+        int sandboxWaits = 0;
         boolean visionOn = vision;
         lastApp = null;
         visionOnly = false;
@@ -247,8 +249,20 @@ public class AgentEngine {
             AgentA11yService svc = AgentA11yService.get();
             if (svc == null) { log("无障碍服务断开，任务中止"); return; }
 
+            // 沙盒看门狗：用户要沙盒但守护死亡/重建失败时，暂停等待自愈——绝不回退真屏
+            boolean wantSandbox = sandboxWanted();
+            boolean sbx = wantSandbox && sandboxActive();
+            if (wantSandbox && !sbx) {
+                if (++sandboxWaits > 12) { log("沙盒多次重建失败，任务中止（未触碰真屏）"); return; }
+                log("沙盒暂不可用，等待重建（第 " + sandboxWaits + " 次等待，期间不操作真屏）");
+                sleep(2500);
+                step--;   // 等待自愈不消耗步数
+                continue;
+            }
+            sandboxWaits = 0;
+
             List<NodeInfo> nodes;
-            if (sandboxActive()) {
+            if (sbx) {
                 // 任务可能被 OEM 迁回真屏 → 每步校验并拉回
                 if (lastApp != null && !sandbox.hostsPackage(app, lastApp)) {
                     if (sandbox.reclaimTask(lastApp)) log("沙盒任务被迁回真屏，已拉回 " + lastApp);
@@ -275,7 +289,7 @@ public class AgentEngine {
                     || prevFailed || zeroNodeSteps >= 1);
             prevFailed = false;
             if (needShot) {
-                Bitmap bmp = sandboxActive() ? sandbox.frame() : svc.screenshot();
+                Bitmap bmp = sbx ? sandbox.frame() : svc.screenshot();
                 String dataUrl = bmpToDataUrl(bmp, 640, 60);
                 if (dataUrl != null) {
                     shotFails = 0;
@@ -371,7 +385,7 @@ public class AgentEngine {
             clipPending = false;
 
             // 自适应等待：感知树变化或超时（通常 ~0.5s，上限 1.6s）
-            if (!"wait".equals(kind)) waitForChange(svc, nodes);
+            if (!"wait".equals(kind)) waitForChange(svc, nodes, sbx);
 
             // 死循环检测
             String actKey = kind + "|" + action.opt("index") + "|" +
@@ -380,7 +394,7 @@ public class AgentEngine {
             lastKey = actKey;
 
             // 无进展看门狗：屏幕指纹连续 6 步不变 → 任务卡死，中止
-            List<NodeInfo> fpNodes = sandboxActive() ? svc.collectNodesOnDisplay(sandbox.displayId()) : svc.collectNodes();
+            List<NodeInfo> fpNodes = sbx ? svc.collectNodesOnDisplay(sandbox.displayId()) : svc.collectNodes();
             fpHistory.add(fpNodes.isEmpty() ? "empty-" + (step % 2) : NodeInfo.fingerprint(fpNodes));
             if (fpHistory.size() >= 6) {
                 java.util.List<String> tail = fpHistory.subList(fpHistory.size() - 6, fpHistory.size());
@@ -427,13 +441,13 @@ public class AgentEngine {
         if (l != null) l.onTap(x, y);
     }
 
-    private void waitForChange(AgentA11yService svc, List<NodeInfo> prev) {
+    private void waitForChange(AgentA11yService svc, List<NodeInfo> prev, boolean sbx) {
         String fp = NodeInfo.fingerprint(prev);
         sleep(250);
         long deadline = System.currentTimeMillis() + 1200;
         while (System.currentTimeMillis() < deadline) {
             if (stopRequested) return;
-            List<NodeInfo> cur = sandboxActive() ? svc.collectNodesOnDisplay(sandbox.displayId()) : svc.collectNodes();
+            List<NodeInfo> cur = sbx ? svc.collectNodesOnDisplay(sandbox.displayId()) : svc.collectNodes();
             if (!NodeInfo.fingerprint(cur).equals(fp)) return;
             sleep(200);
         }
@@ -449,13 +463,20 @@ public class AgentEngine {
 
     // ---- 动作执行（零 root 实现） ----
 
+    /** 沙盒动作分支入口：用户要沙盒时必须拿到实例，拿不到就抛错（绝不静默落真屏）。 */
+    private SandboxController requireSandbox() throws Exception {
+        SandboxController c = SandboxController.get();
+        if (c == null) throw new Exception("沙盒虚拟屏暂不可用（重建中），请 wait 1500ms 后重试");
+        return c;
+    }
+
     private String exec(AgentA11yService svc, JSONObject a) throws Exception {
         String kind = a.optString("action", "");
         switch (kind) {
             case "tap": {
                 int[] xy = resolvePoint(svc, a);
                 pushTap(xy[0], xy[1]);
-                if (sandboxActive()) { if (!sandbox.tap(xy[0], xy[1])) throw new Exception("沙盒点击失败"); return "tap(沙盒)"; }
+                if (sandboxWanted()) { if (!requireSandbox().tap(xy[0], xy[1])) throw new Exception("沙盒点击失败"); return "tap(沙盒)"; }
                 if (!svc.tap(xy[0], xy[1])) throw new Exception("手势被系统取消");
                 return a.has("index") ? "tap#" + a.optInt("index") : "tap";
             }
@@ -463,13 +484,13 @@ public class AgentEngine {
                 int[] xy = resolvePoint(svc, a);
                 pushTap(xy[0], xy[1]);
                 int dur = a.optInt("dur", 900);
-                if (sandboxActive()) { if (!sandbox.longPress(xy[0], xy[1], dur)) throw new Exception("沙盒长按失败"); return "longpress(沙盒)"; }
+                if (sandboxWanted()) { if (!requireSandbox().longPress(xy[0], xy[1], dur)) throw new Exception("沙盒长按失败"); return "longpress(沙盒)"; }
                 if (!svc.longPress(xy[0], xy[1], dur)) throw new Exception("长按手势被系统取消");
                 return "longpress" + (a.has("index") ? "#" + a.optInt("index") : "");
             }
             case "swipe": {
-                if (sandboxActive()) {
-                    if (!sandbox.swipe(a.optInt("x1"), a.optInt("y1"), a.optInt("x2"), a.optInt("y2"),
+                if (sandboxWanted()) {
+                    if (!requireSandbox().swipe(a.optInt("x1"), a.optInt("y1"), a.optInt("x2"), a.optInt("y2"),
                             a.optInt("dur", 400))) throw new Exception("沙盒滑动失败");
                     return "swipe(沙盒)";
                 }
@@ -488,11 +509,11 @@ public class AgentEngine {
                 return "swipe";
             }
             case "scroll": {
-                if (sandboxActive()) {
-                    int sh = app.getResources().getDisplayMetrics().heightPixels;
-                    int sw = app.getResources().getDisplayMetrics().widthPixels;
+                if (sandboxWanted()) {
+                    SandboxController sb = requireSandbox();
+                    int sh = sb.height(), sw = sb.width();
                     boolean dn = "down".equals(a.optString("direction", "down"));
-                    sandbox.swipe(sw / 2, (int) (sh * (dn ? 0.7 : 0.3)), sw / 2, (int) (sh * (dn ? 0.3 : 0.7)), 400);
+                    sb.swipe(sw / 2, (int) (sh * (dn ? 0.7 : 0.3)), sw / 2, (int) (sh * (dn ? 0.3 : 0.7)), 400);
                     return "scroll(沙盒) " + (dn ? "down" : "up");
                 }
                 int h = app.getResources().getDisplayMetrics().heightPixels;
@@ -506,8 +527,10 @@ public class AgentEngine {
             }
             case "key": {
                 int code = a.optInt("code", 4);
-                if (sandboxActive()) {
-                    if (!sandbox.key(code)) throw new Exception("沙盒按键失败");
+                if (sandboxWanted()) {
+                    if (!requireSandbox().key(code))
+                        throw new Exception(code == 4 ? "沙盒返回失败"
+                                : "零root沙盒仅支持返回键(4)；Home/最近任务是全局动作会误伤真屏，请用 app 动作直达目标应用");
                     return "key(沙盒) " + code;
                 }
                 boolean ok;
@@ -518,7 +541,10 @@ public class AgentEngine {
                 return "key " + code;
             }
             case "edge_back": {
-                if (sandboxActive()) { sandbox.key(4); return "edge_back→沙盒返回"; }
+                if (sandboxWanted()) {
+                    if (!requireSandbox().key(4)) throw new Exception("沙盒边缘返回失败");
+                    return "edge_back→沙盒返回";
+                }
                 android.graphics.Rect wb = app.getSystemService(android.view.WindowManager.class)
                         .getCurrentWindowMetrics().getBounds();
                 int w = wb.width(), h = wb.height();
@@ -531,15 +557,22 @@ public class AgentEngine {
                 return "edge_back " + (fromLeft ? "left" : "right");
             }
             case "back":
-                if (sandboxActive()) { sandbox.key(4); return "back(沙盒)"; }
+                if (sandboxWanted()) {
+                    if (!requireSandbox().key(4)) throw new Exception("沙盒返回失败");
+                    return "back(沙盒)";
+                }
                 svc.goBack(); return "back";
             case "home":
-                if (sandboxActive()) { sandbox.key(3); lastApp = null; return "home(沙盒)"; }
+                if (sandboxWanted()) {
+                    if (!requireSandbox().key(3))
+                        throw new Exception("零root沙盒不支持 Home（会误伤真屏）；请直接用 app 动作打开目标应用");
+                    lastApp = null; return "home(沙盒)";
+                }
                 svc.goHome(); lastApp = null; return "home";
             case "text": {
                 String text = a.optString("text", "");
-                if (sandboxActive()) {
-                    String serr = svc.setTextOnDisplay(sandbox.displayId(), text, a.optBoolean("append", false));
+                if (sandboxWanted()) {
+                    String serr = svc.setTextOnDisplay(requireSandbox().displayId(), text, a.optBoolean("append", false));
                     if (serr == null) return "text(沙盒)";
                     if (commitViaMergedIme(text, !a.optBoolean("append", false))) return "text(缝合键盘)";
                     if (injectViaClipboard(svc, a, text)) return "text(剪贴板待粘贴)";
@@ -561,22 +594,25 @@ public class AgentEngine {
             case "app": {
                 String pkg = a.optString("package", "");
                 if (!pkg.contains(".") && APP_NAMES.containsKey(pkg)) pkg = APP_NAMES.get(pkg);
-                if (sandboxActive()) {
+                if (sandboxWanted()) {
+                    SandboxController sb = requireSandbox();
                     boolean launched = false;
                     try {
-                        launched = sandbox.launchApp(app, pkg);
+                        launched = sb.launchApp(app, pkg);
                     } catch (Exception e) {
-                        log("沙盒启动 " + pkg + " 异常: " + e.getMessage() + "（退回真屏）");
+                        log("沙盒启动 " + pkg + " 异常: " + e.getMessage());
                     }
                     if (launched) {
                         sleep(2500);
-                        if (sandbox.hostsPackage(app, pkg)) {
+                        if (sb.hostsPackage(app, pkg)) {
                             lastApp = pkg; return "app(沙盒) " + pkg;
                         }
                         // 被弹回真屏（该应用已在真屏前台，Android 单实例限制）
                         throw new Exception("沙盒无法接管 " + pkg + "：它已在真屏运行，单实例应用只能存在于一个屏幕。" +
                                 "请先让用户在真屏关闭它，或换 done 报告用户。");
                     }
+                    // 沙盒模式下绝不退回真屏启动
+                    throw new Exception("沙盒内启动 " + pkg + " 失败（am start 未成功），请重试或换 done 报告用户");
                 }
                 startApp(pkg);
                 sleep(2000);   // 应用启动必有启动页，等它加载完再感知
@@ -587,13 +623,19 @@ public class AgentEngine {
                 String page = a.optString("page", "");
                 String intentAction = SETTINGS_PAGES.get(page.toLowerCase());
                 if (intentAction == null) throw new Exception("未知设置页 " + page);
-                if (sandboxActive() && sandbox.launchAction(intentAction)) return "setting(沙盒) " + page;
+                if (sandboxWanted()) {
+                    if (requireSandbox().launchAction(intentAction)) return "setting(沙盒) " + page;
+                    throw new Exception("沙盒内打开设置页失败，请重试");
+                }
                 startActivity(new Intent(intentAction));
                 return "setting " + page;
             }
             case "open_url": {
                 String url = a.optString("url", "");
-                if (sandboxActive() && sandbox.launchUrl(url)) return "open_url(沙盒)";
+                if (sandboxWanted()) {
+                    if (requireSandbox().launchUrl(url)) return "open_url(沙盒)";
+                    throw new Exception("沙盒内打开链接失败，请重试");
+                }
                 startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
                 return "open_url";
             }
@@ -656,7 +698,10 @@ public class AgentEngine {
     private int[] resolvePoint(AgentA11yService svc, JSONObject a) throws Exception {
         if (a.has("index")) {
             int idx = a.optInt("index");
-            List<NodeInfo> nodes = svc.collectNodes();
+            // 沙盒模式下节点表来自虚拟屏，必须也在虚拟屏上解析，否则编号错位
+            List<NodeInfo> nodes = sandboxWanted()
+                    ? svc.collectNodesOnDisplay(requireSandbox().displayId())
+                    : svc.collectNodes();
             for (NodeInfo n : nodes) {
                 if (n.index == idx) return new int[]{n.cx, n.cy};
             }
@@ -672,12 +717,36 @@ public class AgentEngine {
     }
 
     private SandboxController sandbox;
+    private long lastHealTry;
 
-    /** 沙盒可用性：开了开关 + 投影已授权 + root 可用（虚拟屏注入无零 root API）。 */
+    /** 用户是否希望沙盒运行（开关开 + root 可用；零root隔离沙盒已被实测证伪，见 SandboxController 注释）。 */
+    private boolean sandboxWanted() {
+        return new Prefs(app).sandbox() && RootShell.available(app);
+    }
+
+    /**
+     * 沙盒可用性（含看门狗自愈）：守护进程偶发死亡（系统回收 root 后台进程等）
+     * 时限频 10s 自动重建虚拟屏，重建期间返回 false——调用方必须暂停操作等待，
+     * 绝不回退真屏（沙盒任务的初衷就是不动用户真屏）。
+     */
     private boolean sandboxActive() {
-        if (!new Prefs(app).sandbox()) return false;
+        if (!sandboxWanted()) return false;
         sandbox = SandboxController.get();
-        return sandbox != null && RootShell.available(app);
+        if (sandbox != null && SandboxController.daemonAlive()) return true;
+        if (System.currentTimeMillis() - lastHealTry < 10000) { sandbox = null; return false; }
+        lastHealTry = System.currentTimeMillis();
+        log("沙盒守护进程不在，尝试重建虚拟屏…");
+        try {
+            SandboxController.create(app);
+            sandbox = SandboxController.get();
+            log("沙盒已重建（虚拟屏 " + sandbox.width() + "x" + sandbox.height()
+                    + " displayId=" + sandbox.displayId() + "）");
+            return true;
+        } catch (Exception e) {
+            log("沙盒重建失败：" + e.getMessage() + "（10s 后自动重试）");
+            sandbox = null;
+            return false;
+        }
     }
 
     /** 阻塞等待用户回答（5 分钟超时返回「用户未回答」）。 */

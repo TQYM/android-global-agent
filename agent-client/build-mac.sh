@@ -64,9 +64,10 @@ find "$BUILD/classes" -name "*.class" > "$BUILD/classes.txt"
 cp "$BUILD/unsigned.apk" "$BUILD/aligned.apk"
 (cd "$BUILD/dex" && zip -q -u ../aligned.apk classes.dex)
 
-# 6) zipalign + sign (debug key, generated once at repo root build/)
+# 6) zipalign + sign (debug key persisted at agent-client/debug.keystore — build/ 每次被清空，
+#    密钥若放 build/ 内会每轮换随机密钥导致设备无法覆盖安装)
 "$ZIPALIGN" -f 4 "$BUILD/aligned.apk" "$BUILD/aligned4.apk"
-KEYSTORE="${AGENT_KEYSTORE:-$BUILD/debug.keystore}"
+KEYSTORE="${AGENT_KEYSTORE:-$(pwd)/debug.keystore}"
 if [ ! -f "$KEYSTORE" ]; then
   keytool -genkeypair -v -keystore "$KEYSTORE" -alias agent \
     -keyalg RSA -keysize 2048 -validity 10000 \
