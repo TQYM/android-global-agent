@@ -69,7 +69,50 @@ public class AgentImeService extends InputMethodService
         keyboardView.setKeyboard(qwerty);
         keyboardView.setOnKeyboardActionListener(this);
         keyboardView.setPreviewEnabled(false);
-        return keyboardView;
+
+        // Agent 提示条：标识身份 + 一键切换/收起
+        android.widget.LinearLayout strip = new android.widget.LinearLayout(this);
+        strip.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+        strip.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        strip.setPadding(24, 6, 24, 6);
+        strip.setBackgroundColor(0xFF14171E);
+
+        android.widget.TextView label = new android.widget.TextView(this);
+        label.setText("🤖 Agent 键盘");
+        label.setTextSize(11f);
+        label.setTextColor(0xFF8B93A3);
+        android.widget.LinearLayout.LayoutParams labelLp =
+                new android.widget.LinearLayout.LayoutParams(0,
+                        android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        strip.addView(label, labelLp);
+
+        android.widget.TextView btnSwitch = new android.widget.TextView(this);
+        btnSwitch.setText("切换输入法");
+        btnSwitch.setTextSize(11f);
+        btnSwitch.setTextColor(0xFF58A6FF);
+        btnSwitch.setPadding(16, 8, 16, 8);
+        btnSwitch.setOnClickListener(v -> {
+            android.view.inputmethod.InputMethodManager imm =
+                    (android.view.inputmethod.InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+            imm.showInputMethodPicker();
+        });
+        strip.addView(btnSwitch);
+
+        android.widget.TextView btnHide = new android.widget.TextView(this);
+        btnHide.setText("收起 ▾");
+        btnHide.setTextSize(11f);
+        btnHide.setTextColor(0xFF8B93A3);
+        btnHide.setPadding(16, 8, 0, 8);
+        btnHide.setOnClickListener(v -> requestHideSelf(0));
+        strip.addView(btnHide);
+
+        android.widget.LinearLayout root = new android.widget.LinearLayout(this);
+        root.setOrientation(android.widget.LinearLayout.VERTICAL);
+        root.addView(strip);
+        root.addView(keyboardView, new android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT));
+        return root;
     }
 
     // ---------- 键盘事件 ----------
