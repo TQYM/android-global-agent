@@ -204,6 +204,20 @@ sh build-mac.sh
 
 ---
 
+## 10.5 Agent Lite（轻量副本，2026-09-06 创建）
+
+`agent-lite/`：面向**零 root 泛用性**的副本，包名 `com.dsh.agentlite`，与原版可同机共存。
+- **删沙盒**：SandboxController/vd-daemon/UI 全摘除；root 仅作静默加速器（无 UI，默认 auto）
+- **提速**：截图限频容忍 1.1s→0.9s、手势结果等待 4s→3s、动作后自适应等待 1.6s→1.0s（150ms 轮询）、视觉降采样 640→560px
+- **提准**：SCHEMA 明示「节点编号每步重新分配，严禁沿用旧编号」
+- **降门槛**：无 root 模式/沙盒开关 UI；无障碍未开时置顶「一键开启」横幅；调试台默认折叠
+- **美观**：卡片式深色 UI 重写（pill 状态徽章、圆角卡片、渐变主按钮）
+- **签名**：与原版共用 `debug.keystore`（副本见 agent-lite/）——共享 FlorisBoard `INJECT` 自定义权限需要同签名
+- 平板实测（2026-09-06）：感知 22 节点 ✓ / 截图 ✓ / 新 UI ✓
+- 构建：`cd agent-lite && sh build-mac.sh` → `build/agent-lite.apk`
+
+---
+
 ## 11. 关键文件速查
 
 | 文件 | 职责 |
