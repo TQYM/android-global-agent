@@ -118,7 +118,10 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
                 android.media.projection.MediaProjectionManager mpm =
                         (android.media.projection.MediaProjectionManager)
                                 getSystemService(MEDIA_PROJECTION_SERVICE);
-                startActivityForResult(mpm.createScreenCaptureIntent(), RC_PROJECTION);
+                // 锁定"整个屏幕"，跳过单应用/整屏二选一（API 34+）
+                startActivityForResult(mpm.createScreenCaptureIntent(
+                        android.media.projection.MediaProjectionConfig.createConfigForDefaultDisplay()),
+                        RC_PROJECTION);
             } else {
                 prefs.setSandbox(true);
                 onLog("沙盒模式：开（Agent 将在虚拟屏后台操作）");
@@ -140,11 +143,19 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
         if (req == RC_PROJECTION) {
             if (res == RESULT_OK && data != null) {
                 ProjectionService.start(this);   // 授权已完成，启动 MP 类型的前台服务
-                try { Thread.sleep(300); } catch (InterruptedException ignored) { }
-                SandboxController.create(this, res, data);
-                prefs.setSandbox(true);
-                onLog("沙盒模式：开（虚拟屏已创建 " + SandboxController.get().width()
-                        + "x" + SandboxController.get().height() + "）");
+                final android.content.Intent d = data;
+                // 不能 sleep 主线程（会挡住服务 onCreate）→ 延迟到服务起来后再建虚拟屏
+                ui.postDelayed(() -> {
+                    try {
+                        SandboxController.create(this, res, d);
+                        prefs.setSandbox(true);
+                        onLog("沙盒模式：开（虚拟屏 " + SandboxController.get().width()
+                                + "x" + SandboxController.get().height() + "）");
+                    } catch (Exception e) {
+                        onLog("沙盒创建失败：" + e.getMessage());
+                    }
+                    paintSandbox();
+                }, 600);
             } else {
                 onLog("投影授权被拒绝，沙盒未开启");
             }

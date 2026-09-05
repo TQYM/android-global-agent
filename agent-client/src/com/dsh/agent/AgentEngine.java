@@ -111,7 +111,7 @@ public class AgentEngine {
     private static final String SCHEMA = "\n\n动作必须是单个 JSON 对象，字段 action 取值：\n" +
             "【直达能力 —— 优先使用，像系统语音助手一样一步到位】\n" +
             "- {\"action\":\"setting\",\"page\":\"wifi\"}             直达设置页(可选: wifi bluetooth display sound apps notifications location security battery storage date language accessibility airplane network vpn nfc cast developer deviceinfo home)\n" +
-            "- {\"action\":\"app\",\"package\":\"包名\"}               启动应用(打不开时换 tap 桌面图标)\n" +
+            "- {\"action\":\"app\",\"package\":\"包名\"}               启动应用。包名必查：微信=com.tencent.mm 闲鱼=com.taobao.idlefish 淘宝=com.taobao.taobao 支付宝=com.eg.android.AlipayGphone 美团外卖=com.sankuai.meituan.takeoutnew 抖音=com.ss.android.ugc.aweme 哔哩哔哩=tv.danmaku.bili 小红书=com.xingin.xhs 高德地图=com.autonavi.minimap QQ=com.tencent.mobileqq 拼多多=com.xunmeng.pinduoduo 京东=com.jingdong.app.mall 携程=ctrip.android.view 微博=com.sina.weibo 知乎=com.zhihu.android；其他应用填 package 为应用的中文名即可\n" +
             "- {\"action\":\"open_url\",\"url\":\"...\"}              打开链接或应用 scheme(如 https://、alipay://、weixin://、tel:10086)\n" +
             "- {\"action\":\"wifi\"} / {\"action\":\"bluetooth\"}      打开 WiFi/蓝牙开关面板(系统弹出面板上可直接开关)\n" +
             "- {\"action\":\"brightness\",\"level\":<0-255>}        直接调亮度(首次需授予修改系统设置权限)\n" +
@@ -137,6 +137,34 @@ public class AgentEngine {
             "只输出 JSON，不要输出任何其他文字、解释或 markdown 代码块。";
 
     // OEM 包名别名（ColorOS/一加实测）
+    /** 常用应用中文名 → 包名（模型查表 + startApp 兜底解析）。 */
+    private static final Map<String, String> APP_NAMES = new HashMap<>();
+    static {
+        APP_NAMES.put("微信", "com.tencent.mm");
+        APP_NAMES.put("闲鱼", "com.taobao.idlefish");
+        APP_NAMES.put("淘宝", "com.taobao.taobao");
+        APP_NAMES.put("支付宝", "com.eg.android.AlipayGphone");
+        APP_NAMES.put("美团", "com.sankuai.meituan");
+        APP_NAMES.put("美团外卖", "com.sankuai.meituan.takeoutnew");
+        APP_NAMES.put("抖音", "com.ss.android.ugc.aweme");
+        APP_NAMES.put("哔哩哔哩", "tv.danmaku.bili");
+        APP_NAMES.put("小红书", "com.xingin.xhs");
+        APP_NAMES.put("高德地图", "com.autonavi.minimap");
+        APP_NAMES.put("百度地图", "com.baidu.BaiduMap");
+        APP_NAMES.put("QQ", "com.tencent.mobileqq");
+        APP_NAMES.put("网易云音乐", "com.netease.cloudmusic");
+        APP_NAMES.put("QQ音乐", "com.tencent.qqmusic");
+        APP_NAMES.put("拼多多", "com.xunmeng.pinduoduo");
+        APP_NAMES.put("京东", "com.jingdong.app.mall");
+        APP_NAMES.put("携程", "ctrip.android.view");
+        APP_NAMES.put("12306", "com.MobileTicket");
+        APP_NAMES.put("钉钉", "com.alibaba.android.rimet");
+        APP_NAMES.put("企业微信", "com.tencent.wework");
+        APP_NAMES.put("微博", "com.sina.weibo");
+        APP_NAMES.put("知乎", "com.zhihu.android");
+        APP_NAMES.put("设置", "com.android.settings");
+    }
+
     private static final Map<String, String[]> APP_ALIASES = new HashMap<>();
     static {
         APP_ALIASES.put("com.android.gallery3d", new String[]{"com.coloros.gallery3d", "com.oneplus.gallery"});
@@ -516,8 +544,23 @@ public class AgentEngine {
             }
             case "app": {
                 String pkg = a.optString("package", "");
-                if (sandboxActive() && sandbox.launchApp(app, pkg)) {
-                    sleep(2000); lastApp = pkg; return "app(沙盒) " + pkg;
+                if (!pkg.contains(".") && APP_NAMES.containsKey(pkg)) pkg = APP_NAMES.get(pkg);
+                if (sandboxActive()) {
+                    boolean launched = false;
+                    try {
+                        launched = sandbox.launchApp(app, pkg);
+                    } catch (Exception e) {
+                        log("沙盒启动 " + pkg + " 异常: " + e.getMessage() + "（退回真屏）");
+                    }
+                    if (launched) {
+                        sleep(2500);
+                        if (sandbox.hostsPackage(app, pkg)) {
+                            lastApp = pkg; return "app(沙盒) " + pkg;
+                        }
+                        // 被弹回真屏（该应用已在真屏前台，Android 单实例限制）
+                        throw new Exception("沙盒无法接管 " + pkg + "：它已在真屏运行，单实例应用只能存在于一个屏幕。" +
+                                "请先让用户在真屏关闭它，或换 done 报告用户。");
+                    }
                 }
                 startApp(pkg);
                 sleep(2000);   // 应用启动必有启动页，等它加载完再感知
@@ -736,6 +779,15 @@ public class AgentEngine {
     }
 
     private void startApp(String pkg) throws Exception {
+        if (!pkg.contains(".")) {   // 模型给了中文名 → 查表
+            String mapped = APP_NAMES.get(pkg);
+            if (mapped != null) pkg = mapped;
+        }
+        startAppResolved(pkg);
+    }
+
+    private void startAppResolved(String pkg) throws Exception {
+
         if (tryStartApp(pkg)) return;
         String[] aliases = APP_ALIASES.get(pkg);
         if (aliases != null) {

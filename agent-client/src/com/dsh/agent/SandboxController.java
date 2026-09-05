@@ -34,6 +34,10 @@ public class SandboxController {
         MediaProjectionManager mpm =
                 (MediaProjectionManager) ctx.getSystemService(Context.MEDIA_PROJECTION_SERVICE);
         MediaProjection mp = mpm.getMediaProjection(resultCode, data);
+        // API 34 强制：createVirtualDisplay 前必须注册回调
+        mp.registerCallback(new MediaProjection.Callback() {
+            @Override public void onStop() { stop(); }
+        }, null);
         SandboxController c = new SandboxController();
         c.mp = mp;
         WindowManager wm = (WindowManager) ctx.getSystemService(Context.WINDOW_SERVICE);
@@ -71,24 +75,37 @@ public class SandboxController {
     public int width() { return width; }
     public int height() { return height; }
 
-    /** 把应用启动进虚拟屏。 */
-    public boolean launchApp(Context ctx, String pkg) {
-        try {
-            Intent it = ctx.getPackageManager().getLaunchIntentForPackage(pkg);
-            if (it == null) return false;
-            it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
-            return launchIntent(ctx, it);
-        } catch (Exception e) { return false; }
+    /** 把应用启动进虚拟屏；失败抛出真因（由引擎记录）。 */
+    public boolean launchApp(Context ctx, String pkg) throws Exception {
+        Intent it = ctx.getPackageManager().getLaunchIntentForPackage(pkg);
+        if (it == null) return false;
+        // MULTIPLE_TASK：允许虚拟屏里开新实例，避免被弹回真屏已有任务
+        it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_MULTIPLE_TASK);
+        return launchIntent(ctx, it);
     }
 
     /** 把任意 Intent（设置页/链接）启动进虚拟屏。 */
-    public boolean launchIntent(Context ctx, Intent it) {
+    public boolean launchIntent(Context ctx, Intent it) throws Exception {
+        it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_MULTIPLE_TASK);
+        ActivityOptions opts = ActivityOptions.makeBasic();
+        opts.setLaunchDisplayId(displayId);
+        ctx.startActivity(it, opts.toBundle());
+        return true;
+    }
+
+    /** 启动后校验：虚拟屏是否真的出现了该应用的窗口（弹回真屏则 false）。 */
+    public boolean hostsPackage(Context ctx, String pkg) {
         try {
-            it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            ActivityOptions opts = ActivityOptions.makeBasic();
-            opts.setLaunchDisplayId(displayId);
-            ctx.startActivity(it, opts.toBundle());
-            return true;
+            android.app.ActivityManager am =
+                    (android.app.ActivityManager) ctx.getSystemService(Context.ACTIVITY_SERVICE);
+            // 通过 root 查 displayId 上的 task（appops 限制下 getRunningTasks 已废）
+            java.io.BufferedReader r = new java.io.BufferedReader(new java.io.InputStreamReader(
+                    Runtime.getRuntime().exec(new String[]{"su", "-c",
+                            "dumpsys activity activities | grep -E 'displayId=" + displayId + "'"})
+                            .getInputStream()));
+            String line;
+            while ((line = r.readLine()) != null) if (line.contains(pkg)) return true;
+            return false;
         } catch (Exception e) { return false; }
     }
 
