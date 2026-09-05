@@ -5,20 +5,34 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.inputmethodservice.InputMethodService;
+import android.inputmethodservice.Keyboard;
+import android.inputmethodservice.KeyboardView;
 import android.view.View;
+import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
-import android.widget.TextView;
 
 /**
- * Agent 键盘：无实体键盘的输入法服务，接收引擎广播直接 commitText。
- * 专治「应用屏蔽无障碍节点树导致 ACTION_SET_TEXT 不可用」的场景（微信等），
- * 支持任意 Unicode/中文。用户在系统设置启用并切换一次即可。
+ * Agent 键盘：完整 QWERTY + 数字符号页的正常键盘，同时保留广播通道
+ * 供 Agent 引擎在「应用屏蔽无障碍节点」时直接 commitText（支持任意中文）。
  */
-public class AgentImeService extends InputMethodService {
+public class AgentImeService extends InputMethodService
+        implements KeyboardView.OnKeyboardActionListener {
 
     public static final String ACTION_COMMIT = "com.dsh.agent.IME_COMMIT";
     public static final String EXTRA_TEXT = "text";
     public static final String EXTRA_REPLACE = "replace";
+
+    private static final int KEY_SHIFT = -1;
+    private static final int KEY_SYMBOLS = -2;
+    private static final int KEY_DELETE = -5;
+    private static final int KEY_PICKER = -10;
+    private static final int KEY_ABC = -11;
+    private static final int KEY_MORE_SYMBOLS = -12;
+
+    private KeyboardView keyboardView;
+    private Keyboard qwerty;
+    private Keyboard symbols;
+    private boolean shifted;
 
     private final BroadcastReceiver receiver = new BroadcastReceiver() {
         @Override
@@ -38,8 +52,7 @@ public class AgentImeService extends InputMethodService {
     @Override
     public void onCreate() {
         super.onCreate();
-        IntentFilter f = new IntentFilter(ACTION_COMMIT);
-        registerReceiver(receiver, f, Context.RECEIVER_NOT_EXPORTED);
+        registerReceiver(receiver, new IntentFilter(ACTION_COMMIT), Context.RECEIVER_NOT_EXPORTED);
     }
 
     @Override
@@ -48,17 +61,77 @@ public class AgentImeService extends InputMethodService {
         super.onDestroy();
     }
 
-    /** 极简输入视图：一条状态提示，不占屏幕。 */
     @Override
     public View onCreateInputView() {
-        TextView tv = new TextView(this);
-        tv.setText("Agent 键盘 · 由 Agent 客户端驱动");
-        tv.setTextSize(11f);
-        tv.setPadding(24, 12, 24, 12);
-        tv.setTextColor(0xFF8B93A3);
-        tv.setBackgroundColor(0xFF171A21);
-        return tv;
+        qwerty = new Keyboard(this, R.xml.ime_qwerty);
+        symbols = new Keyboard(this, R.xml.ime_symbols);
+        keyboardView = new KeyboardView(this, null, 0, R.style.AgentKeyboardView);
+        keyboardView.setKeyboard(qwerty);
+        keyboardView.setOnKeyboardActionListener(this);
+        keyboardView.setPreviewEnabled(false);
+        return keyboardView;
     }
+
+    // ---------- 键盘事件 ----------
+
+    @Override
+    public void onKey(int primaryCode, int[] keyCodes) {
+        InputConnection ic = getCurrentInputConnection();
+        switch (primaryCode) {
+            case KEY_SHIFT:
+                shifted = !shifted;
+                if (qwerty != null) qwerty.setShifted(shifted);
+                if (keyboardView != null) keyboardView.invalidateAllKeys();
+                break;
+            case KEY_SYMBOLS:
+                if (keyboardView != null) keyboardView.setKeyboard(symbols);
+                break;
+            case KEY_ABC:
+            case KEY_MORE_SYMBOLS:
+                if (keyboardView != null) keyboardView.setKeyboard(qwerty);
+                break;
+            case KEY_DELETE:
+                if (ic != null) ic.deleteSurroundingText(1, 0);
+                break;
+            case KEY_PICKER:
+                android.view.inputmethod.InputMethodManager imm =
+                        (android.view.inputmethod.InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+                imm.showInputMethodPicker();
+                break;
+            case 10: {  // 回车：优先执行编辑器动作（发送/搜索/下一步），否则换行
+                if (ic == null) break;
+                EditorInfo ei = getCurrentInputEditorInfo();
+                int action = ei == null ? EditorInfo.IME_ACTION_NONE
+                        : (ei.imeOptions & EditorInfo.IME_MASK_ACTION);
+                if (action != EditorInfo.IME_ACTION_NONE && action != EditorInfo.IME_ACTION_UNSPECIFIED) {
+                    ic.performEditorAction(action);
+                } else {
+                    ic.commitText("\n", 1);
+                }
+                break;
+            }
+            default:
+                if (ic == null) break;
+                char c = (char) primaryCode;
+                if (shifted && Character.isLetter(c)) {
+                    c = Character.toUpperCase(c);
+                }
+                ic.commitText(String.valueOf(c), 1);
+        }
+    }
+
+    @Override public void onPress(int primaryCode) { }
+    @Override public void onRelease(int primaryCode) { }
+    @Override public void onText(CharSequence text) {
+        InputConnection ic = getCurrentInputConnection();
+        if (ic != null) ic.commitText(text, 1);
+    }
+    @Override public void swipeLeft() { }
+    @Override public void swipeRight() { }
+    @Override public void swipeDown() { }
+    @Override public void swipeUp() { }
+
+    // ---------- 引擎通道 ----------
 
     /** 当前是否已被设为默认输入法。 */
     public static boolean isActive(Context ctx) {

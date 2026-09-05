@@ -56,6 +56,11 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
         loadCfg();
         wire();
         KeepAliveService.start(this);
+        if (android.os.Build.VERSION.SDK_INT >= 33
+                && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
+                        != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS}, 42);
+        }
         requestPermissions(new String[]{
                 Manifest.permission.RECORD_AUDIO,
                 Manifest.permission.POST_NOTIFICATIONS}, 1);
@@ -173,6 +178,12 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
                         (android.view.inputmethod.InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
                 ui.post(imm::showInputMethodPicker);
             }
+        });
+        dbg(R.id.btnDbgDot, () -> {
+            AgentA11yService s = AgentA11yService.get();
+            if (s == null) { onLog("服务未连接"); return; }
+            s.showDot(true);
+            onLog("圆点(红)已调用 showDot，dotView=" + (s.hasDot() ? "存在" : "null(失败)"));
         });
         dbg(R.id.btnDbgText, () -> {
             AgentA11yService s = svc();

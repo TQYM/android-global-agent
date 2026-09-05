@@ -49,6 +49,7 @@ public class AgentEngine {
     private int step;
     private String lastApp;        // 当前任务所在应用包名
     private boolean visionOnly;    // 纯视觉模式（节点被应用屏蔽）
+    private String borrowedIme;    // 借用的输入法（任务结束归还）
 
     private AgentEngine(Context ctx) { app = ctx; }
 
@@ -442,8 +443,12 @@ public class AgentEngine {
                 if (AgentImeService.commit(app, text, !a.optBoolean("append", false))) {
                     return "text(键盘通道)";
                 }
-                throw new Exception("输入失败：目标拒绝无障碍写入且未启用 Agent 键盘"
-                        + "（请在系统设置-输入法中启用并切换到 Agent 键盘）");
+                String borrowErr = borrowIme();
+                if (borrowErr == null && AgentImeService.commit(app, text, !a.optBoolean("append", false))) {
+                    return "text(键盘通道)";
+                }
+                throw new Exception("输入失败：目标拒绝无障碍写入，Agent 键盘未激活"
+                        + (borrowErr != null ? "，自动切换也失败：" + borrowErr : ""));
             }
             case "app": {
                 String pkg = a.optString("package", "");
@@ -536,6 +541,34 @@ public class AgentEngine {
                               (int) (a.optDouble("py", 0.5) * wb.height()) };
         }
         return new int[]{a.optInt("x"), a.optInt("y")};
+    }
+
+    /** 借用默认输入法：切到 Agent 键盘并记住原输入法（需 WRITE_SECURE_SETTINGS）。 */
+    private String borrowIme() {
+        try {
+            android.content.ContentResolver cr = app.getContentResolver();
+            String cur = Settings.Secure.getString(cr, Settings.Secure.DEFAULT_INPUT_METHOD);
+            if (cur != null && cur.startsWith("com.dsh.agent/")) return null;
+            Settings.Secure.putString(cr, Settings.Secure.DEFAULT_INPUT_METHOD,
+                    "com.dsh.agent/.AgentImeService");
+            borrowedIme = cur;
+            log("已临时切换默认输入法为 Agent 键盘（任务结束自动切回）");
+            sleep(800);
+            return null;
+        } catch (SecurityException se) {
+            return "缺少 WRITE_SECURE_SETTINGS 授权（adb: pm grant com.dsh.agent android.permission.WRITE_SECURE_SETTINGS）";
+        }
+    }
+
+    /** 任务结束归还原输入法。 */
+    private void restoreIme() {
+        if (borrowedIme == null) return;
+        try {
+            Settings.Secure.putString(app.getContentResolver(),
+                    Settings.Secure.DEFAULT_INPUT_METHOD, borrowedIme);
+            log("已切回原输入法");
+        } catch (Exception ignored) { }
+        borrowedIme = null;
     }
 
     /** 截图平均亮度（抽样），黑屏检测 + 诊断日志用。 */

@@ -10,39 +10,57 @@ import android.content.Intent;
 import android.os.IBinder;
 
 /**
- * 前台保活服务：持有一条常驻低优先级通知，防止 ColorOS 等国产 ROM
- * 把进程速冻（这是 agentd-apk 时代 8081 反复失联的根因）。
+ * 前台保活服务（对抗 OEM 速冻），同时承载状态栏小圆点：
+ * 绿点 = Agent 待命；红点 = 任务运行中；任务结束回到绿点。
  */
 public class KeepAliveService extends Service {
 
-    private static final String CHANNEL = "agent_keepalive";
-    private static final int ID = 1;
+    public static final String EXTRA_RUNNING = "running";
+    private static final String CHANNEL = "agent_state_v2";
+    private static final int NOTIF_ID = 1;
 
     public static void start(Context ctx) {
         ctx.startForegroundService(new Intent(ctx, KeepAliveService.class));
+    }
+
+    /** 更新状态栏圆点：true=运行中(红)，false=待命(绿)。 */
+    public static void updateState(Context ctx, boolean running) {
+        Intent it = new Intent(ctx, KeepAliveService.class).putExtra(EXTRA_RUNNING, running);
+        ctx.startForegroundService(it);
     }
 
     @Override
     public void onCreate() {
         super.onCreate();
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-        nm.createNotificationChannel(new NotificationChannel(
-                CHANNEL, "Agent 服务", NotificationManager.IMPORTANCE_MIN));
-        PendingIntent pi = PendingIntent.getActivity(this, 0,
-                new Intent(this, MainActivity.class), PendingIntent.FLAG_IMMUTABLE);
-        Notification n = new Notification.Builder(this, CHANNEL)
-                .setContentTitle("Agent 运行中")
-                .setContentText("无障碍感知与执行服务保持活跃")
-                .setSmallIcon(R.drawable.ic_launcher)
-                .setContentIntent(pi)
-                .setOngoing(true)
-                .build();
-        startForeground(ID, n);
+        NotificationChannel ch = new NotificationChannel(
+                CHANNEL, "Agent 状态", NotificationManager.IMPORTANCE_DEFAULT);
+        ch.setDescription("状态栏圆点：绿=待命，红=运行中");
+        ch.setShowBadge(false);
+        nm.createNotificationChannel(ch);
+        startForeground(NOTIF_ID, build(false));
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        boolean running = intent != null && intent.getBooleanExtra(EXTRA_RUNNING, false);
+        NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        nm.notify(NOTIF_ID, build(running));
         return START_STICKY;
+    }
+
+    private Notification build(boolean running) {
+        PendingIntent pi = PendingIntent.getActivity(this, 0,
+                new Intent(this, MainActivity.class),
+                PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+        return new Notification.Builder(this, CHANNEL)
+                .setContentTitle(running ? "Agent 运行中" : "Agent 待命")
+                .setSmallIcon(running ? R.drawable.ic_dot_red : R.drawable.ic_dot_green)
+                .setColor(running ? 0xFFE74C3C : 0xFF2ECC71)
+                .setColorized(true)
+                .setOngoing(true)
+                .setContentIntent(pi)
+                .build();
     }
 
     @Override
