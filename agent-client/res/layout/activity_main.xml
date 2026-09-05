@@ -32,7 +32,7 @@
             <EditText android:id="@+id/etBase" android:hint="Base URL"
                 android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:textSize="12sp" android:singleLine="true"/>
-            <EditText android:id="@+id/etKey" android:hint="API Key"
+            <EditText android:id="@+id/etKey" android:inputType="textPassword" android:hint="API Key"
                 android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:textSize="12sp" android:singleLine="true"/>
             <EditText android:id="@+id/etModel" android:hint="模型（如 glm-4.5v）"

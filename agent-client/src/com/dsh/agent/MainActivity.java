@@ -183,7 +183,7 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
             AgentA11yService s = AgentA11yService.get();
             if (s == null) { onLog("服务未连接"); return; }
             s.showDot(true);
-            onLog("圆点(红)已调用 showDot，dotView=" + (s.hasDot() ? "存在" : "null(失败)"));
+            ui.postDelayed(() -> onLog("圆点 dotView=" + (s.hasDot() ? "存在" : "null") + "，状态: " + s.dotError), 800);
         });
         dbg(R.id.btnDbgText, () -> {
             AgentA11yService s = svc();
