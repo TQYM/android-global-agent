@@ -206,10 +206,16 @@ public class AgentEngine {
             AgentA11yService svc = AgentA11yService.get();
             if (svc == null) { log("无障碍服务断开，任务中止"); return; }
 
-            List<NodeInfo> nodes = svc.collectNodes();
-            if (nodes.isEmpty()) {   // 加载中的空屏不值得问模型
-                sleep(1500);
+            List<NodeInfo> nodes;
+            if (sandboxActive()) {
+                nodes = svc.collectNodesOnDisplay(sandbox.displayId());
+                if (nodes.isEmpty()) { sleep(1500); nodes = svc.collectNodesOnDisplay(sandbox.displayId()); }
+            } else {
                 nodes = svc.collectNodes();
+                if (nodes.isEmpty()) {   // 加载中的空屏不值得问模型
+                    sleep(1500);
+                    nodes = svc.collectNodes();
+                }
             }
             zeroNodeSteps = nodes.isEmpty() ? zeroNodeSteps + 1 : 0;
             log("第 " + step + " 步：感知到 " + nodes.size() + " 个节点" +
@@ -224,7 +230,7 @@ public class AgentEngine {
                     || prevFailed || zeroNodeSteps >= 1);
             prevFailed = false;
             if (needShot) {
-                Bitmap bmp = svc.screenshot();
+                Bitmap bmp = sandboxActive() ? sandbox.frame() : svc.screenshot();
                 String dataUrl = bmpToDataUrl(bmp, 640, 60);
                 if (dataUrl != null) {
                     shotFails = 0;
@@ -404,6 +410,7 @@ public class AgentEngine {
             case "tap": {
                 int[] xy = resolvePoint(svc, a);
                 pushTap(xy[0], xy[1]);
+                if (sandboxActive()) { if (!sandbox.tap(xy[0], xy[1])) throw new Exception("沙盒点击失败"); return "tap(沙盒)"; }
                 if (!svc.tap(xy[0], xy[1])) throw new Exception("手势被系统取消");
                 return a.has("index") ? "tap#" + a.optInt("index") : "tap";
             }
@@ -411,6 +418,7 @@ public class AgentEngine {
                 int[] xy = resolvePoint(svc, a);
                 pushTap(xy[0], xy[1]);
                 int dur = a.optInt("dur", 900);
+                if (sandboxActive()) { if (!sandbox.longPress(xy[0], xy[1], dur)) throw new Exception("沙盒长按失败"); return "longpress(沙盒)"; }
                 if (!svc.longPress(xy[0], xy[1], dur)) throw new Exception("长按手势被系统取消");
                 return "longpress" + (a.has("index") ? "#" + a.optInt("index") : "");
             }
@@ -479,6 +487,9 @@ public class AgentEngine {
             }
             case "app": {
                 String pkg = a.optString("package", "");
+                if (sandboxActive() && sandbox.launchApp(app, pkg)) {
+                    sleep(2000); lastApp = pkg; return "app(沙盒) " + pkg;
+                }
                 startApp(pkg);
                 sleep(2000);   // 应用启动必有启动页，等它加载完再感知
                 lastApp = pkg;
@@ -568,6 +579,15 @@ public class AgentEngine {
                               (int) (a.optDouble("py", 0.5) * wb.height()) };
         }
         return new int[]{a.optInt("x"), a.optInt("y")};
+    }
+
+    private SandboxController sandbox;
+
+    /** 沙盒可用性：开了开关 + 投影已授权 + root 可用（虚拟屏注入无零 root API）。 */
+    private boolean sandboxActive() {
+        if (!new Prefs(app).sandbox()) return false;
+        sandbox = SandboxController.get();
+        return sandbox != null && RootShell.available(app);
     }
 
     /** 阻塞等待用户回答（5 分钟超时返回「用户未回答」）。 */

@@ -38,7 +38,13 @@ public class KeepAliveService extends Service {
         ch.setDescription("状态栏圆点：绿=待命，红=运行中");
         ch.setShowBadge(false);
         nm.createNotificationChannel(ch);
-        startForeground(NOTIF_ID, build(false));
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            startForeground(NOTIF_ID, build(false),
+                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                            | android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION);
+        } else {
+            startForeground(NOTIF_ID, build(false));
+        }
     }
 
     @Override

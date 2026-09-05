@@ -134,6 +134,9 @@
             android:layout_width="0dp" android:layout_weight="1"
             android:layout_height="wrap_content" android:hint="说点什么，例如：打开WLAN设置"
             android:textSize="13sp" android:minLines="1" android:maxLines="3"/>
+        <Button android:id="@+id/btnSandbox" android:text="沙盒:关"
+            android:layout_width="64dp" android:layout_height="44dp"
+            android:textSize="11sp" android:layout_marginLeft="6dp"/>
         <Button android:id="@+id/btnMic" android:text="🎤"
             android:layout_width="48dp" android:layout_height="44dp"
             android:layout_marginLeft="6dp"/>

@@ -71,6 +71,24 @@ public class AgentA11yService extends AccessibilityService {
         return out;
     }
 
+    /** 收集指定屏幕（虚拟屏）上的节点树；该屏无窗口返回空表。 */
+    public List<NodeInfo> collectNodesOnDisplay(int displayId) {
+        List<NodeInfo> out = new ArrayList<>();
+        try {
+            java.util.List<android.view.accessibility.AccessibilityWindowInfo> wins =
+                    getWindowsOnAllDisplays().get(displayId);
+            if (wins == null) return out;
+            for (android.view.accessibility.AccessibilityWindowInfo w : wins) {
+                if (w == null) continue;
+                AccessibilityNodeInfo root = w.getRoot();
+                if (root == null) continue;
+                walk(root, out, 0);
+                root.recycle();
+            }
+        } catch (Exception ignored) { }
+        return out;
+    }
+
     private int walk(AccessibilityNodeInfo n, List<NodeInfo> out, int depth) {
         if (n == null || depth > 60) return 0;
         int count = 0;

@@ -56,6 +56,7 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
         loadCfg();
         wire();
         wireRootMode();
+        wireSandbox();
         KeepAliveService.start(this);
         if (android.os.Build.VERSION.SDK_INT >= 33
                 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
@@ -94,6 +95,59 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
         etAsr.setText(prefs.asrModel());
         etMaxSteps.setText(String.valueOf(prefs.maxSteps()));
         swVision.setChecked(prefs.vision());
+    }
+
+    /** 沙盒模式开关：开启时若无投影授权则先走系统授权弹窗。 */
+    private static final int RC_PROJECTION = 77;
+
+    private void wireSandbox() {
+        paintSandbox();
+        findViewById(R.id.btnSandbox).setOnClickListener(v -> {
+            if (prefs.sandbox()) {
+                prefs.setSandbox(false);
+                SandboxController.stop();
+                onLog("沙盒模式：关");
+                paintSandbox();
+                return;
+            }
+            if (!RootShell.available(this)) {
+                toast("沙盒需要 root（虚拟屏触摸注入无零root API）");
+                return;
+            }
+            if (SandboxController.get() == null) {
+                android.media.projection.MediaProjectionManager mpm =
+                        (android.media.projection.MediaProjectionManager)
+                                getSystemService(MEDIA_PROJECTION_SERVICE);
+                startActivityForResult(mpm.createScreenCaptureIntent(), RC_PROJECTION);
+            } else {
+                prefs.setSandbox(true);
+                onLog("沙盒模式：开（Agent 将在虚拟屏后台操作）");
+                paintSandbox();
+            }
+        });
+    }
+
+    private void paintSandbox() {
+        boolean on = prefs.sandbox() && SandboxController.get() != null;
+        android.widget.Button b = findViewById(R.id.btnSandbox);
+        b.setText(on ? "沙盒:开" : "沙盒:关");
+        b.setTextColor(on ? 0xFF3FB950 : 0xFF8B93A3);
+    }
+
+    @Override
+    protected void onActivityResult(int req, int res, android.content.Intent data) {
+        super.onActivityResult(req, res, data);
+        if (req == RC_PROJECTION) {
+            if (res == RESULT_OK && data != null) {
+                SandboxController.create(this, res, data);
+                prefs.setSandbox(true);
+                onLog("沙盒模式：开（虚拟屏已创建 " + SandboxController.get().width()
+                        + "x" + SandboxController.get().height() + "）");
+            } else {
+                onLog("投影授权被拒绝，沙盒未开启");
+            }
+            paintSandbox();
+        }
     }
 
     /** Root 模式选择：自动/开/关，切换后立即重探测。 */
