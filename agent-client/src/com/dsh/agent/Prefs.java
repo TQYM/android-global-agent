@@ -18,7 +18,9 @@ public final class Prefs {
     }
     public String apiKey()      { return sp.getString("api_key", ""); }
     public String model()       { return sp.getString("model", "glm-4.5v"); }
-    public String asrModel()    { return sp.getString("asr_model", "glm-asr-2512"); }
+    public String asrModel()    { String v = sp.getString("asr_model", "");
+        if ("glm-asr-2512".equals(v)) v = "";   // 旧默认值已失效，自动迁移为空（=用主模型转写）
+        return v; }
     public boolean vision()     { return sp.getBoolean("vision", true); }
     public int maxSteps()       { return sp.getInt("max_steps", 20); }
 

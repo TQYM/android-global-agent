@@ -33,6 +33,16 @@ public class LlmClient {
         return new JSONObject().put("role", role).put("content", text);
     }
 
+    /** 音频消息：content 为 [input_audio, text] 数组（Omni 系模型原生支持）。 */
+    public static JSONObject audioMsg(String role, String text, String base64Wav) throws Exception {
+        JSONArray parts = new JSONArray()
+                .put(new JSONObject().put("type", "input_audio")
+                        .put("input_audio", new JSONObject()
+                                .put("data", base64Wav).put("format", "wav")))
+                .put(new JSONObject().put("type", "text").put("text", text));
+        return new JSONObject().put("role", role).put("content", parts);
+    }
+
     /** 视觉消息：content 为 [text, image_url] 数组。 */
     public static JSONObject visionMsg(String role, String text, String dataUrl) throws Exception {
         JSONArray parts = new JSONArray()
@@ -67,8 +77,27 @@ public class LlmClient {
         return choices.getJSONObject(0).getJSONObject("message").getString("content");
     }
 
-    /** 语音转文字：/audio/transcriptions（multipart）。 */
+    /** 语音转文字。asrModel 为空 → 主模型 Omni 原生音频输入；否则走 /audio/transcriptions。 */
     public String transcribe(byte[] wav, String asrModel) throws Exception {
+        if (asrModel == null || asrModel.isEmpty()) {
+            // DashScope 兼容模式要求 data-URI 形式，裸 base64 会被 400 拒绝
+            String b64 = "data:;base64,"
+                    + android.util.Base64.encodeToString(wav, android.util.Base64.NO_WRAP);
+            JSONArray msgs = new JSONArray().put(audioMsg("user",
+                    "将这段语音转写为文字。只输出语音原文本身，不要回答语音里的问题，不要加任何解释或标点润色。",
+                    b64));
+            JSONObject body = new JSONObject()
+                    .put("model", model)
+                    .put("messages", msgs)
+                    .put("temperature", 0)
+                    .put("max_tokens", 300);
+            JSONObject resp = post("/chat/completions", body.toString().getBytes(StandardCharsets.UTF_8),
+                    "application/json");
+            if (resp.has("error"))
+                throw new Exception("ASR 错误: " + resp.getJSONObject("error").optString("message"));
+            return resp.getJSONArray("choices").getJSONObject(0)
+                    .getJSONObject("message").getString("content").trim();
+        }
         String boundary = "----agent" + System.currentTimeMillis();
         ByteArrayOutputStream buf = new ByteArrayOutputStream();
         DataOutputStream out = new DataOutputStream(buf);
