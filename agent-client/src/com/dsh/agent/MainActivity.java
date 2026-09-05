@@ -179,12 +179,6 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
                 ui.post(imm::showInputMethodPicker);
             }
         });
-        dbg(R.id.btnDbgDot, () -> {
-            AgentA11yService s = AgentA11yService.get();
-            if (s == null) { onLog("服务未连接"); return; }
-            s.showDot(true);
-            ui.postDelayed(() -> onLog("圆点 dotView=" + (s.hasDot() ? "存在" : "null") + "，状态: " + s.dotError), 800);
-        });
         dbg(R.id.btnDbgText, () -> {
             AgentA11yService s = svc();
             if (s == null) return;

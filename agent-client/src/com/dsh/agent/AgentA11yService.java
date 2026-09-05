@@ -49,14 +49,12 @@ public class AgentA11yService extends AccessibilityService {
 
     @Override
     public void onDestroy() {
-        hideDot();
         sInstance = null;
         super.onDestroy();
     }
 
     @Override
     public boolean onUnbind(android.content.Intent intent) {
-        hideDot();
         sInstance = null;
         return super.onUnbind(intent);
     }
@@ -146,53 +144,6 @@ public class AgentA11yService extends AccessibilityService {
         GestureDescription.StrokeDescription stroke =
                 new GestureDescription.StrokeDescription(p, 0, durMs);
         return dispatch(new GestureDescription.Builder().addStroke(stroke).build());
-    }
-
-    // ---------- 状态栏小圆点（无障碍悬浮层，无需任何权限） ----------
-    private android.view.View dotView;
-    public volatile String dotError = "未尝试";
-    private final android.os.Handler mainHandler = new android.os.Handler(android.os.Looper.getMainLooper());
-
-    /** 显示/更新状态栏圆点：running=红，否则绿。任意线程可调用（内部切主线程）。 */
-    public void showDot(boolean running) {
-        mainHandler.post(() -> {
-            int res = running ? R.drawable.ic_dot_red : R.drawable.ic_dot_green;
-            try {
-                if (dotView == null) {
-                    dotView = new android.view.View(this);
-                    dotView.setBackgroundResource(res);
-                    int d = (int) (getResources().getDisplayMetrics().density * 10);
-                    android.view.WindowManager.LayoutParams lp = new android.view.WindowManager.LayoutParams(
-                            d, d,
-                            android.view.WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                            android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                                    | android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
-                            android.graphics.PixelFormat.TRANSLUCENT);
-                    lp.gravity = android.view.Gravity.TOP | android.view.Gravity.START;
-                    lp.x = (int) (getResources().getDisplayMetrics().density * 84);
-                    lp.y = (int) (getResources().getDisplayMetrics().density * 15);
-                    getSystemService(android.view.WindowManager.class).addView(dotView, lp);
-                    dotError = "addView 成功";
-                } else {
-                    dotView.setBackgroundResource(res);
-                }
-            } catch (Exception e) {
-                dotError = e.toString();
-                android.util.Log.w(TAG, "showDot failed", e);
-            }
-        });
-    }
-
-    public boolean hasDot() { return dotView != null; }
-
-    public void hideDot() {
-        mainHandler.post(() -> {
-            if (dotView != null) {
-                try { getSystemService(android.view.WindowManager.class).removeView(dotView); }
-                catch (Exception ignored) { }
-                dotView = null;
-            }
-        });
     }
 
     private int[] clampXY(int x, int y) {

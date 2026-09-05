@@ -173,8 +173,6 @@ public class AgentEngine {
 
         log("任务启动: " + task + " (model=" + prefs.model() + (vision ? " +vision" : "") + ")");
         status();
-        AgentA11yService dotSvc = AgentA11yService.get();
-        if (dotSvc != null) dotSvc.showDot(false);   // 任务开始：绿点
 
         JSONArray messages = new JSONArray();
         messages.put(LlmClient.textMsg("system", prefs.systemPrompt() + SCHEMA));
@@ -284,7 +282,6 @@ public class AgentEngine {
             String label = kind;
             try {
                 label = exec(svc, action);
-                if (step == 1) svc.showDot(true);    // 开始实际执行：红点
             } catch (Exception e) {
                 execErr = e.getMessage();
             }
@@ -339,9 +336,7 @@ public class AgentEngine {
             status();
         }
         } finally {
-            AgentA11yService end = AgentA11yService.get();
-            if (end != null) end.hideDot();   // 任务结束：圆点消失
-            restoreIme();                      // 归还借用的输入法
+            restoreIme();   // 归还借用的输入法
         }
         log("达到最大步数 " + maxSteps + "，任务未确认完成");
     }

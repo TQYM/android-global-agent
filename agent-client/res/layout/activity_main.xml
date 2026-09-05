@@ -101,7 +101,6 @@
             <Button android:id="@+id/btnDbgVol" android:text="音量+" style="?android:attr/borderlessButtonStyle" android:textSize="12sp" android:layout_width="wrap_content" android:layout_height="40dp"/>
             <Button android:id="@+id/btnDbgText" android:text="输中文" style="?android:attr/borderlessButtonStyle" android:textSize="12sp" android:layout_width="wrap_content" android:layout_height="40dp"/>
             <Button android:id="@+id/btnDbgIme" android:text="切换键盘" style="?android:attr/borderlessButtonStyle" android:textSize="12sp" android:layout_width="wrap_content" android:layout_height="40dp"/>
-            <Button android:id="@+id/btnDbgDot" android:text="圆点" style="?android:attr/borderlessButtonStyle" android:textSize="12sp" android:layout_width="wrap_content" android:layout_height="40dp"/>
         </LinearLayout>
     </HorizontalScrollView>
 
