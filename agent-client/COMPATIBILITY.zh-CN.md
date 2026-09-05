@@ -3,6 +3,24 @@
 本项目（agent-client + 缝合键盘方案）面向**所有 Android 11+ 设备**（API 30+，覆盖现役约 94% 设备）。
 核心能力全部跑在标准 Android API 上，无任何厂商私有接口。
 
+## 沙盒虚拟屏（root 限定）
+
+沙盒把目标 App 关进一块独立虚拟屏：Agent 在后台操作，你的真屏完全不受影响。
+
+**为什么必须 root（ColorOS 实测结论）**：普通应用或 MediaProjection 建的虚拟屏，
+ColorOS 会把其中的任务"organize"（投射）到物理屏——`canHostTasks=false`，
+App 一启动就跳上你的真屏。只有 root 进程 + `TRUSTED`(1024) + `OWN_DISPLAY_GROUP`(2048)
+标志能建出真正隔离的虚拟屏。因此沙盒开关在检测到无 root 时会直接拒绝并提示。
+
+实现：`assets/vd_daemon.jar`（源码 `vd-daemon/VdMain.java`）以 app_process 守护进程
+运行，持有虚拟屏；守护进程检测到宿主 App 退出后自动销毁，不会泄漏。
+截屏走 `screencap -d <SF-id>`，触控走 `input -d <displayId>`，起应用走
+`am start --display`，全部经 root shell。
+
+已知边界：
+- 正在真屏前台运行的单实例应用无法被拉进沙盒（引擎会明确报错，不会乱动真屏）；
+- 系统级弹窗（权限请求等）仍可能出现在真屏。
+
 ## 能力 × API 级别矩阵
 
 | 能力 | 实现 | 最低版本 | 备注 |

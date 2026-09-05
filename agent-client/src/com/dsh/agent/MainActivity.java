@@ -26,6 +26,8 @@ import java.util.Locale;
 
 /** 原生主界面：任务输入 / 语音 / 日志 / 屏幕回显 / 动作调试台。 */
 public class MainActivity extends Activity implements AgentEngine.Listener {
+    private static MainActivity sInstance;
+    static android.app.Application appStatic() { return sInstance.getApplication(); }
 
     private final Handler ui = new Handler(Looper.getMainLooper());
     private Prefs prefs;
@@ -47,6 +49,7 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
+        sInstance = this;
         setContentView(R.layout.activity_main);
         prefs = new Prefs(this);
         engine = AgentEngine.get(this);
@@ -98,7 +101,6 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
     }
 
     /** 沙盒模式开关：开启时若无投影授权则先走系统授权弹窗。 */
-    private static final int RC_PROJECTION = 77;
 
     private void wireSandbox() {
         paintSandbox();
@@ -115,13 +117,16 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
                 return;
             }
             if (SandboxController.get() == null) {
-                android.media.projection.MediaProjectionManager mpm =
-                        (android.media.projection.MediaProjectionManager)
-                                getSystemService(MEDIA_PROJECTION_SERVICE);
-                // 锁定"整个屏幕"，跳过单应用/整屏二选一（API 34+）
-                startActivityForResult(mpm.createScreenCaptureIntent(
-                        android.media.projection.MediaProjectionConfig.createConfigForDefaultDisplay()),
-                        RC_PROJECTION);
+                try {
+                    SandboxController.create(this);   // 自持虚拟屏：无需任何授权
+                    prefs.setSandbox(true);
+                    onLog("沙盒模式：开（虚拟屏 " + SandboxController.get().width()
+                            + "x" + SandboxController.get().height() + "）");
+                    paintSandbox();
+                } catch (Exception e) {
+                    toast("沙盒创建失败：" + e.getMessage());
+                    AgentEngine.staticLog("沙盒创建失败: " + e.getMessage());
+                }
             } else {
                 prefs.setSandbox(true);
                 onLog("沙盒模式：开（Agent 将在虚拟屏后台操作）");
@@ -137,31 +142,6 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
         b.setTextColor(on ? 0xFF3FB950 : 0xFF8B93A3);
     }
 
-    @Override
-    protected void onActivityResult(int req, int res, android.content.Intent data) {
-        super.onActivityResult(req, res, data);
-        if (req == RC_PROJECTION) {
-            if (res == RESULT_OK && data != null) {
-                ProjectionService.start(this);   // 授权已完成，启动 MP 类型的前台服务
-                final android.content.Intent d = data;
-                // 不能 sleep 主线程（会挡住服务 onCreate）→ 延迟到服务起来后再建虚拟屏
-                ui.postDelayed(() -> {
-                    try {
-                        SandboxController.create(this, res, d);
-                        prefs.setSandbox(true);
-                        onLog("沙盒模式：开（虚拟屏 " + SandboxController.get().width()
-                                + "x" + SandboxController.get().height() + "）");
-                    } catch (Exception e) {
-                        onLog("沙盒创建失败：" + e.getMessage());
-                    }
-                    paintSandbox();
-                }, 600);
-            } else {
-                onLog("投影授权被拒绝，沙盒未开启");
-            }
-            paintSandbox();
-        }
-    }
 
     /** Root 模式选择：自动/开/关，切换后立即重探测。 */
     private void wireRootMode() {

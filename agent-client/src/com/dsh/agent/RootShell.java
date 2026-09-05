@@ -29,6 +29,24 @@ public class RootShell {
         return sAvailable;
     }
 
+    /** 执行 root 命令并返回 stdout（失败返回空串）。 */
+    public static String execOutput(String cmd) {
+        Process p = null;
+        try {
+            p = Runtime.getRuntime().exec(new String[]{"su", "-c", cmd});
+            p.getOutputStream().close();
+            java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+            byte[] buf = new byte[8192];
+            int n;
+            InputStream in = p.getInputStream();
+            while ((n = in.read(buf)) != -1) bos.write(buf, 0, n);
+            drain(p.getErrorStream());
+            if (!p.waitFor(10, java.util.concurrent.TimeUnit.SECONDS)) { p.destroyForcibly(); return ""; }
+            return bos.toString("UTF-8");
+        } catch (Exception e) { return ""; }
+        finally { if (p != null) p.destroy(); }
+    }
+
     /** 执行一条 root shell 命令，返回是否成功（exit 0）。 */
     public static boolean exec(String cmd) {
         Process p = null;

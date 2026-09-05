@@ -60,6 +60,18 @@ public class AgentEngine {
 
     public void setListener(Listener l) { listener = l; }
 
+    /** 静态版日志：供 Activity 等非引擎处落盘排障。 */
+    public static void staticLog(String msg) {
+        try {
+            android.app.Application app = MainActivity.appStatic();
+            java.io.FileWriter w = new java.io.FileWriter(
+                    new java.io.File(app.getExternalFilesDir(null), "engine.log"), true);
+            w.write(new java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.US)
+                    .format(new java.util.Date()) + " " + msg + "\n");
+            w.close();
+        } catch (Exception ignored) { }
+    }
+
     private void log(String s) {
         Log.i(TAG, s);
         Listener l = listener;
@@ -237,6 +249,10 @@ public class AgentEngine {
 
             List<NodeInfo> nodes;
             if (sandboxActive()) {
+                // 任务可能被 OEM 迁回真屏 → 每步校验并拉回
+                if (lastApp != null && !sandbox.hostsPackage(app, lastApp)) {
+                    if (sandbox.reclaimTask(lastApp)) log("沙盒任务被迁回真屏，已拉回 " + lastApp);
+                }
                 nodes = svc.collectNodesOnDisplay(sandbox.displayId());
                 if (nodes.isEmpty()) { sleep(1500); nodes = svc.collectNodesOnDisplay(sandbox.displayId()); }
             } else {
@@ -571,11 +587,13 @@ public class AgentEngine {
                 String page = a.optString("page", "");
                 String intentAction = SETTINGS_PAGES.get(page.toLowerCase());
                 if (intentAction == null) throw new Exception("未知设置页 " + page);
+                if (sandboxActive() && sandbox.launchAction(intentAction)) return "setting(沙盒) " + page;
                 startActivity(new Intent(intentAction));
                 return "setting " + page;
             }
             case "open_url": {
                 String url = a.optString("url", "");
+                if (sandboxActive() && sandbox.launchUrl(url)) return "open_url(沙盒)";
                 startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
                 return "open_url";
             }

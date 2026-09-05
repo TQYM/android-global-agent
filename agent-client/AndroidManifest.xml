@@ -59,10 +59,5 @@
                 android:value="keep accessibility agent responsive"/>
         </service>
 
-        <!-- 沙盒投影服务：仅在 MediaProjection 授权完成后启动 -->
-        <service
-            android:name=".ProjectionService"
-            android:exported="false"
-            android:foregroundServiceType="mediaProjection"/>
     </application>
 </manifest>
