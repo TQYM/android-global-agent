@@ -53,10 +53,16 @@
         <service
             android:name=".KeepAliveService"
             android:exported="false"
-            android:foregroundServiceType="specialUse|mediaProjection">
+            android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="keep accessibility agent responsive"/>
         </service>
+
+        <!-- 沙盒投影服务：仅在 MediaProjection 授权完成后启动 -->
+        <service
+            android:name=".ProjectionService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection"/>
     </application>
 </manifest>

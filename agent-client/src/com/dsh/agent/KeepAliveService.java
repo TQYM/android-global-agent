@@ -23,6 +23,7 @@ public class KeepAliveService extends Service {
         ctx.startForegroundService(new Intent(ctx, KeepAliveService.class));
     }
 
+
     /** 更新状态栏圆点：true=运行中(红)，false=待命(绿)。 */
     public static void updateState(Context ctx, boolean running) {
         Intent it = new Intent(ctx, KeepAliveService.class).putExtra(EXTRA_RUNNING, running);
@@ -38,13 +39,7 @@ public class KeepAliveService extends Service {
         ch.setDescription("状态栏圆点：绿=待命，红=运行中");
         ch.setShowBadge(false);
         nm.createNotificationChannel(ch);
-        if (android.os.Build.VERSION.SDK_INT >= 29) {
-            startForeground(NOTIF_ID, build(false),
-                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-                            | android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION);
-        } else {
-            startForeground(NOTIF_ID, build(false));
-        }
+        startForeground(NOTIF_ID, build(false));   // 常态：仅用清单声明的 specialUse
     }
 
     @Override

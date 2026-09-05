@@ -139,6 +139,8 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
         super.onActivityResult(req, res, data);
         if (req == RC_PROJECTION) {
             if (res == RESULT_OK && data != null) {
+                ProjectionService.start(this);   // 授权已完成，启动 MP 类型的前台服务
+                try { Thread.sleep(300); } catch (InterruptedException ignored) { }
                 SandboxController.create(this, res, data);
                 prefs.setSandbox(true);
                 onLog("沙盒模式：开（虚拟屏已创建 " + SandboxController.get().width()
