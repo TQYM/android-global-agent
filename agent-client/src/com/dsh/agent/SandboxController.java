@@ -48,10 +48,15 @@ public final class SandboxController {
 
     /** 开启沙盒：起 root 守护进程建虚拟屏。失败抛异常（调用方提示用户）。 */
     public static synchronized SandboxController create(Context ctx) throws Exception {
-        stop();
         if (!RootShell.available(ctx))
             throw new Exception("沙盒需要 root：Android 10+ 禁止应用虚拟屏承载第三方任务（无 root 设备请用全真屏模式）");
 
+        // App 进程重启但守护还活着 → 重连既有虚拟屏（不打扰沙盒内正在运行的任务；
+        // 重建会把 VD 里的任务甩到真屏，能避免就避免）
+        SandboxController re = tryReattach(ctx);
+        if (re != null) return re;
+
+        stop();
         WindowManager wm = (WindowManager) ctx.getSystemService(Context.WINDOW_SERVICE);
         DisplayMetrics dm = new DisplayMetrics();
         wm.getDefaultDisplay().getRealMetrics(dm);
@@ -113,6 +118,48 @@ public final class SandboxController {
     }
 
     /**
+     * 重连既有虚拟屏（App 进程重启但守护还活着的场景）：从守护输出读回 VD_ID、
+     * 从 SurfaceFlinger 读回显示 id，只重建控制面——沙盒内任务原样保留。
+     * 守护不在 / 心跳异常 / 虚拟屏已失效 → 返回 null 走全新创建。
+     */
+    private static SandboxController tryReattach(Context ctx) {
+        try {
+            if (RootShell.execOutput("pgrep -f \"agent_[v]d.jar\"").trim().isEmpty()) return null;
+            String out = RootShell.execOutput("cat /data/local/tmp/agent_vd.out");
+            if (out.isEmpty()) return null;
+            java.util.regex.Matcher vm = java.util.regex.Pattern.compile("VD_ID=(\\d+)").matcher(out);
+            int vid = -1;
+            while (vm.find()) vid = Integer.parseInt(vm.group(1));   // 取最后一次
+            if (vid < 0) return null;
+            // 最近一次心跳必须健康（旧版守护无 vd= 字段 → 视为不可信，走重建）
+            java.util.regex.Matcher hb = java.util.regex.Pattern.compile("HB alive=(\\w+) vd=(\\w+)").matcher(out);
+            String lastAlive = null, lastVd = null;
+            while (hb.find()) { lastAlive = hb.group(1); lastVd = hb.group(2); }
+            if (!"true".equals(lastAlive) || !"true".equals(lastVd)) return null;
+            String sf = RootShell.execOutput("dumpsys SurfaceFlinger --display-id | grep agent_sandbox");
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile("Display (\\d+)").matcher(sf);
+            if (!m.find()) return null;
+
+            WindowManager wm = (WindowManager) ctx.getSystemService(Context.WINDOW_SERVICE);
+            DisplayMetrics dm = new DisplayMetrics();
+            wm.getDefaultDisplay().getRealMetrics(dm);
+            SandboxController c = new SandboxController();
+            c.displayId = vid;
+            c.sfId = m.group(1);
+            c.width = dm.widthPixels;
+            c.height = dm.heightPixels;
+            c.dpi = dm.densityDpi;
+            c.frameFile = new File(ctx.getFilesDir(), "sandbox_frame.png");
+            s = c;
+            sAliveCache = true; sAliveCacheMs = System.currentTimeMillis();
+            AgentEngine.staticLog("沙盒重连既有虚拟屏 displayId=" + vid + "（未重建，任务保留）");
+            return c;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /**
      * 守护进程存活探测（沙盒看门狗用）。结果缓存 2s，避免每步多次 su 开销。
      * 守护进程死亡原因：系统回收 root 后台进程 / 虚拟屏被系统销毁后守护主动退出（VD_LOST）等。
      */
@@ -128,10 +175,28 @@ public final class SandboxController {
         return sAliveCache;
     }
 
-    /** 把应用启动进虚拟屏（root am --display）。 */
+    /**
+     * 把应用启动进虚拟屏。
+     * 关键修复（跳回真屏问题）：若该应用已有任务在跑（尤其真屏上），am start --display
+     * 会命中单实例限制、把已有任务顶到真屏前台——用户眼中的「跳回真屏」。
+     * 改为先整体迁移（am display move-stack，实测 ColorOS 16 上微信任务迁入后稳定留在
+     * 虚拟屏），只有完全没在跑的应用才冷启进 VD。
+     */
     public boolean launchApp(Context ctx, String pkg) {
+        String tid = findTaskId(pkg);
+        if (tid != null) {
+            AgentEngine.staticLog("沙盒接管：迁移已有任务 #" + tid + "（" + pkg + "）进虚拟屏");
+            return RootShell.exec("am display move-stack " + tid + " " + displayId);
+        }
         return RootShell.exec("am start --display " + displayId
                 + " $(cmd package resolve-activity --brief " + pkg + " | tail -n1)");
+    }
+
+    /** 查应用现有任务号（任意屏）；没有返回 null。包名后跟空格/} 防前缀误匹配。 */
+    private String findTaskId(String pkg) {
+        String out = RootShell.execOutput("dumpsys activity activities | grep -oE 'Task\\{[a-f0-9]+ #[0-9]+[^}]*A=[0-9]+:"
+                + pkg + "[ }]' | grep -oE '#[0-9]+' | head -1 | tr -d '#'");
+        return out.trim().isEmpty() ? null : out.trim();
     }
 
     /** 把设置页/系统 action 启动进虚拟屏。 */
@@ -160,7 +225,7 @@ public final class SandboxController {
     /** 把迁移到真屏的任务拉回虚拟屏（防御性兜底）。 */
     public boolean reclaimTask(String pkg) {
         String cmd = "T=$(dumpsys activity activities | grep -oE 'Task\\{[a-f0-9]+ #[0-9]+[^}]*A=[0-9]+:"
-                + pkg + "' | grep -oE '#[0-9]+' | head -1 | tr -d '#'); "
+                + pkg + "[ }]' | grep -oE '#[0-9]+' | head -1 | tr -d '#'); "
                 + "[ -n \"$T\" ] && am display move-stack $T " + displayId;
         return RootShell.exec(cmd);
     }

@@ -607,9 +607,16 @@ public class AgentEngine {
                         if (sb.hostsPackage(app, pkg)) {
                             lastApp = pkg; return "app(沙盒) " + pkg;
                         }
-                        // 被弹回真屏（该应用已在真屏前台，Android 单实例限制）
-                        throw new Exception("沙盒无法接管 " + pkg + "：它已在真屏运行，单实例应用只能存在于一个屏幕。" +
-                                "请先让用户在真屏关闭它，或换 done 报告用户。");
+                        // 极少见：迁移/冷启后虚拟屏仍无该应用窗口 → 尝试拉回一次再确认
+                        if (sb.reclaimTask(pkg)) {
+                            sleep(1500);
+                            if (sb.hostsPackage(app, pkg)) {
+                                log("任务被系统弹回真屏，已拉回虚拟屏 " + pkg);
+                                lastApp = pkg; return "app(沙盒·拉回) " + pkg;
+                            }
+                        }
+                        throw new Exception("沙盒无法接管 " + pkg + "：迁移/启动后虚拟屏里没有它的窗口（系统拒绝），" +
+                                "请换一种方式或 done 报告用户。");
                     }
                     // 沙盒模式下绝不退回真屏启动
                     throw new Exception("沙盒内启动 " + pkg + " 失败（am start 未成功），请重试或换 done 报告用户");
