@@ -39,6 +39,20 @@ done
   "$BUILD"/res/*.flat
 
 # 3) compile java (R.java + sources)
+# 3.0) 测试便利：dev.local（gitignore，不入库）存在则把 API 配置编译进 APK。
+#      密钥不落 git；发布构建时删掉 dev.local 即可回到空默认。
+API_KEY=""; BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1"; MODEL="qwen3.5-omni-plus"
+if [ -f dev.local ]; then . ./dev.local; fi
+mkdir -p "$BUILD/gen/com/dsh/agentlite"
+cat > "$BUILD/gen/com/dsh/agentlite/DevConfig.java" <<EOF
+package com.dsh.agentlite;
+/** 构建期生成（build-mac.sh）。dev.local 存在时内置测试用 API 配置，请勿手动编辑。 */
+public final class DevConfig {
+    public static final String API_KEY = "${API_KEY}";
+    public static final String BASE_URL = "${BASE_URL}";
+    public static final String MODEL = "${MODEL}";
+}
+EOF
 find src -name "*.java" > "$BUILD/sources.txt"
 find "$BUILD/gen" -name "*.java" >> "$BUILD/sources.txt"
 # xargs -0 for paths with spaces; @argfile breaks on them

@@ -14,10 +14,10 @@ public final class Prefs {
     }
 
     public String baseUrl() {
-        return sp.getString("base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1");
+        return sp.getString("base_url", DevConfig.BASE_URL);
     }
-    public String apiKey()      { return sp.getString("api_key", ""); }
-    public String model()       { return sp.getString("model", "qwen3.5-omni-plus"); }
+    public String apiKey()      { return sp.getString("api_key", DevConfig.API_KEY); }
+    public String model()       { return sp.getString("model", DevConfig.MODEL); }
     public String asrModel()    { String v = sp.getString("asr_model", "");
         if ("glm-asr-2512".equals(v)) v = "";   // 旧默认值已失效，自动迁移为空（=用主模型转写）
         return v; }
