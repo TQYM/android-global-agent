@@ -52,8 +52,25 @@ public class LlmClient {
         return new JSONObject().put("role", role).put("content", parts);
     }
 
-    /** 一次 chat-completion，返回 assistant 文本。 */
+    /** 一次 chat-completion，返回 assistant 文本。429 限流时退避重试（最多 3 次：20s/40s/60s）。 */
     public String chat(JSONArray messages) throws Exception {
+        Exception last = null;
+        for (int attempt = 0; attempt < 4; attempt++) {
+            try {
+                return chatOnce(messages);
+            } catch (Exception e) {
+                last = e;
+                String msg = String.valueOf(e.getMessage());
+                if (!msg.contains("HTTP 429") && !msg.contains("quota")) throw e;
+                int waitSec = 20 * (attempt + 1);
+                android.util.Log.i("LlmClient", "429 限流，" + waitSec + "s 后重试（第 " + (attempt + 1) + " 次）");
+                try { Thread.sleep(waitSec * 1000L); } catch (InterruptedException ie) { throw e; }
+            }
+        }
+        throw last;
+    }
+
+    private String chatOnce(JSONArray messages) throws Exception {
         boolean hasImage = messages.toString().contains("\"image_url\"");
         String useModel = (hasImage && visionModel != null && !visionModel.isEmpty())
                 ? visionModel : model;
