@@ -1,0 +1,935 @@
+package com.dsh.agent;
+
+import android.content.ActivityNotFoundException;
+import android.content.Context;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
+import android.media.AudioManager;
+import android.net.Uri;
+import android.os.PowerManager;
+import android.provider.Settings;
+import android.util.Base64;
+import android.util.Log;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.io.ByteArrayOutputStream;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * Agent 决策循环：感知 → LLM → 执行 → 自适应等待 → 循环。
+ * 全部能力经 AgentA11yService / 框架 API，零 root。
+ */
+public class AgentEngine {
+
+    public interface Listener {
+        void onLog(String line);
+        void onStatus(boolean running, int step);
+        void onScreen(Bitmap bmp);   // 动作后截图（可为 null）
+        void onTap(int x, int y);    // 点击标记
+        void onAsk(String question); // 模型提问：弹界面等待用户回答
+    }
+
+    private static final String TAG = "AgentEngine";
+    private static AgentEngine sInstance;
+
+    public static synchronized AgentEngine get(Context ctx) {
+        if (sInstance == null) sInstance = new AgentEngine(ctx.getApplicationContext());
+        return sInstance;
+    }
+
+    private final Context app;
+    private volatile boolean running;
+    private volatile boolean stopRequested;
+    private volatile Thread thread;
+    private volatile Listener listener;
+    private int step;
+    private String lastApp;        // 当前任务所在应用包名
+    private boolean visionOnly;    // 纯视觉模式（节点被应用屏蔽）
+    private boolean clipPending;   // 剪贴板已写入，引导下一步点「粘贴」
+    private String rootPasteDone;  // 已用 keyevent279 粘过的文本（防同文死循环）
+    private String borrowedIme;    // 任务中临时借用的输入法（任务结束归还）
+
+    private AgentEngine(Context ctx) { app = ctx; }
+
+    public boolean isRunning() { return running; }
+
+    public void setListener(Listener l) { listener = l; }
+
+    /** 静态版日志：供 Activity 等非引擎处落盘排障。 */
+    public static void staticLog(String msg) {
+        try {
+            android.app.Application app = MainActivity.appStatic();
+            java.io.FileWriter w = new java.io.FileWriter(
+                    new java.io.File(app.getExternalFilesDir(null), "engine.log"), true);
+            w.write(new java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.US)
+                    .format(new java.util.Date()) + " " + msg + "\n");
+            w.close();
+        } catch (Exception ignored) { }
+    }
+
+    private void log(String s) {
+        Log.i(TAG, s);
+        Listener l = listener;
+        if (l != null) l.onLog(s);
+        try {
+            java.io.FileWriter w = new java.io.FileWriter(
+                    new java.io.File(app.getExternalFilesDir(null), "engine.log"), true);
+            w.write(new java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.US)
+                    .format(new java.util.Date()) + " " + s + "\n");
+            w.close();
+        } catch (Exception ignored) { }
+    }
+
+    private void status() {
+        Listener l = listener;
+        if (l != null) l.onStatus(running, step);
+    }
+
+    public synchronized boolean start(String task) {
+        if (running) return false;
+        if (AgentA11yService.get() == null) {
+            log("无障碍服务未开启——请在设置里打开「Agent 无障碍服务」");
+            return false;
+        }
+        stopRequested = false;
+        running = true;
+        step = 0;
+        KeepAliveService.start(app);
+        thread = new Thread(() -> {
+            try {
+                runLoop(task);
+            } catch (Throwable t) {
+                log("任务异常终止: " + t);
+            } finally {
+                running = false;
+                status();
+            }
+        }, "agent-loop");
+        thread.start();
+        return true;
+    }
+
+    public void stop() {
+        stopRequested = true;
+        log("收到停止请求");
+    }
+
+    // ---- 动作 schema（小布/小爱式：直达优先，界面兜底） ----
+    private static final String SCHEMA = "\n\n动作必须是单个 JSON 对象，字段 action 取值：\n" +
+            "【直达能力 —— 优先使用，像系统语音助手一样一步到位】\n" +
+            "- {\"action\":\"setting\",\"page\":\"wifi\"}             直达设置页(可选: wifi bluetooth display sound apps notifications location security battery storage date language accessibility airplane network vpn nfc cast developer deviceinfo home)\n" +
+            "- {\"action\":\"app\",\"package\":\"包名\"}               启动应用。包名必查：微信=com.tencent.mm 闲鱼=com.taobao.idlefish 淘宝=com.taobao.taobao 支付宝=com.eg.android.AlipayGphone 美团外卖=com.sankuai.meituan.takeoutnew 抖音=com.ss.android.ugc.aweme 哔哩哔哩=tv.danmaku.bili 小红书=com.xingin.xhs 高德地图=com.autonavi.minimap QQ=com.tencent.mobileqq 拼多多=com.xunmeng.pinduoduo 京东=com.jingdong.app.mall 携程=ctrip.android.view 微博=com.sina.weibo 知乎=com.zhihu.android；其他应用填 package 为应用的中文名即可\n" +
+            "- {\"action\":\"open_url\",\"url\":\"...\"}              打开链接或应用 scheme(如 https://、alipay://、weixin://、tel:10086)\n" +
+            "- {\"action\":\"wifi\"} / {\"action\":\"bluetooth\"}      打开 WiFi/蓝牙开关面板(系统弹出面板上可直接开关)\n" +
+            "- {\"action\":\"brightness\",\"level\":<0-255>}        直接调亮度(首次需授予修改系统设置权限)\n" +
+            "- {\"action\":\"volume\",\"dir\":\"up|down|mute\"}       音量\n" +
+            "- {\"action\":\"statusbar\",\"mode\":\"notifications|settings\"}  展开通知栏/快捷设置\n" +
+            "- {\"action\":\"wake\"}                              点亮屏幕\n" +
+            "【界面操作 —— 直达做不到时的兜底】\n" +
+            "- {\"action\":\"tap\",\"index\":<节点编号>}            点击节点（首选编号；目标不在表中才用 \"x\",\"y\" 坐标）\n" +
+            "- {\"action\":\"tap\",\"px\":0.50,\"py\":0.42}         比例坐标点击(px,py 为 0~1 的屏幕宽/高比例，从截图估计；仅节点表为空时使用，swipe 同理可用 px1,py1,px2,py2)\n" +
+            "- {\"action\":\"longpress\",\"index\":<节点编号>}      长按节点(可带 \"dur\" 毫秒)\n" +
+            "- {\"action\":\"swipe\",\"x1\":<int>,\"y1\":<int>,\"x2\":<int>,\"y2\":<int>,\"dur\":<int>} 滑动\n" +
+            "- {\"action\":\"scroll\",\"direction\":\"up\"|\"down\"}    翻页\n" +
+            "- {\"action\":\"key\",\"code\":<int>}                  按键(4=返回,3=主页,187=最近任务)\n" +
+            "- {\"action\":\"edge_back\",\"side\":\"left|right\"}    边缘手势返回(从屏幕左/右边缘向内滑，全面屏手势的「返回」)\n" +
+            "- {\"action\":\"text\",\"text\":\"...\"}                 输入文字(支持中文，替换输入框内容；先 tap 聚焦输入框)\n" +
+            "- {\"action\":\"wait\",\"ms\":<int>}                   等待页面加载(最长 8000ms)\n" +
+            "- {\"action\":\"ask\",\"question\":\"问题\"}             向用户提问并等待回答(敏感操作确认/信息不足时用；回答内容会作为下一轮输入)\n" +
+            "- {\"action\":\"done\",\"summary\":\"完成说明\"}          任务已完成\n" +
+            "原则：能直达不翻页；页面在加载先 wait；弹窗/广告优先点关闭/跳过；同一动作执行后屏幕没变化必须换策略，不要重复点同一位置。\n" +
+            "返回上级界面有三条路，按顺序尝试，一条没反应立刻换下一条：① key 4 系统返回；② tap 节点表里的「返回/←/back」节点（通常在屏幕左上角，坐标 x 很小、y 在顶部）；③ edge_back 边缘手势返回。\n" +
+            "应用内部的设置页/详情页/聊天页/个人主页等都是该应用的一部分——页面跳转了不代表离开了应用，不要因此返回或重启；判断标准是任务进展。\n" +
+            "节点数为 0 或屏幕全黑 = 应用正在加载（启动页/开屏广告），必须先 wait 2000~3000ms，绝对不要按 key 3/key 4/edge_back——那会把刚打开的应用退掉。开屏广告出现「跳过」节点时 tap 它。\n" +
+            "只输出 JSON，不要输出任何其他文字、解释或 markdown 代码块。";
+
+    // OEM 包名别名（ColorOS/一加实测）
+    /** 常用应用中文名 → 包名（模型查表 + startApp 兜底解析）。 */
+    private static final Map<String, String> APP_NAMES = new HashMap<>();
+    static {
+        APP_NAMES.put("微信", "com.tencent.mm");
+        APP_NAMES.put("闲鱼", "com.taobao.idlefish");
+        APP_NAMES.put("淘宝", "com.taobao.taobao");
+        APP_NAMES.put("支付宝", "com.eg.android.AlipayGphone");
+        APP_NAMES.put("美团", "com.sankuai.meituan");
+        APP_NAMES.put("美团外卖", "com.sankuai.meituan.takeoutnew");
+        APP_NAMES.put("抖音", "com.ss.android.ugc.aweme");
+        APP_NAMES.put("哔哩哔哩", "tv.danmaku.bili");
+        APP_NAMES.put("小红书", "com.xingin.xhs");
+        APP_NAMES.put("高德地图", "com.autonavi.minimap");
+        APP_NAMES.put("百度地图", "com.baidu.BaiduMap");
+        APP_NAMES.put("QQ", "com.tencent.mobileqq");
+        APP_NAMES.put("网易云音乐", "com.netease.cloudmusic");
+        APP_NAMES.put("QQ音乐", "com.tencent.qqmusic");
+        APP_NAMES.put("拼多多", "com.xunmeng.pinduoduo");
+        APP_NAMES.put("京东", "com.jingdong.app.mall");
+        APP_NAMES.put("携程", "ctrip.android.view");
+        APP_NAMES.put("12306", "com.MobileTicket");
+        APP_NAMES.put("钉钉", "com.alibaba.android.rimet");
+        APP_NAMES.put("企业微信", "com.tencent.wework");
+        APP_NAMES.put("微博", "com.sina.weibo");
+        APP_NAMES.put("知乎", "com.zhihu.android");
+        APP_NAMES.put("设置", "com.android.settings");
+    }
+
+    private static final Map<String, String[]> APP_ALIASES = new HashMap<>();
+    static {
+        APP_ALIASES.put("com.android.gallery3d", new String[]{"com.coloros.gallery3d", "com.oneplus.gallery"});
+        APP_ALIASES.put("com.google.android.apps.photos", new String[]{"com.coloros.gallery3d", "com.oneplus.gallery"});
+        APP_ALIASES.put("com.google.android.keep", new String[]{"com.coloros.note", "com.oneplus.note"});
+        APP_ALIASES.put("com.android.notes", new String[]{"com.coloros.note", "com.oneplus.note"});
+        APP_ALIASES.put("com.coloros.notepad", new String[]{"com.coloros.note"});
+        APP_ALIASES.put("com.android.camera2", new String[]{"com.oplus.camera", "com.oneplus.camera"});
+        APP_ALIASES.put("com.android.calculator2", new String[]{"com.coloros.calculator"});
+        APP_ALIASES.put("com.android.music", new String[]{"com.heytap.music"});
+    }
+
+    private static final Map<String, String> SETTINGS_PAGES = new HashMap<>();
+    static {
+        SETTINGS_PAGES.put("settings", Settings.ACTION_SETTINGS);   // 通用设置首页（模型常直接说 settings）
+        SETTINGS_PAGES.put("wifi", Settings.ACTION_WIFI_SETTINGS);
+        SETTINGS_PAGES.put("wlan", Settings.ACTION_WIFI_SETTINGS);
+        SETTINGS_PAGES.put("bluetooth", Settings.ACTION_BLUETOOTH_SETTINGS);
+        SETTINGS_PAGES.put("display", Settings.ACTION_DISPLAY_SETTINGS);
+        SETTINGS_PAGES.put("brightness", Settings.ACTION_DISPLAY_SETTINGS);
+        SETTINGS_PAGES.put("sound", Settings.ACTION_SOUND_SETTINGS);
+        SETTINGS_PAGES.put("apps", Settings.ACTION_MANAGE_APPLICATIONS_SETTINGS);
+        SETTINGS_PAGES.put("notifications", "android.settings.NOTIFICATION_SETTINGS");
+        SETTINGS_PAGES.put("location", Settings.ACTION_LOCATION_SOURCE_SETTINGS);
+        SETTINGS_PAGES.put("security", Settings.ACTION_SECURITY_SETTINGS);
+        SETTINGS_PAGES.put("battery", Settings.ACTION_BATTERY_SAVER_SETTINGS);
+        SETTINGS_PAGES.put("storage", Settings.ACTION_INTERNAL_STORAGE_SETTINGS);
+        SETTINGS_PAGES.put("date", Settings.ACTION_DATE_SETTINGS);
+        SETTINGS_PAGES.put("language", Settings.ACTION_LOCALE_SETTINGS);
+        SETTINGS_PAGES.put("accessibility", Settings.ACTION_ACCESSIBILITY_SETTINGS);
+        SETTINGS_PAGES.put("airplane", Settings.ACTION_AIRPLANE_MODE_SETTINGS);
+        SETTINGS_PAGES.put("network", Settings.ACTION_WIRELESS_SETTINGS);
+        SETTINGS_PAGES.put("vpn", Settings.ACTION_VPN_SETTINGS);
+        SETTINGS_PAGES.put("nfc", Settings.ACTION_NFC_SETTINGS);
+        SETTINGS_PAGES.put("cast", Settings.ACTION_CAST_SETTINGS);
+        SETTINGS_PAGES.put("developer", Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS);
+        SETTINGS_PAGES.put("deviceinfo", Settings.ACTION_DEVICE_INFO_SETTINGS);
+        SETTINGS_PAGES.put("home", Settings.ACTION_HOME_SETTINGS);
+    }
+
+    private void runLoop(String task) throws Exception {
+        Prefs prefs = new Prefs(app);
+        LlmClient llm = new LlmClient(prefs.baseUrl(), prefs.apiKey(), prefs.model())
+                .visionModel(prefs.visionModel());
+        int maxSteps = prefs.maxSteps();
+        boolean vision = prefs.vision();
+
+        log("任务启动: " + task + " (model=" + prefs.model() + (vision ? " +vision" : "") + ")");
+        status();
+
+        JSONArray messages = new JSONArray();
+        messages.put(LlmClient.textMsg("system", prefs.systemPrompt() + SCHEMA));
+        messages.put(LlmClient.textMsg("user", "任务：" + task));
+
+        String lastKey = "";
+        int repeats = 0;
+        java.util.List<String> fpHistory = new java.util.ArrayList<>();
+        int shotFails = 0;
+        int zeroNodeSteps = 0;
+        int sandboxWaits = 0;
+        boolean visionOn = vision;
+        lastApp = null;
+        visionOnly = false;
+        boolean prevFailed = false;
+
+        try {
+        for (step = 1; step <= maxSteps; step++) {
+            if (stopRequested) { log("任务已被用户停止"); return; }
+
+            AgentA11yService svc = AgentA11yService.get();
+            if (svc == null) { log("无障碍服务断开，任务中止"); return; }
+
+            // 沙盒看门狗：用户要沙盒但守护死亡/重建失败时，暂停等待自愈——绝不回退真屏
+            boolean wantSandbox = sandboxWanted();
+            boolean sbx = wantSandbox && sandboxActive();
+            if (wantSandbox && !sbx) {
+                if (++sandboxWaits > 12) { log("沙盒多次重建失败，任务中止（未触碰真屏）"); return; }
+                log("沙盒暂不可用，等待重建（第 " + sandboxWaits + " 次等待，期间不操作真屏）");
+                sleep(2500);
+                step--;   // 等待自愈不消耗步数
+                continue;
+            }
+            sandboxWaits = 0;
+
+            List<NodeInfo> nodes;
+            if (sbx) {
+                // 任务可能被 OEM 迁回真屏 → 每步校验并拉回
+                if (lastApp != null && !sandbox.hostsPackage(app, lastApp)) {
+                    if (sandbox.reclaimTask(lastApp)) log("沙盒任务被迁回真屏，已拉回 " + lastApp);
+                }
+                nodes = svc.collectNodesOnDisplay(sandbox.displayId());
+                if (nodes.isEmpty()) { sleep(1500); nodes = svc.collectNodesOnDisplay(sandbox.displayId()); }
+            } else {
+                nodes = svc.collectNodes();
+                if (nodes.isEmpty()) {   // 加载中的空屏不值得问模型
+                    sleep(1500);
+                    nodes = svc.collectNodes();
+                }
+            }
+            zeroNodeSteps = nodes.isEmpty() ? zeroNodeSteps + 1 : 0;
+            log("第 " + step + " 步：感知到 " + nodes.size() + " 个节点" +
+                    (zeroNodeSteps >= 2 ? "（连续空节点，疑似应用屏蔽无障碍）" : ""));
+            String appHint = lastApp == null ? "" :
+                    "（当前在应用 " + lastApp + " 内，其二级/三级页面都是它的一部分，不要因界面变化就返回或重启）\n";
+
+            // 视觉：截图降采样为 ≤640px JPEG data URL；连续失败自动降级纯节点模式
+            JSONObject perceive;
+            String prompt;
+            boolean needShot = visionOn && (visionOnly || step == 1 || nodes.size() < 5
+                    || prevFailed || zeroNodeSteps >= 1);
+            prevFailed = false;
+            if (needShot) {
+                Bitmap bmp = sbx ? sandbox.frame() : svc.screenshot();
+                String dataUrl = bmpToDataUrl(bmp, 640, 60);
+                if (dataUrl != null) {
+                    shotFails = 0;
+                    int lum = meanLuma(bmp);
+                    log("截图亮度≈" + lum + (lum < 8 ? "（黑屏，截图可能被屏蔽）" : ""));
+                    if (zeroNodeSteps >= 2 && lum >= 8) {
+                        // 纯视觉模式：节点被屏蔽但像素可见 → 坐标驱动
+                        if (!visionOnly) { visionOnly = true; log("进入纯视觉模式：改用比例坐标操作"); }
+                        android.graphics.Rect wb = svc.getSystemService(android.view.WindowManager.class)
+                                .getCurrentWindowMetrics().getBounds();
+                        prompt = appHint + "该应用屏蔽了无障碍节点（节点表为空），只能看截图用比例坐标操作。" +
+                                "屏幕宽=" + wb.width() + " 高=" + wb.height() + "。" +
+                                "tap/longpress 用 px,py（0~1 比例），swipe 用 px1,py1,px2,py2。" +
+                                "back/home/key 不受影响仍可用。仔细看截图找到目标位置再动手。";
+                    } else {
+                        visionOnly = false;
+                        prompt = appHint + (nodes.isEmpty()
+                                ? "当前屏幕没有任何可交互节点（应用正在加载或显示开屏广告）。请 wait 等待加载，或看到「跳过」就点它。"
+                                : NodeInfo.toPrompt(nodes, 40));
+                    }
+                    perceive = LlmClient.visionMsg("user", prompt + "\n\n同时附上了当前屏幕截图。", dataUrl);
+                    pushScreen(bmp);
+                } else {
+                    shotFails++;
+                    if (shotFails >= 3) {
+                        visionOn = false;
+                        log("截图连续失败（系统限频），转为纯节点模式");
+                    }
+                    perceive = LlmClient.textMsg("user", nodes.isEmpty()
+                            ? "当前屏幕没有任何可交互节点且截图失败。请 wait 后重试。"
+                            : NodeInfo.toPrompt(nodes, 40));
+                }
+            } else {
+                perceive = LlmClient.textMsg("user", appHint + (nodes.isEmpty()
+                        ? "当前屏幕没有任何可交互节点（应用正在加载或显示开屏广告）。请 wait 等待加载。"
+                        : NodeInfo.toPrompt(nodes, 40)));
+            }
+            messages.put(perceive);
+
+            String reply;
+            try {
+                reply = llm.chat(messages);
+            } catch (Exception e) {
+                log("LLM 调用失败: " + e.getMessage());
+                return;
+            }
+
+            JSONObject action;
+            try {
+                action = ActionParser.parse(reply);
+            } catch (Exception e) {
+                log("LLM 输出无法解析: " + e.getMessage());
+                messages.put(LlmClient.textMsg("assistant", reply));
+                messages.put(LlmClient.textMsg("user", "输出不是合法 JSON 动作，请重新只输出一个 JSON 动作。"));
+                continue;
+            }
+
+            String kind = action.optString("action", "");
+            if ("ask".equals(kind)) {
+                String q = action.optString("question", "");
+                log("向用户提问: " + q);
+                String answer = askUser(q);
+                log("用户回答: " + answer);
+                messages.put(LlmClient.textMsg("assistant", reply));
+                messages.put(LlmClient.textMsg("user",
+                        "用户回答：「" + trim(answer, 200) + "」。请据此继续（或 done）。"));
+                continue;
+            }
+            if ("done".equals(kind)) {
+                String summary = action.optString("summary", "完成");
+                log("任务完成：" + summary);
+                return;
+            }
+
+            String execErr = null;
+            String label = kind;
+            try {
+                label = exec(svc, action);
+            } catch (Exception e) {
+                execErr = e.getMessage();
+            }
+
+            if (execErr != null) {
+                prevFailed = true;
+                log("执行 " + label + " 失败：" + execErr);
+                messages.put(LlmClient.textMsg("assistant", reply));
+                messages.put(LlmClient.textMsg("user", "动作执行失败：" + trim(execErr, 300) +
+                        "。请换一种方式继续（例如 tap 屏幕上的图标/元素），或 done。"));
+                continue;
+            }
+            log("第 " + step + " 步：执行 " + label);
+            boolean guidePaste = clipPending;
+            clipPending = false;
+
+            // 自适应等待：感知树变化或超时（通常 ~0.5s，上限 1.6s）
+            if (!"wait".equals(kind)) waitForChange(svc, nodes, sbx);
+
+            // 死循环检测
+            String actKey = kind + "|" + action.opt("index") + "|" +
+                    action.optInt("x") + "," + action.optInt("y");
+            repeats = actKey.equals(lastKey) ? repeats + 1 : 0;
+            lastKey = actKey;
+
+            // 无进展看门狗：屏幕指纹连续 6 步不变 → 任务卡死，中止
+            List<NodeInfo> fpNodes = sbx ? svc.collectNodesOnDisplay(sandbox.displayId()) : svc.collectNodes();
+            fpHistory.add(fpNodes.isEmpty() ? "empty-" + (step % 2) : NodeInfo.fingerprint(fpNodes));
+            if (fpHistory.size() >= 6) {
+                java.util.List<String> tail = fpHistory.subList(fpHistory.size() - 6, fpHistory.size());
+                boolean allSame = true;
+                for (int i = 1; i < tail.size(); i++) if (!tail.get(i).equals(tail.get(0))) { allSame = false; break; }
+                if (allSame) {
+                    log("屏幕连续 6 步无任何变化，判定卡死，任务中止");
+                    return;
+                }
+            }
+            String nextMsg = guidePaste
+                    ? "目标文字已写入剪贴板并已长按输入框。屏幕上应弹出了含「粘贴」的菜单——请立即 tap「粘贴」按钮完成输入（节点被屏蔽时用 px/py 比例坐标点它）。没弹菜单就再 longpress 一次输入框，或换其他方式。"
+                    : "已执行动作，这是执行后的屏幕，请继续下一步（或 done）。";
+            if (repeats >= 2) {
+                nextMsg = "警告：你已连续 " + (repeats + 1) + " 次执行完全相同但没有进展的动作。" +
+                        "必须换策略——用 index 点击节点表中真正的目标节点，或 scroll 翻页，不要再点同一位置。";
+            }
+
+            messages.put(LlmClient.textMsg("assistant", reply));
+            messages.put(LlmClient.textMsg("user", nextMsg));
+            // 保留 system + 任务 + 最近 8 条
+            while (messages.length() > 10) {
+                JSONArray trimmed = new JSONArray();
+                trimmed.put(messages.get(0));
+                trimmed.put(messages.get(1));
+                for (int i = messages.length() - 8; i < messages.length(); i++) trimmed.put(messages.get(i));
+                messages = trimmed;
+            }
+            status();
+        }
+        } finally {
+            restoreIme();   // 归还借用的输入法
+        }
+        log("达到最大步数 " + maxSteps + "，任务未确认完成");
+    }
+
+    private void pushScreen(Bitmap bmp) {
+        Listener l = listener;
+        if (l != null) l.onScreen(bmp);
+    }
+
+    private void pushTap(int x, int y) {
+        Listener l = listener;
+        if (l != null) l.onTap(x, y);
+    }
+
+    private void waitForChange(AgentA11yService svc, List<NodeInfo> prev, boolean sbx) {
+        String fp = NodeInfo.fingerprint(prev);
+        sleep(250);
+        long deadline = System.currentTimeMillis() + 1200;
+        while (System.currentTimeMillis() < deadline) {
+            if (stopRequested) return;
+            List<NodeInfo> cur = sbx ? svc.collectNodesOnDisplay(sandbox.displayId()) : svc.collectNodes();
+            if (!NodeInfo.fingerprint(cur).equals(fp)) return;
+            sleep(200);
+        }
+    }
+
+    private static void sleep(long ms) {
+        try { Thread.sleep(ms); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+    }
+
+    private static String trim(String s, int n) {
+        return s.length() <= n ? s : s.substring(0, n) + "...";
+    }
+
+    // ---- 动作执行（零 root 实现） ----
+
+    /** 沙盒动作分支入口：用户要沙盒时必须拿到实例，拿不到就抛错（绝不静默落真屏）。 */
+    private SandboxController requireSandbox() throws Exception {
+        SandboxController c = SandboxController.get();
+        if (c == null) throw new Exception("沙盒虚拟屏暂不可用（重建中），请 wait 1500ms 后重试");
+        return c;
+    }
+
+    private String exec(AgentA11yService svc, JSONObject a) throws Exception {
+        String kind = a.optString("action", "");
+        switch (kind) {
+            case "tap": {
+                int[] xy = resolvePoint(svc, a);
+                pushTap(xy[0], xy[1]);
+                if (sandboxWanted()) { if (!requireSandbox().tap(xy[0], xy[1])) throw new Exception("沙盒点击失败"); return "tap(沙盒)"; }
+                if (!svc.tap(xy[0], xy[1])) throw new Exception("手势被系统取消");
+                return a.has("index") ? "tap#" + a.optInt("index") : "tap";
+            }
+            case "longpress": {
+                int[] xy = resolvePoint(svc, a);
+                pushTap(xy[0], xy[1]);
+                int dur = a.optInt("dur", 900);
+                if (sandboxWanted()) { if (!requireSandbox().longPress(xy[0], xy[1], dur)) throw new Exception("沙盒长按失败"); return "longpress(沙盒)"; }
+                if (!svc.longPress(xy[0], xy[1], dur)) throw new Exception("长按手势被系统取消");
+                return "longpress" + (a.has("index") ? "#" + a.optInt("index") : "");
+            }
+            case "swipe": {
+                if (sandboxWanted()) {
+                    if (!requireSandbox().swipe(a.optInt("x1"), a.optInt("y1"), a.optInt("x2"), a.optInt("y2"),
+                            a.optInt("dur", 400))) throw new Exception("沙盒滑动失败");
+                    return "swipe(沙盒)";
+                }
+                int x1 = a.optInt("x1"), y1 = a.optInt("y1"),
+                    x2 = a.optInt("x2"), y2 = a.optInt("y2");
+                if (a.has("px1")) {
+                    android.graphics.Rect wb = svc.getSystemService(android.view.WindowManager.class)
+                            .getCurrentWindowMetrics().getBounds();
+                    x1 = (int) (a.optDouble("px1", 0) * wb.width());
+                    y1 = (int) (a.optDouble("py1", 0) * wb.height());
+                    x2 = (int) (a.optDouble("px2", 0) * wb.width());
+                    y2 = (int) (a.optDouble("py2", 0) * wb.height());
+                }
+                boolean ok = svc.swipe(x1, y1, x2, y2, a.optInt("dur", 400));
+                if (!ok) throw new Exception("滑动手势被系统取消");
+                return "swipe";
+            }
+            case "scroll": {
+                if (sandboxWanted()) {
+                    SandboxController sb = requireSandbox();
+                    int sh = sb.height(), sw = sb.width();
+                    boolean dn = "down".equals(a.optString("direction", "down"));
+                    sb.swipe(sw / 2, (int) (sh * (dn ? 0.7 : 0.3)), sw / 2, (int) (sh * (dn ? 0.3 : 0.7)), 400);
+                    return "scroll(沙盒) " + (dn ? "down" : "up");
+                }
+                int h = app.getResources().getDisplayMetrics().heightPixels;
+                int w = app.getResources().getDisplayMetrics().widthPixels;
+                boolean down = "down".equals(a.optString("direction", "down"));
+                // 语义与旧版一致：direction=down 表示内容向下翻（手指上滑）
+                boolean ok = down ? svc.swipe(w / 2, h / 4, w / 2, h * 3 / 4, 400)
+                                  : svc.swipe(w / 2, h * 3 / 4, w / 2, h / 4, 400);
+                if (!ok) throw new Exception("翻页手势被系统取消");
+                return "scroll " + (down ? "down" : "up");
+            }
+            case "key": {
+                int code = a.optInt("code", 4);
+                if (sandboxWanted()) {
+                    if (!requireSandbox().key(code))
+                        throw new Exception(code == 4 ? "沙盒返回失败"
+                                : "零root沙盒仅支持返回键(4)；Home/最近任务是全局动作会误伤真屏，请用 app 动作直达目标应用");
+                    return "key(沙盒) " + code;
+                }
+                boolean ok;
+                if (code == 3) ok = svc.goHome();
+                else if (code == 187) ok = svc.goRecents();
+                else ok = svc.goBack();
+                if (!ok) throw new Exception("全局动作失败");
+                return "key " + code;
+            }
+            case "edge_back": {
+                if (sandboxWanted()) {
+                    if (!requireSandbox().key(4)) throw new Exception("沙盒边缘返回失败");
+                    return "edge_back→沙盒返回";
+                }
+                android.graphics.Rect wb = app.getSystemService(android.view.WindowManager.class)
+                        .getCurrentWindowMetrics().getBounds();
+                int w = wb.width(), h = wb.height();
+                int y = (int) (h * 0.45);
+                boolean fromLeft = !"right".equals(a.optString("side", "left"));
+                boolean ok = fromLeft
+                        ? svc.swipe(2, y, (int) (w * 0.35), y, 300)
+                        : svc.swipe(w - 2, y, (int) (w * 0.65), y, 300);
+                if (!ok) throw new Exception("边缘手势被系统取消");
+                return "edge_back " + (fromLeft ? "left" : "right");
+            }
+            case "back":
+                if (sandboxWanted()) {
+                    if (!requireSandbox().key(4)) throw new Exception("沙盒返回失败");
+                    return "back(沙盒)";
+                }
+                svc.goBack(); return "back";
+            case "home":
+                if (sandboxWanted()) {
+                    if (!requireSandbox().key(3))
+                        throw new Exception("零root沙盒不支持 Home（会误伤真屏）；请直接用 app 动作打开目标应用");
+                    lastApp = null; return "home(沙盒)";
+                }
+                svc.goHome(); lastApp = null; return "home";
+            case "text": {
+                String text = a.optString("text", "");
+                if (sandboxWanted()) {
+                    String serr = svc.setTextOnDisplay(requireSandbox().displayId(), text, a.optBoolean("append", false));
+                    if (serr == null) return "text(沙盒)";
+                    if (commitViaMergedIme(text, !a.optBoolean("append", false))) return "text(缝合键盘)";
+                    if (injectViaClipboard(svc, a, text)) return "text(剪贴板待粘贴)";
+                    throw new Exception("沙盒输入失败：" + serr);
+                }
+                if (!visionOnly) {
+                    String err = svc.setText(text, a.optBoolean("append", false));
+                    if (err == null) return "text";
+                    // ACTION_SET_TEXT 被拒 → 尝试 Agent 键盘通道
+                }
+                if (commitViaMergedIme(text, !a.optBoolean("append", false))) {
+                    return "text(缝合键盘)";
+                }
+                if (injectViaClipboard(svc, a, text)) {
+                    return "text(剪贴板待粘贴)";
+                }
+                throw new Exception("输入失败：无障碍写入被拒、缝合键盘未安装、剪贴板写入被系统拒绝（可在权限管理里允许本应用写剪贴板）");
+            }
+            case "app": {
+                String pkg = a.optString("package", "");
+                if (!pkg.contains(".") && APP_NAMES.containsKey(pkg)) pkg = APP_NAMES.get(pkg);
+                if (sandboxWanted()) {
+                    SandboxController sb = requireSandbox();
+                    boolean launched = false;
+                    try {
+                        launched = sb.launchApp(app, pkg);
+                    } catch (Exception e) {
+                        log("沙盒启动 " + pkg + " 异常: " + e.getMessage());
+                    }
+                    if (launched) {
+                        sleep(2500);
+                        if (sb.hostsPackage(app, pkg)) {
+                            lastApp = pkg; return "app(沙盒) " + pkg;
+                        }
+                        // 极少见：迁移/冷启后虚拟屏仍无该应用窗口 → 尝试拉回一次再确认
+                        if (sb.reclaimTask(pkg)) {
+                            sleep(1500);
+                            if (sb.hostsPackage(app, pkg)) {
+                                log("任务被系统弹回真屏，已拉回虚拟屏 " + pkg);
+                                lastApp = pkg; return "app(沙盒·拉回) " + pkg;
+                            }
+                        }
+                        throw new Exception("沙盒无法接管 " + pkg + "：迁移/启动后虚拟屏里没有它的窗口（系统拒绝），" +
+                                "请换一种方式或 done 报告用户。");
+                    }
+                    // 沙盒模式下绝不退回真屏启动
+                    throw new Exception("沙盒内启动 " + pkg + " 失败（am start 未成功），请重试或换 done 报告用户");
+                }
+                startApp(pkg);
+                sleep(2000);   // 应用启动必有启动页，等它加载完再感知
+                lastApp = pkg;
+                return "app " + pkg;
+            }
+            case "setting": {
+                String page = a.optString("page", "");
+                String intentAction = SETTINGS_PAGES.get(page.toLowerCase());
+                if (intentAction == null) throw new Exception("未知设置页 " + page);
+                if (sandboxWanted()) {
+                    if (requireSandbox().launchAction(intentAction)) return "setting(沙盒) " + page;
+                    throw new Exception("沙盒内打开设置页失败，请重试");
+                }
+                startActivity(new Intent(intentAction));
+                return "setting " + page;
+            }
+            case "open_url": {
+                String url = a.optString("url", "");
+                if (sandboxWanted()) {
+                    if (requireSandbox().launchUrl(url)) return "open_url(沙盒)";
+                    throw new Exception("沙盒内打开链接失败，请重试");
+                }
+                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+                return "open_url";
+            }
+            case "wifi": {
+                startActivity(new Intent(Settings.Panel.ACTION_WIFI));
+                return "wifi 面板";
+            }
+            case "bluetooth": {
+                startActivity(new Intent(Settings.ACTION_BLUETOOTH_SETTINGS));
+                return "bluetooth 设置";
+            }
+            case "brightness": {
+                int level = Math.max(0, Math.min(255, a.optInt("level", 128)));
+                if (!Settings.System.canWrite(app)) {
+                    startActivity(new Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS,
+                            Uri.parse("package:" + app.getPackageName())));
+                    throw new Exception("需要先授予「修改系统设置」权限（已打开授权页），授权后重试");
+                }
+                Settings.System.putInt(app.getContentResolver(),
+                        Settings.System.SCREEN_BRIGHTNESS_MODE,
+                        Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL);
+                Settings.System.putInt(app.getContentResolver(),
+                        Settings.System.SCREEN_BRIGHTNESS, level);
+                return "brightness " + level;
+            }
+            case "volume": {
+                String dir = a.optString("dir", "up");
+                AudioManager am = (AudioManager) app.getSystemService(Context.AUDIO_SERVICE);
+                int adj = "down".equals(dir) ? AudioManager.ADJUST_LOWER
+                        : "mute".equals(dir) ? AudioManager.ADJUST_MUTE
+                        : AudioManager.ADJUST_RAISE;
+                am.adjustStreamVolume(AudioManager.STREAM_MUSIC, adj, AudioManager.FLAG_SHOW_UI);
+                return "volume " + dir;
+            }
+            case "statusbar": {
+                String mode = a.optString("mode", "notifications");
+                boolean ok = "settings".equals(mode) ? svc.quickSettings() : svc.notifications();
+                if (!ok) throw new Exception("状态栏动作失败");
+                return "statusbar " + mode;
+            }
+            case "wake": {
+                PowerManager pm = (PowerManager) app.getSystemService(Context.POWER_SERVICE);
+                PowerManager.WakeLock wl = pm.newWakeLock(
+                        PowerManager.FULL_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP, "agent:wake");
+                wl.acquire(300);
+                wl.release();
+                return "wake";
+            }
+            case "wait": {
+                int ms = Math.max(200, Math.min(8000, a.optInt("ms", 1500)));
+                sleep(ms);
+                return "wait " + ms + "ms";
+            }
+            default:
+                throw new Exception("unknown action " + kind);
+        }
+    }
+
+    /** 解析点击目标：优先 index → 节点中心；px/py 比例坐标；否则 x/y。 */
+    private int[] resolvePoint(AgentA11yService svc, JSONObject a) throws Exception {
+        if (a.has("index")) {
+            int idx = a.optInt("index");
+            // 沙盒模式下节点表来自虚拟屏，必须也在虚拟屏上解析，否则编号错位
+            List<NodeInfo> nodes = sandboxWanted()
+                    ? svc.collectNodesOnDisplay(requireSandbox().displayId())
+                    : svc.collectNodes();
+            for (NodeInfo n : nodes) {
+                if (n.index == idx) return new int[]{n.cx, n.cy};
+            }
+            throw new Exception("节点编号 " + idx + " 不在当前节点表中（共 " + nodes.size() + " 个）");
+        }
+        if (a.has("px") || a.has("py")) {
+            android.graphics.Rect wb = svc.getSystemService(android.view.WindowManager.class)
+                    .getCurrentWindowMetrics().getBounds();
+            return new int[]{ (int) (a.optDouble("px", 0.5) * wb.width()),
+                              (int) (a.optDouble("py", 0.5) * wb.height()) };
+        }
+        return new int[]{a.optInt("x"), a.optInt("y")};
+    }
+
+    private SandboxController sandbox;
+    private long lastHealTry;
+
+    /** 用户是否希望沙盒运行（开关开 + root 可用；零root隔离沙盒已被实测证伪，见 SandboxController 注释）。 */
+    private boolean sandboxWanted() {
+        return new Prefs(app).sandbox() && RootShell.available(app);
+    }
+
+    /**
+     * 沙盒可用性（含看门狗自愈）：守护进程偶发死亡（系统回收 root 后台进程等）
+     * 时限频 10s 自动重建虚拟屏，重建期间返回 false——调用方必须暂停操作等待，
+     * 绝不回退真屏（沙盒任务的初衷就是不动用户真屏）。
+     */
+    private boolean sandboxActive() {
+        if (!sandboxWanted()) return false;
+        sandbox = SandboxController.get();
+        if (sandbox != null && SandboxController.daemonAlive()) return true;
+        if (System.currentTimeMillis() - lastHealTry < 10000) { sandbox = null; return false; }
+        lastHealTry = System.currentTimeMillis();
+        log("沙盒守护进程不在，尝试重建虚拟屏…");
+        try {
+            SandboxController.create(app);
+            sandbox = SandboxController.get();
+            log("沙盒已重建（虚拟屏 " + sandbox.width() + "x" + sandbox.height()
+                    + " displayId=" + sandbox.displayId() + "）");
+            return true;
+        } catch (Exception e) {
+            log("沙盒重建失败：" + e.getMessage() + "（10s 后自动重试）");
+            sandbox = null;
+            return false;
+        }
+    }
+
+    /** 阻塞等待用户回答（5 分钟超时返回「用户未回答」）。 */
+    private String askUser(String question) {
+        askLatch = new java.util.concurrent.CountDownLatch(1);
+        askAnswer = null;
+        Listener l = listener;
+        if (l != null) l.onAsk(question);
+        try {
+            if (askLatch.await(5, java.util.concurrent.TimeUnit.MINUTES) && askAnswer != null
+                    && !askAnswer.isEmpty()) return askAnswer;
+        } catch (InterruptedException ignored) { }
+        return "（用户未回答或超时）";
+    }
+
+    /** UI 层提交回答。 */
+    public void answerAsk(String answer) {
+        askAnswer = answer;
+        if (askLatch != null) askLatch.countDown();
+    }
+
+    private volatile java.util.concurrent.CountDownLatch askLatch;
+    private volatile String askAnswer;
+
+    /** 键盘无关的通用注入：写剪贴板 + 长按目标输入框，模型下一步点「粘贴」。 */
+    private boolean injectViaClipboard(AgentA11yService svc, JSONObject a, String text) {
+        try {
+            android.app.AppOpsManager aom =
+                    (android.app.AppOpsManager) app.getSystemService(android.content.Context.APP_OPS_SERVICE);
+            int opMode;
+            try {
+                opMode = aom.unsafeCheckOpNoThrow("android:write_clipboard",
+                        android.os.Process.myUid(), app.getPackageName());
+            } catch (Throwable t) {
+                opMode = 0;   // 查询失败不挡路，交给 setPrimaryClip 实测
+            }
+            if (aom != null && opMode != android.app.AppOpsManager.MODE_ALLOWED) {
+                return false;   // ColorOS 剪贴板保护拒绝写入
+            }
+            android.content.ClipboardManager cm =
+                    (android.content.ClipboardManager) app.getSystemService(android.content.Context.CLIPBOARD_SERVICE);
+            if (cm == null) return false;
+            cm.setPrimaryClip(android.content.ClipData.newPlainText("agent", text));
+            int[] xy = null;
+            try { xy = resolvePoint(svc, a); } catch (Exception ignored) { }
+            if (RootShell.available(app) && !text.equals(rootPasteDone)) {
+                if (xy != null) { svc.tap(xy[0], xy[1]); sleep(350); }
+                if (RootShell.paste()) {
+                    rootPasteDone = text;   // 同文重复请求说明没粘上，下次走菜单
+                    return true;
+                }
+            }
+            clipPending = true;
+            if (xy != null) svc.longPress(xy[0], xy[1], 900);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** 缝合键盘注入：不在用则自动借用（任务结束归还）。未安装返回 false。 */
+    private boolean commitViaMergedIme(String text, boolean replace) {
+        try {
+            app.getPackageManager().getPackageInfo("dev.patrickgold.florisboard", 0);
+        } catch (Exception e) {
+            return false;
+        }
+        String def = Settings.Secure.getString(app.getContentResolver(),
+                Settings.Secure.DEFAULT_INPUT_METHOD);
+        if (def == null || !def.startsWith("dev.patrickgold.florisboard/")) {
+            // 自动借用缝合键盘，任务结束归还用户原输入法
+            if (borrowedIme == null) borrowedIme = def;
+            boolean ok = Settings.Secure.putString(app.getContentResolver(),
+                    Settings.Secure.DEFAULT_INPUT_METHOD,
+                    "dev.patrickgold.florisboard/.agent.AgentImeBridge");
+            log("自动借用缝合键盘（任务结束归还 " + borrowedIme + "）");
+            if (!ok) return false;
+            sleep(900);   // 等系统解绑旧 IME、绑定桥（receiver 才注册）
+        }
+        try {
+            android.content.Intent it = new android.content.Intent("com.dsh.agent.IME_COMMIT")
+                    .setPackage("dev.patrickgold.florisboard")
+                    .putExtra("text", text)
+                    .putExtra("replace", replace);
+            app.sendBroadcast(it);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** 归还借用的输入法。 */
+    private void restoreIme() {
+        if (borrowedIme == null) return;
+        try {
+            Settings.Secure.putString(app.getContentResolver(),
+                    Settings.Secure.DEFAULT_INPUT_METHOD, borrowedIme);
+            log("已归还输入法: " + borrowedIme);
+        } catch (Exception ignored) { }
+        borrowedIme = null;
+    }
+
+
+    /** 截图平均亮度（抽样），黑屏检测 + 诊断日志用。 */
+    private static int meanLuma(Bitmap bmp) {
+        if (bmp == null) return 0;
+        int w = bmp.getWidth(), h = bmp.getHeight();
+        long sum = 0; int n = 0;
+        for (int y = 0; y < h; y += 40) {
+            for (int x = 0; x < w; x += 40) {
+                int c = bmp.getPixel(x, y);
+                sum += ((c >> 16) & 0xff) * 0.299 + ((c >> 8) & 0xff) * 0.587 + (c & 0xff) * 0.114;
+                n++;
+            }
+        }
+        return n == 0 ? 0 : (int) (sum / n);
+    }
+
+    private void startApp(String pkg) throws Exception {
+        if (!pkg.contains(".")) {   // 模型给了中文名 → 查表
+            String mapped = APP_NAMES.get(pkg);
+            if (mapped != null) pkg = mapped;
+        }
+        startAppResolved(pkg);
+    }
+
+    private void startAppResolved(String pkg) throws Exception {
+
+        if (tryStartApp(pkg)) return;
+        String[] aliases = APP_ALIASES.get(pkg);
+        if (aliases != null) {
+            for (String alt : aliases) {
+                if (tryStartApp(alt)) return;
+            }
+        }
+        throw new Exception("应用未安装或无启动入口: " + pkg);
+    }
+
+    private boolean tryStartApp(String pkg) {
+        PackageManager pm = app.getPackageManager();
+        Intent it = pm.getLaunchIntentForPackage(pkg);
+        if (it == null) return false;
+        it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            app.startActivity(it);
+            return true;
+        } catch (ActivityNotFoundException e) {
+            return false;
+        }
+    }
+
+    private void startActivity(Intent it) throws Exception {
+        it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            app.startActivity(it);
+        } catch (Exception e) {
+            throw new Exception("启动失败: " + e.getMessage());
+        }
+    }
+
+    /** Bitmap → 降采样 JPEG data URL。 */
+    public static String bmpToDataUrl(Bitmap bmp, int maxWidth, int quality) {
+        if (bmp == null) return null;
+        try {
+            Bitmap scaled = bmp;
+            if (bmp.getWidth() > maxWidth) {
+                float ratio = (float) maxWidth / bmp.getWidth();
+                scaled = Bitmap.createScaledBitmap(bmp, maxWidth,
+                        Math.round(bmp.getHeight() * ratio), true);
+            }
+            ByteArrayOutputStream buf = new ByteArrayOutputStream();
+            scaled.compress(Bitmap.CompressFormat.JPEG, quality, buf);
+            return "data:image/jpeg;base64," +
+                    Base64.encodeToString(buf.toByteArray(), Base64.NO_WRAP);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+}

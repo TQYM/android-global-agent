@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 红色圆形：接管卡片顶部红手指图标底（语义色：红 = 需人工介入） -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
+    <solid android:color="#F85149"/>
+</shape>

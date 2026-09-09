@@ -65,7 +65,9 @@ CommandResult RunCommand(const std::vector<std::string> &arguments,
       argv.push_back(const_cast<char *>(argument.c_str()));
     }
     argv.push_back(nullptr);
-    execv(argv.front(), argv.data());
+    // execvp resolves bare names such as "adb" through PATH; absolute
+    // device paths under /system/bin are unaffected.
+    execvp(argv.front(), argv.data());
     _exit(127);
   }
 

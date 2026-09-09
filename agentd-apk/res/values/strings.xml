@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">agentd</string>
+    <string name="a11y_label">agentd 感知服务</string>
+    <string name="a11y_desc">为 agentd 提供屏幕语义节点（本地 127.0.0.1 使用，不联网、不上传）。</string>
+</resources>

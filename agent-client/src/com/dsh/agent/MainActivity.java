@@ -1,0 +1,482 @@
+package com.dsh.agent;
+
+import android.Manifest;
+import android.app.Activity;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.provider.Settings;
+import android.view.View;
+import android.widget.Button;
+import android.widget.EditText;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
+import android.widget.ScrollView;
+import android.widget.Switch;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.List;
+import java.util.Locale;
+
+/** 原生主界面：任务输入 / 语音 / 日志 / 屏幕回显 / 动作调试台。 */
+public class MainActivity extends Activity implements AgentEngine.Listener {
+    private static MainActivity sInstance;
+    static android.app.Application appStatic() { return sInstance.getApplication(); }
+
+    private final Handler ui = new Handler(Looper.getMainLooper());
+    private Prefs prefs;
+    private AgentEngine engine;
+    private VoiceRecorder recorder;
+    private Bitmap lastBmp;
+
+    private TextView tvStatus, tvA11y, tvLog;
+    private EditText etTask, etBase, etKey, etModel, etAsr, etMaxSteps;
+    private Switch swVision;
+    private Button btnRun, btnMic;
+    private View llConfig, vTap;
+    private ImageView ivScreen;
+    private ScrollView svLog;
+    private FrameLayout flScreen;
+
+    private final StringBuilder logBuf = new StringBuilder();
+
+    @Override
+    protected void onCreate(Bundle b) {
+        super.onCreate(b);
+        sInstance = this;
+        setContentView(R.layout.activity_main);
+        prefs = new Prefs(this);
+        engine = AgentEngine.get(this);
+        engine.setListener(this);
+
+        bind();
+        loadCfg();
+        wire();
+        wireRootMode();
+        wireSandbox();
+        KeepAliveService.start(this);
+        if (android.os.Build.VERSION.SDK_INT >= 33
+                && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
+                        != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS}, 42);
+        }
+        requestPermissions(new String[]{
+                Manifest.permission.RECORD_AUDIO,
+                Manifest.permission.POST_NOTIFICATIONS}, 1);
+    }
+
+    private void bind() {
+        tvStatus = findViewById(R.id.tvStatus);
+        tvA11y = findViewById(R.id.tvA11y);
+        tvLog = findViewById(R.id.tvLog);
+        etTask = findViewById(R.id.etTask);
+        etBase = findViewById(R.id.etBase);
+        etKey = findViewById(R.id.etKey);
+        etModel = findViewById(R.id.etModel);
+        etAsr = findViewById(R.id.etAsr);
+        etMaxSteps = findViewById(R.id.etMaxSteps);
+        swVision = findViewById(R.id.swVision);
+        btnRun = findViewById(R.id.btnRun);
+        btnMic = findViewById(R.id.btnMic);
+        llConfig = findViewById(R.id.llConfig);
+        vTap = findViewById(R.id.vTap);
+        ivScreen = findViewById(R.id.ivScreen);
+        svLog = findViewById(R.id.svLog);
+        flScreen = findViewById(R.id.flScreen);
+    }
+
+    private void loadCfg() {
+        etBase.setText(prefs.baseUrl());
+        etKey.setText(prefs.apiKey());
+        etModel.setText(prefs.model());
+        etAsr.setText(prefs.asrModel());
+        etMaxSteps.setText(String.valueOf(prefs.maxSteps()));
+        swVision.setChecked(prefs.vision());
+    }
+
+    /** 沙盒模式开关：开启时若无投影授权则先走系统授权弹窗。 */
+
+    private void wireSandbox() {
+        paintSandbox();
+        final android.widget.Button btnSandbox = findViewById(R.id.btnSandbox);
+        btnSandbox.setOnClickListener(v -> {
+            if (prefs.sandbox()) {
+                prefs.setSandbox(false);
+                SandboxController.stop();
+                onLog("沙盒模式：关");
+                paintSandbox();
+                return;
+            }
+            if (!RootShell.available(this)) {
+                // 可能是旧的 false 缓存（用户刚在 KernelSU 授权）→ 强制重探一次再下结论
+                RootShell.reset();
+                if (!RootShell.available(this)) {
+                    toast("沙盒需要 root（Android 10+ 禁止应用虚拟屏承载第三方任务，零root无解）");
+                    return;
+                }
+            }
+            if (SandboxController.get() == null) {
+                btnSandbox.setEnabled(false);
+                onLog("沙盒创建中…");
+                new Thread(() -> {
+                    try {
+                        SandboxController.create(this);   // root 守护虚拟屏：无需任何授权弹窗
+                        prefs.setSandbox(true);
+                        ui.post(() -> {
+                            onLog("沙盒模式：开（虚拟屏 " + SandboxController.get().width()
+                                    + "x" + SandboxController.get().height() + "）");
+                            paintSandbox();
+                            btnSandbox.setEnabled(true);
+                        });
+                    } catch (Exception e) {
+                        AgentEngine.staticLog("沙盒创建失败: " + e.getMessage());
+                        ui.post(() -> {
+                            toast("沙盒创建失败：" + e.getMessage());
+                            btnSandbox.setEnabled(true);
+                        });
+                    }
+                }, "sandbox-create").start();
+            } else {
+                prefs.setSandbox(true);
+                onLog("沙盒模式：开（Agent 将在虚拟屏后台操作）");
+                paintSandbox();
+            }
+        });
+    }
+
+    private void paintSandbox() {
+        boolean on = prefs.sandbox() && SandboxController.get() != null;
+        android.widget.Button b = findViewById(R.id.btnSandbox);
+        b.setText(on ? "沙盒:开" : "沙盒:关");
+        b.setTextColor(on ? 0xFF3FB950 : 0xFF8B93A3);
+    }
+
+
+    /** Root 模式选择：自动/开/关，切换后立即重探测。 */
+    private void wireRootMode() {
+        View.OnClickListener l = v -> {
+            String m = v.getId() == R.id.btnRootOn ? "on"
+                    : v.getId() == R.id.btnRootOff ? "off" : "auto";
+            prefs.setRootMode(m);
+            RootShell.reset();
+            if (!"off".equals(m) && RootShell.available(this)) RootShell.ensureA11y(this);
+            paintRootMode();
+            refreshA11y();
+            onLog("Root 模式 → " + ("on".equals(m) ? "强制启用" : "off".equals(m) ? "关闭（纯零root）" : "自动"));
+        };
+        findViewById(R.id.btnRootAuto).setOnClickListener(l);
+        findViewById(R.id.btnRootOn).setOnClickListener(l);
+        findViewById(R.id.btnRootOff).setOnClickListener(l);
+        paintRootMode();
+    }
+
+    private void paintRootMode() {
+        String m = prefs.rootMode();
+        int on = 0xFF58A6FF, off = 0xFF30363D;
+        findViewById(R.id.btnRootAuto).getBackground().setTint("auto".equals(m) ? on : off);
+        findViewById(R.id.btnRootOn).getBackground().setTint("on".equals(m) ? on : off);
+        findViewById(R.id.btnRootOff).getBackground().setTint("off".equals(m) ? on : off);
+        TextView tv = findViewById(R.id.tvRootState);
+        if ("off".equals(m)) {
+            tv.setText("已停用");
+            tv.setTextColor(0xFF8B93A3);
+        } else {
+            boolean ok = RootShell.available(this);
+            tv.setText(ok ? "su 可用 ✓" : "未检测到 su");
+            tv.setTextColor(ok ? 0xFF3FB950 : 0xFFF85149);
+        }
+    }
+
+    private void wire() {
+        findViewById(R.id.btnConfig).setOnClickListener(v -> {
+            llConfig.setVisibility(llConfig.getVisibility() == View.GONE ? View.VISIBLE : View.GONE);
+        });
+
+        findViewById(R.id.btnSave).setOnClickListener(v -> {
+            int steps = 20;
+            try { steps = Integer.parseInt(etMaxSteps.getText().toString().trim()); } catch (Exception ignored) { }
+            prefs.save(etBase.getText().toString().trim(), etKey.getText().toString().trim(),
+                    etModel.getText().toString().trim(), etAsr.getText().toString().trim(),
+                    swVision.isChecked(), steps, prefs.systemPrompt());
+            onLog("✓ 配置已保存");
+        });
+
+        findViewById(R.id.btnA11y).setOnClickListener(v ->
+                startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
+
+        btnRun.setOnClickListener(v -> {
+            if (engine.isRunning()) {
+                engine.stop();
+                return;
+            }
+            String task = etTask.getText().toString().trim();
+            if (task.isEmpty()) { toast("请输入任务"); return; }
+            if (AgentA11yService.get() == null) {
+                toast("请先开启无障碍服务");
+                llConfig.setVisibility(View.VISIBLE);
+                return;
+            }
+            engine.start(task);
+        });
+
+        btnMic.setOnClickListener(v -> toggleMic());
+
+        // ---- 调试台 ----
+        dbg(R.id.btnDbgNodes, () -> {
+            AgentA11yService s = svc();
+            if (s == null) return;
+            List<NodeInfo> nodes = s.collectNodes();
+            onLog("感知：" + nodes.size() + " 个节点");
+            for (int i = 0; i < Math.min(nodes.size(), 12); i++) {
+                NodeInfo n = nodes.get(i);
+                onLog("  [" + n.index + "] " + n.label() + " @" + n.cx + "," + n.cy);
+            }
+        });
+        dbg(R.id.btnDbgShot, () -> {
+            AgentA11yService s = svc();
+            if (s == null) return;
+            Bitmap bmp = s.screenshot();
+            onLog(bmp != null ? "截图 ✓ " + bmp.getWidth() + "x" + bmp.getHeight() : "截图 ✗");
+            if (bmp != null) ui.post(() -> { lastBmp = bmp; ivScreen.setImageBitmap(bmp); });
+        });
+        dbg(R.id.btnDbgTap, () -> {
+            AgentA11yService s = svc();
+            if (s == null) return;
+            int w = getResources().getDisplayMetrics().widthPixels;
+            int h = getResources().getDisplayMetrics().heightPixels;
+            onLog("点中心 " + (s.tap(w / 2, h / 2) ? "✓" : "✗"));
+        });
+        dbg(R.id.btnDbgBack, () -> { AgentA11yService s = svc(); if (s != null) onLog("返回 " + (s.goBack() ? "✓" : "✗")); });
+        dbg(R.id.btnDbgEdge, () -> {
+            AgentA11yService s = svc();
+            if (s == null) return;
+            android.graphics.Rect wb = getSystemService(android.view.WindowManager.class)
+                    .getCurrentWindowMetrics().getBounds();
+            int y = (int) (wb.height() * 0.45);
+            onLog("手势返回(左缘内滑) " + (s.swipe(2, y, (int) (wb.width() * 0.35), y, 300) ? "✓" : "✗"));
+        });
+        dbg(R.id.btnDbgHome, () -> { AgentA11yService s = svc(); if (s != null) onLog("主页 " + (s.goHome() ? "✓" : "✗")); });
+        dbg(R.id.btnDbgRecents, () -> { AgentA11yService s = svc(); if (s != null) onLog("最近任务 " + (s.goRecents() ? "✓" : "✗")); });
+        dbg(R.id.btnDbgNotif, () -> { AgentA11yService s = svc(); if (s != null) onLog("通知栏 " + (s.notifications() ? "✓" : "✗")); });
+        dbg(R.id.btnDbgWifi, () -> {
+            startActivity(new Intent(Settings.Panel.ACTION_WIFI).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            onLog("WiFi 面板 ✓");
+        });
+        dbg(R.id.btnDbgIme, () -> {
+            String def = Settings.Secure.getString(getContentResolver(), Settings.Secure.DEFAULT_INPUT_METHOD);
+            boolean merged = def != null && def.startsWith("dev.patrickgold.florisboard/");
+            onLog(merged ? "缝合键盘(FlorisBoard+注入桥)已是默认 ✓" : "默认输入法: " + def + "，弹出切换器…");
+            if (!merged) {
+                android.view.inputmethod.InputMethodManager imm =
+                        (android.view.inputmethod.InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+                ui.post(imm::showInputMethodPicker);
+            }
+        });
+        dbg(R.id.btnDbgText, () -> {
+            AgentA11yService s = svc();
+            if (s == null) return;
+            String err = s.setText("测试中文输入✓", false);
+            onLog(err == null ? "输中文 ✓（焦点编辑框已写入「测试中文输入✓」）" : "输中文 ✗：" + err);
+        });
+        dbg(R.id.btnDbgVol, () -> {
+            android.media.AudioManager am = (android.media.AudioManager) getSystemService(AUDIO_SERVICE);
+            am.adjustStreamVolume(android.media.AudioManager.STREAM_MUSIC,
+                    android.media.AudioManager.ADJUST_RAISE, android.media.AudioManager.FLAG_SHOW_UI);
+            onLog("音量+ ✓");
+        });
+    }
+
+    private AgentA11yService svc() {
+        AgentA11yService s = AgentA11yService.get();
+        if (s == null) onLog("✗ 无障碍服务未开启");
+        return s;
+    }
+
+    private interface DbgAction { void run(); }
+    private void dbg(int btnId, DbgAction action) {
+        findViewById(btnId).setOnClickListener(v ->
+                new Thread(() -> { try { action.run(); } catch (Throwable t) { onLog("✗ " + t); } }, "dbg").start());
+    }
+
+    // ---- 语音 ----
+
+    private void toggleMic() {
+        if (recorder != null && recorder.isRecording()) {
+            byte[] wav = recorder.stopToWav();
+            btnMic.setText("🎤");
+            onLog("识别中…");
+            new Thread(() -> {
+                try {
+                    LlmClient c = new LlmClient(prefs.baseUrl(), prefs.apiKey(), prefs.model());
+                    String text = c.transcribe(wav, prefs.asrModel());
+                    if (text.isEmpty()) { onLog("识别结果为空"); return; }
+                    onLog("🎤 " + text);
+                    ui.post(() -> {
+                        etTask.setText(text);
+                        btnRun.performClick();
+                    });
+                } catch (Exception e) {
+                    onLog("✗ 语音识别失败：" + e.getMessage());
+                }
+            }, "asr").start();
+            return;
+        }
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, 2);
+            return;
+        }
+        recorder = new VoiceRecorder();
+        if (recorder.start()) {
+            btnMic.setText("■");
+            onLog("录音中…再点一次结束");
+        } else {
+            onLog("✗ 无法启动录音");
+        }
+    }
+
+    // ---- AgentEngine.Listener（引擎线程回调 → UI 线程） ----
+
+    @Override
+    public void onLog(String line) {
+        android.util.Log.i("AgentUI", line);
+        String ts = new SimpleDateFormat("HH:mm:ss", Locale.US).format(new Date());
+        ui.post(() -> {
+            logBuf.append('[').append(ts).append("] ").append(line).append('\n');
+            if (logBuf.length() > 12000) logBuf.delete(0, logBuf.length() - 9000);
+            tvLog.setText(logBuf);
+            svLog.post(() -> svLog.fullScroll(View.FOCUS_DOWN));
+        });
+    }
+
+    @Override
+    public void onStatus(boolean running, int step) {
+        ui.post(() -> {
+            tvStatus.setText(running ? "运行中 · 第 " + step + " 步" : "空闲");
+            tvStatus.setTextColor(running ? 0xFF3FB950 : 0xFF8B93A3);
+            btnRun.setText(running ? "停止" : "运行");
+        });
+    }
+
+    @Override
+    public void onScreen(Bitmap bmp) {
+        ui.post(() -> { lastBmp = bmp; ivScreen.setImageBitmap(bmp); });
+    }
+
+    @Override
+    public void onTap(int x, int y) {
+        ui.post(() -> {
+            if (lastBmp == null) return;
+            flScreen.post(() -> {
+                int vw = flScreen.getWidth(), vh = flScreen.getHeight();
+                float scale = Math.min((float) vw / lastBmp.getWidth(), (float) vh / lastBmp.getHeight());
+                float dw = lastBmp.getWidth() * scale, dh = lastBmp.getHeight() * scale;
+                float offX = (vw - dw) / 2f, offY = (vh - dh) / 2f;
+                FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) vTap.getLayoutParams();
+                lp.leftMargin = Math.round(offX + x * scale - lp.width / 2f);
+                lp.topMargin = Math.round(offY + y * scale - lp.height / 2f);
+                vTap.setLayoutParams(lp);
+                vTap.setVisibility(View.VISIBLE);
+                vTap.postDelayed(() -> vTap.setVisibility(View.GONE), 2500);
+            });
+        });
+    }
+
+    @Override
+    public void onAsk(String question) {
+        pendingAsk = question;
+        fireAskNotification(question);   // 全屏通知：其他 App 界面也会弹
+        ui.post(this::showAskDialogIfNeeded);
+    }
+
+    /** 模型提问的待回答状态。 */
+    private String pendingAsk;
+    private boolean askDialogShowing;
+
+    private void showAskDialogIfNeeded() {
+        if (pendingAsk == null || askDialogShowing) return;
+        askDialogShowing = true;
+        final android.widget.EditText input = new android.widget.EditText(this);
+        input.setHint("输入回答…");
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("Agent 提问")
+                .setMessage(pendingAsk)
+                .setView(input)
+                .setCancelable(false)
+                .setPositiveButton("回答", (d, w) -> {
+                    engine.answerAsk(input.getText().toString().trim());
+                    pendingAsk = null; askDialogShowing = false;
+                    cancelAskNotification();
+                })
+                .setNegativeButton("跳过", (d, w) -> {
+                    engine.answerAsk("");
+                    pendingAsk = null; askDialogShowing = false;
+                    cancelAskNotification();
+                })
+                .show();
+    }
+
+    private static final int ASK_NOTIF_ID = 9021;
+
+    private void fireAskNotification(String question) {
+        android.app.NotificationManager nm = getSystemService(android.app.NotificationManager.class);
+        if (nm == null) return;
+        String ch = "agent_ask";
+        if (android.os.Build.VERSION.SDK_INT >= 26) {
+            nm.createNotificationChannel(new android.app.NotificationChannel(ch, "Agent 提问",
+                    android.app.NotificationManager.IMPORTANCE_HIGH));
+        }
+        android.content.Intent it = new android.content.Intent(this, MainActivity.class)
+                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+                        | android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        android.app.PendingIntent pi = android.app.PendingIntent.getActivity(this, 0, it,
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE);
+        android.app.Notification n = new android.app.Notification.Builder(this, ch)
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setContentTitle("Agent 需要你的回答")
+                .setContentText(question)
+                .setContentIntent(pi)
+                .setFullScreenIntent(pi, true)   // 来电级弹出（零 root）
+                .setAutoCancel(true)
+                .build();
+        nm.notify(ASK_NOTIF_ID, n);
+    }
+
+    private void cancelAskNotification() {
+        android.app.NotificationManager nm = getSystemService(android.app.NotificationManager.class);
+        if (nm != null) nm.cancel(ASK_NOTIF_ID);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        refreshA11y();
+    }
+
+    @Override
+    protected void onNewIntent(android.content.Intent intent) {
+        super.onNewIntent(intent);
+        ui.post(this::showAskDialogIfNeeded);
+    }
+
+    private void refreshA11y() {
+        boolean a11yOn = AgentA11yService.get() != null;
+        boolean rootMode = !"off".equals(prefs.rootMode());
+        if (rootMode && RootShell.available(this)) {
+            if (!a11yOn) RootShell.ensureA11y(this);   // root 模式：自动开无障碍
+            tvA11y.setText("Root ✓ · 无障碍 " + (a11yOn ? "✓" : "✗"));
+            tvA11y.setTextColor(a11yOn ? 0xFF3FB950 : 0xFFF85149);
+            return;
+        }
+        // 无 root（含 auto 探测不到 su 的设备，如无 root 平板）：无障碍状态才是主路径
+        tvA11y.setText(a11yOn ? "无障碍 ✓（零root模式）" : "无障碍 ✗（点「设置」开启）");
+        tvA11y.setTextColor(a11yOn ? 0xFF3FB950 : 0xFFF85149);
+    }
+
+    private void toast(String s) { Toast.makeText(this, s, Toast.LENGTH_SHORT).show(); }
+}

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 全局统一原生 Android 主题：透明沉浸式状态栏与导航栏、Material 3 容器底色 -->
+    <style name="Theme.AgentLite" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/color_surface</item>
+        <item name="android:colorBackground">@color/color_surface</item>
+        <item name="android:colorPrimary">@color/color_primary</item>
+        <item name="android:colorPrimaryDark">@color/color_surface</item>
+        <item name="android:colorAccent">@color/color_primary</item>
+
+        <!-- 彻底消除状态栏与底栏黑块闪烁，全面开启沉浸式 Edge-to-Edge -->
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+
+        <item name="android:textColorPrimary">@color/color_on_surface</item>
+        <item name="android:textColorSecondary">@color/color_on_surface_variant</item>
+        <item name="android:textColorHint">@color/color_text_hint</item>
+    </style>
+
+    <style name="Theme.AgentLite.Translucent" parent="Theme.AgentLite">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:colorBackground">@android:color/transparent</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowAnimationStyle">@android:style/Animation.Dialog</item>
+    </style>
+</resources>

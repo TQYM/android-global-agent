@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Agent</string>
+    <string name="a11y_label">Agent 无障碍服务</string>
+    <string name="a11y_desc">为 Agent 客户端提供屏幕感知、手势执行、截图与文字输入能力。全部操作在本机完成。</string>
+</resources>

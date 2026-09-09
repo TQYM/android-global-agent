@@ -1,0 +1,118 @@
+package com.dsh.agent;
+
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import java.io.DataOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+
+/**
+ * Root 加速层（可选）：检测到 su 可用时，截图/手势/粘贴走 shell 直达，
+ * 绕开 ColorOS 截图限频与 dispatchGesture 的异步取消问题。
+ * 无 root 设备全部返回不可用，上层自动回落无障碍路径。
+ */
+public class RootShell {
+    private static volatile Boolean sAvailable;
+    private static volatile long sProbeMs;
+    private static final long PROBE_TTL_MS = 15000;   // 探测缓存 15s：KernelSU 授权后最多 15s 自愈，不再永久卡 false
+
+    /** 模式变化后调用，重新探测。 */
+    public static void reset() { sAvailable = null; sProbeMs = 0; }
+
+    /** 尊重用户设置：off 永不走 root；on/auto 探测 su（KernelSU 首次会弹授权框）。 */
+    public static boolean available(android.content.Context ctx) {
+        if ("off".equals(new Prefs(ctx).rootMode())) return false;
+        long now = System.currentTimeMillis();
+        if (sAvailable == null || now - sProbeMs > PROBE_TTL_MS) {
+            synchronized (RootShell.class) {
+                if (sAvailable == null || now - sProbeMs > PROBE_TTL_MS) {
+                    sAvailable = exec("true");
+                    sProbeMs = now;
+                }
+            }
+        }
+        return sAvailable;
+    }
+
+    /** 执行 root 命令并返回 stdout（失败返回空串）。 */
+    public static String execOutput(String cmd) {
+        Process p = null;
+        try {
+            p = Runtime.getRuntime().exec(new String[]{"su", "-c", cmd});
+            p.getOutputStream().close();
+            java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+            byte[] buf = new byte[8192];
+            int n;
+            InputStream in = p.getInputStream();
+            while ((n = in.read(buf)) != -1) bos.write(buf, 0, n);
+            drain(p.getErrorStream());
+            if (!p.waitFor(10, java.util.concurrent.TimeUnit.SECONDS)) { p.destroyForcibly(); return ""; }
+            return bos.toString("UTF-8");
+        } catch (Exception e) { return ""; }
+        finally { if (p != null) p.destroy(); }
+    }
+
+    /** 执行一条 root shell 命令，返回是否成功（exit 0）。 */
+    public static boolean exec(String cmd) {
+        Process p = null;
+        try {
+            p = Runtime.getRuntime().exec(new String[]{"su", "-c", cmd});
+            p.getOutputStream().close();
+            drain(p.getInputStream());
+            drain(p.getErrorStream());
+            if (!p.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                p.destroyForcibly();
+                return false;   // 授权弹窗无人点等场景，不阻塞引擎
+            }
+            return p.exitValue() == 0;
+        } catch (Exception e) {
+            return false;
+        } finally {
+            if (p != null) p.destroy();
+        }
+    }
+
+    private static void drain(InputStream in) {
+        try {
+            byte[] buf = new byte[4096];
+            while (in.read(buf) != -1) { }
+        } catch (Exception ignored) { }
+    }
+
+    /** root 截图：screencap 直出到应用私有目录，无限频。失败返回 null。 */
+    public static Bitmap screenshot(android.content.Context ctx) {
+        File f = new File(ctx.getExternalFilesDir(null), "root_shot.png");
+        f.delete();
+        if (!exec("screencap -p " + f.getAbsolutePath())) return null;
+        if (!f.exists() || f.length() < 1024) return null;
+        Bitmap bmp = BitmapFactory.decodeFile(f.getAbsolutePath());
+        f.delete();
+        return bmp;
+    }
+
+    /** root 手势：同步、不会被系统取消。 */
+    public static boolean tap(int x, int y) {
+        return exec("input tap " + x + " " + y);
+    }
+
+    public static boolean longPress(int x, int y, int durMs) {
+        return exec("input swipe " + x + " " + y + " " + x + " " + y + " " + durMs);
+    }
+
+    public static boolean swipe(int x1, int y1, int x2, int y2, int durMs) {
+        return exec("input swipe " + x1 + " " + y1 + " " + x2 + " " + y2 + " " + durMs);
+    }
+
+    /** root 按键：279 = KEYCODE_PASTE（剪贴板内容直接粘贴到光标处，无需菜单）。 */
+    public static boolean paste() {
+        return exec("input keyevent 279");
+    }
+
+    /** root 自动开启本应用的无障碍服务（幂等）。 */
+    public static boolean ensureA11y(android.content.Context ctx) {
+        String comp = ctx.getPackageName() + "/" + AgentA11yService.class.getName();
+        return exec("settings put secure enabled_accessibility_services " + comp)
+                && exec("settings put secure accessibility_enabled 1");
+    }
+}
