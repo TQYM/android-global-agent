@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0B0F16"/>
+      <stop offset="0.55" stop-color="#0F131A"/>
+      <stop offset="1" stop-color="#0A2136"/>
+    </linearGradient>
+    <linearGradient id="glow" x1="1" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3B82F6" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#F472B6" stop-opacity="0.20"/>
+    </linearGradient>
+    <radialGradient id="halo" cx="0.82" cy="0.18" r="0.9">
+      <stop offset="0" stop-color="#3B82F6" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#3B82F6" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <rect width="1200" height="630" fill="url(#halo)"/>
+  <!-- subtle grid -->
+  <g stroke="#1b2436" stroke-width="1" opacity="0.55">
+    <path d="M0 150H1200 M0 300H1200 M0 450H1200 M0 600H1200"/>
+    <path d="M150 0V630 M300 0V630 M450 0V630 M600 0V630 M750 0V630 M900 0V630 M1050 0V630"/>
+  </g>
+  <rect x="0" y="0" width="1200" height="630" fill="url(#glow)" opacity="0.5"/>
+
+  <!-- floating chat robot chip -->
+  <g transform="translate(905,95)">
+    <rect width="205" height="205" rx="46" fill="#151c29" stroke="#2a3study4b" stroke-width="0"/>
+    <rect width="205" height="205" rx="46" fill="none" stroke="#2a354b" stroke-width="2"/>
+    <!-- face circle -->
+    <circle cx="102" cy="96" r="58" fill="#3B82F6"/>
+    <circle cx="102" cy="96" r="58" fill="url(#halo)"/>
+    <!-- eyes -->
+    <circle cx="82" cy="92" r="9" fill="#0F131A"/>
+    <circle cx="124" cy="92" r="9" fill="#0F131A"/>
+    <!-- mouth -->
+    <path d="M84 122 q18 14 38 0" stroke="#0F131A" stroke-width="7" fill="none" stroke-linecap="round"/>
+    <!-- sparkles -->
+    <g fill="#F472B6">
+      <path d="M178 60 l3 8 8 3 -8 3 -3 8 -3 -8 -8 -3 8 -3z"/>
+      <path d="M206 38 l2 6 6 2 -6 2 -2 6 -2 -6 -6 -2 6 -2z"/>
+    </g>
+    <g fill="#10B981">
+      <circle cx="34" cy="150" r="5"/>
+      <path d="M58 174 l2.2 5 5 2.2 -5 2.2 -2.2 5 -2.2 -5 -5 -2.2 5 -2.2z"/>
+    </g>
+  </g>
+
+  <!-- Left copy -->
+  <g font-family="-apple-system, 'PingFang SC', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+    <rect x="78" y="80" width="214" height="46" rx="23" fill="#3B82F6"/>
+    <text x="185" y="110" font-size="24" fill="#FFFFFF" text-anchor="middle" font-weight="600" letter-spacing="1">PRE-RELEASE</text>
+
+    <text x="72" y="210" font-size="64" fill="#EEF2F8" font-weight="800">Android Global Agent</text>
+    <text x="74" y="286" font-size="46" fill="#7fd0ff" font-weight="700">Lite · 零 Root 手机助手</text>
+
+    <g>
+      <text x="76" y="372" font-size="27" fill="#B7C2D6">视觉 + 语义驱动的 Android 自动化 Agent</text>
+    </g>
+    <g>
+      <text x="76" y="418" font-size="25" fill="#93A4BD">无障碍感知节点  ・  点击 / 滑动 / 中文输入</text>
+    </g>
+    <g>
+      <text x="76" y="458" font-size="25" fill="#93A4BD">语音输入  ・  任务规划  ・  敏感场景接管</text>
+    </g>
+
+    <!-- chips -->
+    <g>
+      <rect x="74" y="500" width="150" height="52" rx="13" fill="#191f2b" stroke="#2c3749" stroke-width="2"/>
+      <text x="149" y="533" font-size="22" fill="#DDE6F2" text-anchor="middle">Android 11+</text>
+      <rect x="236" y="500" width="196" height="52" rx="13" fill="#191f2b" stroke="#2c3749" stroke-width="2"/>
+      <text x="334" y="533" font-size="22" fill="#DDE6F2" text-anchor="middle">OpenAI 兼容模型</text>
+      <rect x="444" y="500" width="158" height="52" rx="13" fill="#161b2b" stroke="#38436b" stroke-width="1.5"/>
+      <text x="523" y="533" font-size="22" fill="#F472B6" text-anchor="middle">v0.5.0-beta</text>
+    </g>
+  </g>
+</svg>

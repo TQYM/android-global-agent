@@ -2,7 +2,19 @@
 
 > 面向 Android 11+ 的视觉与语义驱动手机自动化 Agent。项目以无障碍服务为通用执行底座，并可在已授权的 Root 设备上启用更快的截图、输入和隔离虚拟屏能力。
 
+<p align="center">
+  <img src="docs/assets/banner-v0.5.0.png" alt="Android Global Agent Lite" width="820"/>
+</p>
+
 [项目全景](PROJECT_OVERVIEW.md) · [兼容性说明](agent-lite/COMPATIBILITY.zh-CN.md) · [安全模型](docs/SECURITY.md) · [Apache-2.0 许可证](LICENSE)
+
+## 三步上手（Android 11+）
+
+1. **装**：下载 APK（见 [Releases](https://github.com/TQYM/android-global-agent/releases)）用侧载方式安装；
+2. **授权**：在系统设置中开启 **Agent Lite 无障碍服务**，按需允许通知与麦克风；
+3. **填 Key**：应用内设置里填 Base URL / API Key / 模型，然后输入中文任务即可运行。
+
+> Agent Lite 不需 Root。API Key 只保存在本机，请勿把含密钥的 APK 或配置提交到 Git。
 
 ## 项目定位
 
