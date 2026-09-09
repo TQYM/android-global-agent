@@ -1,4 +1,4 @@
-# Android Global Agent
+# Android Global Agent（面向安卓的通用性Agent）
 
 > 面向 Android 11+ 的视觉与语义驱动手机自动化 Agent。项目以无障碍服务为通用执行底座，并可在已授权的 Root 设备上启用更快的截图、输入和隔离虚拟屏能力。
 
