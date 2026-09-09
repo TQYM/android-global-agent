@@ -30,3 +30,7 @@ agent-lite/build/
 # Local uploads, disk images and editor tooling
 .dsh-uploads/
 *.sparsebundle/
+
+# Non-repo staging: unrelated local/prototype files kept out of git
+/_local/
+
