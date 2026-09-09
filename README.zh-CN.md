@@ -3,7 +3,7 @@
 > 面向 Android 11+ 的视觉与语义驱动手机自动化 Agent。项目以无障碍服务为通用执行底座，并可在已授权的 Root 设备上启用更快的截图、输入和隔离虚拟屏能力。
 
 <p align="center">
-  <img src="docs/assets/banner-v0.5.0.png" alt="Android Global Agent Lite" width="820"/>
+  <img src="docs/assets/banner-v0.6.0.png" alt="Android Global Agent Lite v0.6.0" width="820"/>
 </p>
 
 [项目全景](PROJECT_OVERVIEW.md) · [兼容性说明](agent-lite/COMPATIBILITY.zh-CN.md) · [安全模型](docs/SECURITY.md) · [Apache-2.0 许可证](LICENSE)

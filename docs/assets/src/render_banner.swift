@@ -57,7 +57,7 @@ for i in 1..<15 { let x = CGFloat(i)*W/15; ctx.move(to: .init(x:x,y:0)); ctx.add
 ctx.strokePath()
 
 // ==== top pill ====
-let pillStr = "v0.5.0-beta · PRE-RELEASE"
+let pillStr = "v0.6.0 · STABLE RELEASE"
 let pillW = wOf(pillStr, 20, .white) + 46
 let pillY: CGFloat = 104
 ctx.addPath(rrPath(64, pillY, pillW, 46, 23)); ctx.setFillColor(rgb(0x3B82F6)); ctx.fillPath()
@@ -135,7 +135,7 @@ CTLineDraw(tag, ctx)
 
 ctx.flush()
 let img = ctx.makeImage()!
-let out = URL(fileURLWithPath: "docs/assets/banner-v0.5.0.png")
+let out = URL(fileURLWithPath: "docs/assets/banner-v0.6.0.png")
 let dest = CGImageDestinationCreateWithURL(out as CFURL, UTType.png.identifier as CFString, 1, nil)!
 CGImageDestinationAddImage(dest, img, nil)
 CGImageDestinationFinalize(dest)
