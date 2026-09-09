@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Android 12+ (API 31+) Material You 莫奈色彩动态取色规范 -->
+    <color name="color_surface">@android:color/system_neutral1_900</color>
+    <color name="color_surface_container">@android:color/system_neutral1_800</color>
+    <color name="color_surface_container_high">@android:color/system_neutral2_800</color>
+    <color name="color_surface_variant">@android:color/system_neutral2_700</color>
+
+    <color name="color_outline">@android:color/system_neutral2_500</color>
+    <color name="color_outline_variant">@android:color/system_neutral2_600</color>
+
+    <color name="color_primary">@android:color/system_accent1_200</color>
+    <color name="color_primary_hover">@android:color/system_accent1_300</color>
+    <color name="color_primary_container">@android:color/system_accent1_700</color>
+    <color name="color_on_primary">@android:color/system_accent1_900</color>
+
+    <color name="color_on_surface">@android:color/system_neutral1_100</color>
+    <color name="color_on_surface_variant">@android:color/system_neutral2_200</color>
+    <color name="color_text_hint">@android:color/system_neutral2_400</color>
+
+    <color name="color_accent_pink">@android:color/system_accent3_200</color>
+    <color name="color_accent_pink_light">@android:color/system_accent3_100</color>
+
+    <color name="color_success">#10B981</color>
+    <color name="color_success_container">#064E3B</color>
+    <color name="color_success_text">#34D399</color>
+
+    <color name="color_error">#EF4444</color>
+    <color name="color_error_container">#450A0A</color>
+    <color name="color_error_text">#F87171</color>
+
+    <color name="color_warning">#F59E0B</color>
+    <color name="color_warning_container">#292316</color>
+    <color name="color_warning_text">#FCD34D</color>
+
+    <color name="color_island_bg">#F70A0D12</color>
+    <color name="color_island_border">#33FFFFFF</color>
+    <color name="color_island_expanded">@android:color/system_neutral1_900</color>
+</resources>

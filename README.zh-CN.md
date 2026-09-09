@@ -1,93 +1,216 @@
-# Android 14 全局 Agent
+# Android Global Agent
 
-[English](README.md) | 简体中文
+> 面向 Android 11+ 的视觉与语义驱动手机自动化 Agent。项目以无障碍服务为通用执行底座，并可在已授权的 Root 设备上启用更快的截图、输入和隔离虚拟屏能力。
 
-本仓库是一个面向 Android 14 全局 Agent 的安全边界实现脚手架，仅适用于自有设备或已获明确授权的设备。项目将可移植状态机与 AOSP 私有的屏幕捕获、输入 API 分离。
+[项目全景](PROJECT_OVERVIEW.md) · [兼容性说明](agent-lite/COMPATIBILITY.zh-CN.md) · [安全模型](docs/SECURITY.md) · [Apache-2.0 许可证](LICENSE)
 
-本项目不会绕过受限设置（Restricted Settings）、增强确认模式（Enhanced Confirmation Mode）、Play Protect、安全界面、硬件支持的密钥存储、应用沙箱或第三方防篡改机制。
+## 项目定位
 
-## 已实现
+Android Global Agent 将自然语言任务转换为可验证的手机操作循环：
 
-- 采用 C++20 编写的感知、决策和输入循环，单步截止时间为 200 ms。
-- 可从崩溃中恢复的 mmap 状态存储，使用两代 CRC 保护数据。
-- 带有显式二进制序列化的有界状态图。
-- 按近似弧长采样的确定性三次贝塞尔路径。
-- 面向低频 `dumpsys activity/window` 诊断输出的标准化解析器。
-- 有界子进程运行器，在超时时终止诊断命令。
-- AOSP 14 `ScreenshotClient::captureDisplay(DisplayId, ...)` 后端，包含有界回调和 fence 等待；经 Root 授权的 `captureDisplayById` 路径仍会禁用安全内容捕获。这是私有平台 ABI，必须针对设备对应的源码版本进行编译。
-- 使用经过校验的结构化 AIDL 消息、由平台签名的 Java 输入桥接服务。
-- 平台任务元数据发布器，无需向守护进程授予宽泛的 dumpsys 权限。
-- init、SELinux、属性和服务上下文集成脚手架。
-- 主机单元测试和 Android NDK 桩交叉编译。
+```text
+用户任务 → 可选语义规划 → 节点/截图感知 → 多模态模型决策
+       → 点击、滑动、输入、启动应用或系统动作 → 页面变化复验
+       → 完成、如实失败，或在敏感场景交由用户接管
+```
 
-## 明确不实现
+当前主推 `agent-lite/`。它不依赖 Root，使用原生 Java 与 Android Framework API 实现感知和操作，并加入任务可见性、授权、敏感场景接管、历史记录与显式记忆等交互能力。
 
-- 选择真实用户操作的策略或模型。`DecisionEngine` 是一个接口，生产环境的 AOSP 二进制默认不执行任何操作。
-- 捕获 `FLAG_SECURE`、DRM 或受保护缓冲区。
-- 在运行时向 `system_app` 注入 SELinux 规则，或直接访问 `/dev/uinput`。
-- LSPosed Hook，或从第三方应用中提取私有数据。
-- 声称 init 能在 50 ms 内重启进程。
+## 当前能力
 
-## 主机构建
+### 零 Root 通用能力
 
-```sh
+- `AccessibilityService` 采集可访问窗口和语义节点；
+- `takeScreenshot()` 获取屏幕图像，节点不可见时切换纯视觉坐标模式；
+- `dispatchGesture()` 完成点击、长按、滑动和边缘返回；
+- `ACTION_SET_TEXT` 输入 Unicode/中文，失败时降级到输入法或剪贴板通道；
+- 返回、主页、最近任务、通知栏、快捷设置、锁屏等全局动作；
+- 启动已安装应用、直达常用系统设置、调节亮度和音量；
+- 录音并调用兼容接口完成语音输入；
+- 前台服务提高国产 ROM 上的后台存活能力。
+
+### Agent Lite 交互与安全能力
+
+- 代理状态可见：胶囊、边缘光晕、授权卡片、接管卡片和任务终态卡片；
+- 按“操作类型 × 应用”支持单次允许、始终允许或拒绝；
+- 运行时可停止任务或补充要求；
+- 结果写入本地历史记录，可管理授权、生态策略与记忆；
+- 遇到支付、验证码、协议确认、系统权限等场景暂停自动操作；
+- 对特定应用限制自动操作，或在授权后仅使用视觉模式尝试；
+- 可用独立模型将口语任务整理为目标、步骤、完成判据和风险提示。
+
+### 可选 Root 增强
+
+完整版 `agent-client/` 在获得明确授权后可使用 Root 作为加速器：
+
+- `screencap` 提高截图频率与稳定性；
+- `input tap/swipe/keyevent` 提供同步输入通道；
+- Root 守护进程创建可信虚拟显示，将目标应用迁入隔离屏幕运行；
+- 沙盒失效时停止操作并尝试恢复，禁止降级到真实屏幕盲触。
+
+Root 不是 `agent-lite` 的运行前提。隔离虚拟屏仅适用于由用户控制的测试设备。
+
+## 子项目
+
+| 目录 | 定位 |
+|---|---|
+| `agent-lite/` | **推荐**：零 Root 原生客户端，当前主要开发方向，包名 `com.dsh.agentlite` |
+| `agent-client/` | 可选完整客户端，包名 `com.dsh.agent`，包含 Root 加速和虚拟屏沙盒 |
+| `agentd-go/` + `agentd-apk/` | 实验性 Root 常驻 Go 守护进程、WebUI 与无障碍桥接 |
+| `src/`、`include/`、`android/` | C++20 状态机、Shell/AOSP 后端、AIDL、init 与 SELinux 集成骨架 |
+| `protocol_v2/` | 实验性多协议 Canonical IR、解析/渲染和流式事件累积 |
+| `tests/`、`tools/`、`docs/` | 测试、构建脚本、架构/安全/兼容性和操作文档 |
+
+## 环境要求
+
+- macOS（客户端构建脚本按 macOS Android SDK 默认目录编写）；
+- JDK 11+、Android SDK Platform、Build Tools 和 ADB；
+- Android 11+ 设备（`minSdk 30`）。
+
+客户端使用纯命令行工具链，无 Gradle、无 Kotlin、无第三方运行时依赖：
+
+```text
+aapt2 → javac --release 11 → d8 → zipalign → apksigner
+```
+
+## 快速开始：Agent Lite
+
+```bash
+git clone https://github.com/TQYM/android-global-agent.git
+cd android-global-agent/agent-lite
+sh build-mac.sh
+adb install -r build/agent-lite.apk
+```
+
+如果 SDK 不在默认位置，先设置 `ANDROID_HOME`。安装后：
+
+1. 打开应用；
+2. 在系统设置中启用 **Agent Lite 无障碍服务**；
+3. 按需授予通知、麦克风和忽略电池优化权限；
+4. 在设置中填写 Base URL、API Key、主模型和可选规划模型；
+5. 输入自然语言任务并运行。
+
+产物：`agent-lite/build/agent-lite.apk`。
+
+> API Key 只应保存在本机配置中。不要把真实密钥提交到 Git，也不要把包含密钥的 APK 公开发布。
+
+### 本地开发配置
+
+`agent-lite/build-mac.sh` 支持读取未跟踪的 `agent-lite/dev.local`：
+
+```bash
+API_KEY="your-local-key"
+BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1"
+MODEL="qwen3.5-omni-plus"
+```
+
+该文件已被 `.gitignore` 忽略。公开构建前请删除它，确认 APK 不包含开发密钥。
+
+## 模型接口
+
+客户端使用 OpenAI 风格的兼容 HTTP 接口，默认配置面向 DashScope：
+
+| 配置项 | 默认值或说明 |
+|---|---|
+| Base URL | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
+| 主模型 | `qwen3.5-omni-plus` |
+| 规划模型 | `qwen3.5-flash`，可关闭 |
+| 视觉 | 主模型支持图像输入时可启用 |
+| 语音 | 使用模型原生音频输入或兼容转写接口，取决于服务商 |
+
+不同服务商对消息结构、图片、音频和推理参数的支持并不完全一致，切换模型后请先用简单任务验证。
+
+## 构建其他组件
+
+### 完整客户端
+
+```bash
+cd agent-client
+sh build-mac.sh
+adb install -r build/agent-client.apk
+```
+
+Root 与沙盒模式需要设备端 Root 管理器明确授权。
+
+### C++ 主机测试与 NDK 桩
+
+```bash
 tools/run-tests.sh
-build/host/global-agentd \
-  --state /tmp/global-agent-demo.bin \
-  --iterations 4 \
-  --demo-action
-```
-
-主机可执行文件使用合成帧和仅记录日志的输入注入器。它可以在不向电脑或设备发送输入的情况下验证状态转换。
-
-## Shell 指令后端（免 AOSP 构建）
-
-可移植循环同样可以通过纯 Android shell 指令驱动真机：感知用 `screencap`，
-注入用 `input tap`/`swipe`/`keyevent`，支持 adb 转发或设备端直跑，无需
-AOSP 源码树或平台签名。命令映射、延迟预算与限制详见
-[Shell 指令后端](docs/SHELL_BACKEND.md)。
-
-```sh
-build/host/global-agentd \
-  --backend shell-adb \
-  --state /tmp/global-agent-demo.bin \
-  --iterations 4 \
-  --demo-action
-```
-
-## Agent 框架与 DSH 直驱
-
-不想自研纯视觉方案时，可直接用 DSH 语义直驱真机（零框架），或选用
-uiautomator2 / droidrun 等成熟开源框架：选型对比与操作手册见
-[Agent 框架选型与 DSH 直驱指南](docs/AGENT_FRAMEWORKS.md)。
-
-## Android NDK 桩构建
-
-```sh
 tools/build-android-stub.sh
 ```
 
-该流程用于验证可移植核心能否针对 API 34/arm64 完成交叉编译。NDK 桩不包含 `libgui` 或隐藏的 Framework API，因为它们不属于 NDK。
+NDK 桩构建只验证可移植核心的 Android arm64 交叉编译，不包含 AOSP 私有 `libgui` 实现。
 
-## 完整 AOSP 构建
+### Go 守护进程（实验性）
 
-将本仓库复制到 Android 14 源码树中，例如 `system_ext/global_agent`，然后添加：
-
-```make
-PRODUCT_PACKAGES += \
-    global-agentd \
-    GlobalAgentBridge \
-    privapp-permissions-com.example.globalagent
+```bash
+cd agentd-go
+GOOS=android GOARCH=arm64 CGO_ENABLED=0 \
+  go build -ldflags="-s -w" -o build/agentd .
 ```
 
-通过产品的 `SYSTEM_EXT_PRIVATE_SEPOLICY_DIRS` 或等效配置合并 `android/sepolicy/`。请针对设备对应的准确标签或 OEM 源码版本进行构建，因为 `libgui` 是私有平台 ABI。桥接服务还需要 Soong `platform_apis` 和目标 Framework 桩；公共 SDK 中的 `android.jar` 不包含所需的隐藏平台符号。
+`agentd-go` 以 Root 权限运行并暴露本地控制面，风险显著高于普通应用。除非已完成监听地址、鉴权、数据权限和网络边界审查，否则只应在隔离测试设备与可信网络中评估。
 
-部署到设备前，请先阅读 [AOSP 集成](docs/AOSP_INTEGRATION.md)和[安全模型](docs/SECURITY.md)。具体步骤请参阅[操作手册](docs/OPERATIONS_MANUAL.md)。主动触发、离线 STT、视觉状态和会话生命周期的边界记录在[触发与 STT 集成](docs/TRIGGER_STT_INTEGRATION.md)中。Android 14 电源键事件路径见 [POWER_KEY_AUDIT.md](docs/POWER_KEY_AUDIT.md)，离线语音和边缘光效的实现边界见 [STT_OVERLAY_ANDROID14.md](docs/STT_OVERLAY_ANDROID14.md)。
+## 已验证情况
 
-## 运行时数据
+当前代码曾在以下环境进行开发测试：
 
-平台二进制会写入 `/data/misc/global_agent/state.bin`。普通视觉观察结果最多每秒持久化一次，操作反馈则会立即提交。恢复时会忽略损坏或未写完的数据槽。
+- Android 16 / ColorOS 16 / OnePlus 13T：零 Root 链路及 Root 沙盒链路；
+- Android 17 / MagicOS / 荣耀平板：节点采集、截图、手势和中文输入的零 Root 链路。
 
-## 验证状态
+这些结果不代表所有厂商 ROM 均已兼容。部分 MagicOS 设备在覆盖安装或强制停止后会清除无障碍服务绑定，需要用户重新启用。
 
-主机测试和 NDK 交叉编译是本地检查门槛。由于当前工作区并非 Android 平台源码树，无法在本地编译 AOSP 私有头文件，因此仍需完成完整的 AOSP 构建和设备测试。
+## 已知限制
+
+- 无障碍截图从 Android 11 开始可用，并可能受到系统限频；
+- 微信等应用可能隐藏无障碍节点树，只能依赖截图与视觉坐标；
+- 无 Root 时不能静默切换 Wi-Fi、蓝牙或绕过系统权限确认；
+- 系统弹窗、支付、验证码、授权协议等必须由用户检查或接管；
+- 多窗口、横竖屏切换、OEM 后台策略和复杂输入法仍需持续适配；
+- 模型可能误解界面或生成错误动作，不能把自然语言模型当作可靠的安全授权机制；
+- AOSP 私有 API 需要针对目标系统源码和厂商实现重新构建与验收。
+
+## 安全与隐私
+
+本项目只能用于自有设备或已获得明确授权的设备：
+
+- 不捕获或绕过 `FLAG_SECURE`、DRM、硬件密钥存储、应用沙箱及系统安全机制；
+- 不尝试绕过受限设置、Play Protect、权限确认或第三方反篡改；
+- 不允许 Agent 在支付、转账、验证码、隐私协议等高风险步骤中自行确认；
+- 截图、屏幕文本、任务内容和录音可能被发送到配置的模型服务，请自行评估服务商隐私政策；
+- API Key、签名文件、测试 APK、ZIP、日志、截图和设备标识不得提交到公共仓库；
+- Root 组件只应在隔离测试设备上使用，并坚持最小权限和本机访问原则。
+
+当前项目仍处于开发与研究阶段，不建议用于无人值守的生产环境或任何高风险业务。详见 [`docs/SECURITY.md`](docs/SECURITY.md) 与仓库内安全审查文档。
+
+## 文档导航
+
+- [`PROJECT_OVERVIEW.md`](PROJECT_OVERVIEW.md)：架构、技术决策和当前状态；
+- [`agent-lite/COMPATIBILITY.zh-CN.md`](agent-lite/COMPATIBILITY.zh-CN.md)：Android 11+ 兼容性和装机说明；
+- [`docs/DOUBAO_SPEC_ADAPTATION.zh-CN.md`](docs/DOUBAO_SPEC_ADAPTATION.zh-CN.md)：Agent Lite 交互规格；
+- [`docs/SHELL_BACKEND.md`](docs/SHELL_BACKEND.md)：Shell 指令后端；
+- [`docs/AOSP_INTEGRATION.md`](docs/AOSP_INTEGRATION.md)：AOSP 集成；
+- [`docs/OPERATIONS_MANUAL.md`](docs/OPERATIONS_MANUAL.md)：操作手册；
+- [`docs/VALIDATION.md`](docs/VALIDATION.md)：验证要求。
+
+## 开发检查
+
+```bash
+# C++ 主机测试
+tools/run-tests.sh
+
+# Agent Lite 构建
+cd agent-lite && sh build-mac.sh
+
+# Protocol V2 离线测试（改动该模块时）
+python3 -m protocol_v2.test_core
+python3 -m protocol_v2.test_protocols
+python3 -m protocol_v2.test_safety
+python3 -m protocol_v2.test_accumulator
+```
+
+请勿使用 `git add -A` 盲目提交整个工作目录；先检查 `git status`，排除密钥、APK、ZIP、设备日志、上传文件和一次性运维脚本。
+
+## 许可证
+
+本项目使用 [Apache License 2.0](LICENSE)。

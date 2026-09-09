@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 粉色主按钮：AI 代理行为专属色（接管卡片主按钮 / 授权主选项） -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="#F4A7C3"/>
+    <corners android:radius="22dp"/>
+</shape>

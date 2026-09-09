@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 原生 Android (Material 3) 深色系全局配色规范 -->
+    <color name="color_surface">#0F131A</color>
+    <color name="color_surface_container">#191E28</color>
+    <color name="color_surface_container_high">#232936</color>
+    <color name="color_surface_variant">#1E2532</color>
+
+    <color name="color_outline">#30394A</color>
+    <color name="color_outline_variant">#202735</color>
+
+    <color name="color_primary">#3B82F6</color>
+    <color name="color_primary_hover">#2563EB</color>
+    <color name="color_primary_container">#1D3557</color>
+    <color name="color_on_primary">#FFFFFF</color>
+
+    <color name="color_on_surface">#F1F5F9</color>
+    <color name="color_on_surface_variant">#94A3B8</color>
+    <color name="color_text_hint">#64748B</color>
+
+    <color name="color_accent_pink">#F472B6</color>
+    <color name="color_accent_pink_light">#FCE7F3</color>
+
+    <color name="color_success">#10B981</color>
+    <color name="color_success_container">#064E3B</color>
+    <color name="color_success_text">#34D399</color>
+
+    <color name="color_error">#EF4444</color>
+    <color name="color_error_container">#450A0A</color>
+    <color name="color_error_text">#F87171</color>
+
+    <color name="color_warning">#F59E0B</color>
+    <color name="color_warning_container">#292316</color>
+    <color name="color_warning_text">#FCD34D</color>
+
+    <color name="color_island_bg">#F70A0D12</color>
+    <color name="color_island_border">#33FFFFFF</color>
+    <color name="color_island_expanded">#F2141822</color>
+</resources>

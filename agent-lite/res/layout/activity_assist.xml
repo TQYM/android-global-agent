@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/assistRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#80000000">
+
+    <LinearLayout
+        android:id="@+id/assistDialog"
+        android:orientation="vertical"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:layout_margin="16dp"
+        android:background="@drawable/bg_card"
+        android:padding="20dp">
+
+        <LinearLayout
+            android:orientation="horizontal"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:id="@+id/tvAssistTitle"
+                android:text="Agent 语音助手"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="@color/color_on_surface"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"/>
+
+            <Button
+                android:id="@+id/btnAssistClose"
+                android:text="关闭"
+                android:textSize="12sp"
+                android:textColor="@color/color_on_surface_variant"
+                android:background="@drawable/btn_chip"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:paddingLeft="12dp"
+                android:paddingRight="12dp"/>
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/tvAssistHint"
+            android:text="请说话，下达任何自动化指令…"
+            android:textSize="14sp"
+            android:textColor="@color/color_on_surface_variant"
+            android:layout_marginTop="14dp"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"/>
+
+        <EditText
+            android:id="@+id/etAssistInput"
+            android:hint="或在此直接输入指令并运行"
+            android:textSize="13sp"
+            android:textColor="@color/color_on_surface"
+            android:textColorHint="@color/color_text_hint"
+            android:background="@drawable/bg_input"
+            android:paddingLeft="12dp"
+            android:paddingRight="12dp"
+            android:paddingTop="10dp"
+            android:paddingBottom="10dp"
+            android:layout_marginTop="12dp"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:maxLines="3"/>
+
+        <LinearLayout
+            android:orientation="horizontal"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp">
+
+            <Button
+                android:id="@+id/btnAssistMic"
+                android:text="按住/点按说话"
+                android:textSize="13sp"
+                android:textColor="@color/color_on_surface"
+                android:background="@drawable/btn_ghost"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="44dp"
+                android:minHeight="0dp"/>
+
+            <Button
+                android:id="@+id/btnAssistRun"
+                android:text="立即执行"
+                android:textSize="13sp"
+                android:textColor="@color/color_on_primary"
+                android:background="@drawable/btn_primary"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="44dp"
+                android:layout_marginLeft="10dp"
+                android:minHeight="0dp"/>
+        </LinearLayout>
+    </LinearLayout>
+</FrameLayout>

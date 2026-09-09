@@ -20,6 +20,11 @@ public class LlmClient {
     private final String apiKey;
     private final String model;
     private String visionModel;   // 含图消息时切换（纯文本模型配视觉搭档）
+    private TokenUsageListener tokenListener;
+
+    public interface TokenUsageListener {
+        void onUsage(long promptTokens, long completionTokens, long totalTokens);
+    }
 
     public LlmClient(String baseUrl, String apiKey, String model) {
         this.baseUrl = baseUrl.replaceAll("/+$", "");
@@ -28,6 +33,7 @@ public class LlmClient {
     }
 
     public LlmClient visionModel(String vm) { visionModel = vm; return this; }
+    public LlmClient tokenListener(TokenUsageListener tl) { tokenListener = tl; return this; }
 
     public static JSONObject textMsg(String role, String text) throws Exception {
         return new JSONObject().put("role", role).put("content", text);
@@ -77,15 +83,28 @@ public class LlmClient {
         JSONObject body = new JSONObject()
                 .put("model", useModel)
                 .put("messages", messages)
-                .put("temperature", 0.1)
-                .put("max_tokens", 300);
-        if (baseUrl.contains("bigmodel.cn")) {
-            body.put("thinking", new JSONObject().put("type", "disabled"));
+                .put("temperature", 0.0)
+                .put("max_tokens", 160);
+        // 关闭冗余思考链或深度推理，追求毫秒级指令直出
+        if (baseUrl.contains("bigmodel.cn") || baseUrl.contains("aliyuncs.com") || baseUrl.contains("dashscope")) {
+            try {
+                body.put("thinking", new JSONObject().put("type", "disabled"));
+                body.put("enable_thinking", false);
+            } catch (Exception ignored) { }
         }
         JSONObject resp = post("/chat/completions", body.toString().getBytes(StandardCharsets.UTF_8),
                 "application/json");
         if (resp.has("error")) {
             throw new Exception("API 错误: " + resp.getJSONObject("error").optString("message"));
+        }
+        if (resp.has("usage") && tokenListener != null) {
+            try {
+                JSONObject u = resp.getJSONObject("usage");
+                long p = u.optLong("prompt_tokens", 0L);
+                long c = u.optLong("completion_tokens", 0L);
+                long t = u.optLong("total_tokens", p + c);
+                tokenListener.onUsage(p, c, t);
+            } catch (Exception ignored) { }
         }
         JSONArray choices = resp.optJSONArray("choices");
         if (choices == null || choices.length() == 0) {
@@ -112,6 +131,15 @@ public class LlmClient {
                     "application/json");
             if (resp.has("error"))
                 throw new Exception("ASR 错误: " + resp.getJSONObject("error").optString("message"));
+            if (resp.has("usage") && tokenListener != null) {
+                try {
+                    JSONObject u = resp.getJSONObject("usage");
+                    long p = u.optLong("prompt_tokens", 0L);
+                    long c = u.optLong("completion_tokens", 0L);
+                    long t = u.optLong("total_tokens", p + c);
+                    tokenListener.onUsage(p, c, t);
+                } catch (Exception ignored) { }
+            }
             return resp.getJSONArray("choices").getJSONObject(0)
                     .getJSONObject("message").getString("content").trim();
         }

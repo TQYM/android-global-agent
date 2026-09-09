@@ -22,7 +22,15 @@ public final class Prefs {
         if ("glm-asr-2512".equals(v)) v = "";   // 旧默认值已失效，自动迁移为空（=用主模型转写）
         return v; }
     public boolean vision()     { return sp.getBoolean("vision", true); }
-    public int maxSteps()       { return sp.getInt("max_steps", 20); }
+    public int maxSteps()       {
+        int v = sp.getInt("max_steps", 50);
+        if (v == 20 || v == 30 || v == 100) {
+            // 自动统一为最新标准默认值 50 步
+            v = 50;
+            sp.edit().putInt("max_steps", 50).apply();
+        }
+        return v;
+    }
 
     public String systemPrompt() {
         String saved = sp.getString("system_prompt", null);
@@ -57,10 +65,35 @@ public final class Prefs {
 
     public void setApiKey(String key) { sp.edit().putString("api_key", key).apply(); }
 
+    /** 累计消耗 Token 统计：Prompt Token、Completion Token、Total Token */
+    public long promptTokens() { return sp.getLong("tokens_prompt", 0L); }
+    public long completionTokens() { return sp.getLong("tokens_completion", 0L); }
+    public long totalTokens() { return sp.getLong("tokens_total", 0L); }
+
+    public synchronized void addTokens(long prompt, long completion, long total) {
+        if (total <= 0 && prompt + completion > 0) total = prompt + completion;
+        sp.edit()
+                .putLong("tokens_prompt", promptTokens() + Math.max(0, prompt))
+                .putLong("tokens_completion", completionTokens() + Math.max(0, completion))
+                .putLong("tokens_total", totalTokens() + Math.max(0, total))
+                .apply();
+    }
+
+    public void resetTokens() {
+        sp.edit()
+                .putLong("tokens_prompt", 0L)
+                .putLong("tokens_completion", 0L)
+                .putLong("tokens_total", 0L)
+                .apply();
+    }
+
     /** Root 模式: auto(自动检测) / on(强制启用) / off(强制关闭)。Lite 版无 UI，默认 auto 静默加速。 */
     public String rootMode() { return sp.getString("root_mode", "auto"); }
     /** 视觉搭档模型：空 = 与主模型相同。 */
     public String visionModel() { return sp.getString("vision_model", ""); }
+    /** 语义规划模型：把口语任务转成结构化简报；空 = 关闭规划前置。（qwen3.8flash 不存在，实测可用默认 qwen3.5-flash） */
+    public String plannerModel() { return sp.getString("planner_model", "qwen3.5-flash"); }
+    public void setPlannerModel(String m) { sp.edit().putString("planner_model", m).apply(); }
 
     public void setRootMode(String m) { sp.edit().putString("root_mode", m).apply(); }
 }

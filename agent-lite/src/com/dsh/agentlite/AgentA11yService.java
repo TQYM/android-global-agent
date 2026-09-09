@@ -33,11 +33,17 @@ public class AgentA11yService extends AccessibilityService {
     private static volatile AgentA11yService sInstance;
     private static long sLastShotMs;
 
+    /** 代理可见性覆盖层（灵动岛胶囊/边缘光晕/接管卡片），随服务生命周期存活。 */
+    private OverlayController overlay;
+
     public static AgentA11yService get() { return sInstance; }
+
+    public OverlayController overlay() { return overlay; }
 
     @Override
     public void onServiceConnected() {
         sInstance = this;
+        overlay = new OverlayController(this);
         Log.i(TAG, "service connected");
     }
 
@@ -48,13 +54,20 @@ public class AgentA11yService extends AccessibilityService {
     public void onInterrupt() { }
 
     @Override
+    protected boolean onKeyEvent(android.view.KeyEvent event) {
+        return super.onKeyEvent(event);
+    }
+
+    @Override
     public void onDestroy() {
+        if (overlay != null) { overlay.hideAll(); overlay = null; }
         sInstance = null;
         super.onDestroy();
     }
 
     @Override
     public boolean onUnbind(android.content.Intent intent) {
+        if (overlay != null) { overlay.hideAll(); overlay = null; }
         sInstance = null;
         return super.onUnbind(intent);
     }
@@ -62,13 +75,70 @@ public class AgentA11yService extends AccessibilityService {
     // ---- 感知 ----
 
     /** 收集当前窗口的语义节点（可点/可滚/有文本），返回扁平列表。 */
+    /** 上一次 collectNodes 的节点引用（供 tapNode 直点用），下次收集时回收。 */
+    private final java.util.Map<Integer, AccessibilityNodeInfo> nodeRefs = new java.util.HashMap<>();
+
+    /**
+     * 感知当前屏幕全部应用窗口（合并多窗口：主窗口 + 弹窗/权限对话框），
+     * 并排除本助手自己的界面/覆盖层——防止模型看到并误触自家胶囊/面板/卡片。
+     */
     public List<NodeInfo> collectNodes() {
         List<NodeInfo> out = new ArrayList<>();
-        AccessibilityNodeInfo root = getRootInActiveWindow();
-        if (root == null) return out;
-        walk(root, out, 0);
-        root.recycle();
+        releaseRefs();
+        String self = getPackageName();
+        try {
+            List<android.view.accessibility.AccessibilityWindowInfo> wins = getWindows();
+            if (wins != null && !wins.isEmpty()) {
+                // 层级高的（弹窗/对话框）排前面，其节点优先生效
+                wins.sort((a, b) -> b.getLayer() - a.getLayer());
+                for (android.view.accessibility.AccessibilityWindowInfo w : wins) {
+                    if (w == null || w.getType() != android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION)
+                        continue;
+                    AccessibilityNodeInfo root = w.getRoot();
+                    if (root == null) continue;
+                    CharSequence pkg = root.getPackageName();
+                    if (pkg != null && self.contentEquals(pkg)) { root.recycle(); continue; }
+                    walk(root, out, 0);
+                    root.recycle();
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "collectNodes windows: " + e);
+        }
+        if (out.isEmpty()) {   // 兜底：活跃窗口
+            AccessibilityNodeInfo root = getRootInActiveWindow();
+            if (root != null) {
+                CharSequence pkg = root.getPackageName();
+                if (pkg == null || !self.contentEquals(pkg)) walk(root, out, 0);
+                root.recycle();
+            }
+        }
         return out;
+    }
+
+    private void releaseRefs() {
+        for (AccessibilityNodeInfo n : nodeRefs.values()) {
+            try { n.recycle(); } catch (Exception ignored) { }
+        }
+        nodeRefs.clear();
+    }
+
+    /** 直点节点：爬到最近的可点击祖先执行 ACTION_CLICK；失败返回 false（调用方手势兜底）。 */
+    public boolean tapNode(int index) {
+        AccessibilityNodeInfo n = nodeRefs.get(index);
+        if (n == null) return false;
+        try {
+            AccessibilityNodeInfo cur = n;
+            for (int up = 0; up < 8 && cur != null; up++) {
+                if (cur.isClickable()) return cur.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                AccessibilityNodeInfo p = cur.getParent();
+                if (cur != n) cur.recycle();
+                cur = p;
+            }
+            return false;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     /** 在指定屏幕（虚拟屏）的输入框写入文字；成功返回 null。 */
@@ -138,6 +208,8 @@ public class AgentA11yService extends AccessibilityService {
                 ni.cx = b.centerX();
                 ni.cy = b.centerY();
                 out.add(ni);
+                AccessibilityNodeInfo copy = AccessibilityNodeInfo.obtain(n);
+                if (copy != null) nodeRefs.put(ni.index, copy);
                 count++;
             }
             int kids = n.getChildCount();

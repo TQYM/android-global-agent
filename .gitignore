@@ -7,3 +7,26 @@
 google_oauth_tokens.json
 
 agent-client/debug.keystore
+
+# API key 永不入 git（build-mac.sh 构建期注入 dev.local）
+dev.local
+agent-client/dev.local
+agent-lite/dev.local
+
+# Local build/signing artifacts and packaged binaries
+*.keystore
+*.jks
+*.apk
+*.zip
+agentd-apk/build/
+agent-lite/build/
+
+# Operations snapshots and one-off deployment transport artifacts
+.server-snapshots/
+*.tgz
+.*.sh
+.*.py
+
+# Local uploads, disk images and editor tooling
+.dsh-uploads/
+*.sparsebundle/
