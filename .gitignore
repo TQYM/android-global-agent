@@ -39,5 +39,6 @@ agent-lite/build/
 
 # Built daemon binary and per-device test result logs (regenerated)
 agentd-go/build/
+agent-client/assets/vd_daemon.jar
 tests/results-*.jsonl
 

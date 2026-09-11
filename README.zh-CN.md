@@ -70,7 +70,6 @@ Root 不是 `agent-lite` 的运行前提。隔离虚拟屏仅适用于由用户�
 | `agent-client/` | 可选完整客户端，包名 `com.dsh.agent`，包含 Root 加速和虚拟屏沙盒 |
 | `agentd-go/` + `agentd-apk/` | 实验性 Root 常驻 Go 守护进程、WebUI 与无障碍桥接 |
 | `src/`、`include/`、`android/` | C++20 状态机、Shell/AOSP 后端、AIDL、init 与 SELinux 集成骨架 |
-| `protocol_v2/` | 实验性多协议 Canonical IR、解析/渲染和流式事件累积 |
 | `tests/`、`tools/`、`docs/` | 测试、构建脚本、架构/安全/兼容性和操作文档 |
 
 ## 环境要求
@@ -213,12 +212,6 @@ tools/run-tests.sh
 
 # Agent Lite 构建
 cd agent-lite && sh build-mac.sh
-
-# Protocol V2 离线测试（改动该模块时）
-python3 -m protocol_v2.test_core
-python3 -m protocol_v2.test_protocols
-python3 -m protocol_v2.test_safety
-python3 -m protocol_v2.test_accumulator
 ```
 
 请勿使用 `git add -A` 盲目提交整个工作目录；先检查 `git status`，排除密钥、APK、ZIP、设备日志、上传文件和一次性运维脚本。
