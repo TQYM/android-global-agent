@@ -76,14 +76,19 @@ agent-lite 内置 `DisplaySpec` 屏幕形态采集（零 root，基于 WindowMet
 | 多显示（外接/折叠外屏） | getWindowsOnAllDisplays 统计 | 明确只操作主屏，其他屏报「不支持」而非乱点 | ✅ 已实现 |
 | 折叠屏动态切换 | — | 本期不做（规划 P2 观察项） | ⏸ 规划中 |
 
-**手表（Wear 类设备）UI 适配**（commit 0cd53b9；2026-09-11 实测）：
-- **形态自动切换**：`isWatchUi()` = `UI_MODE_TYPE_WATCH` ∥ `isScreenRound()` ∥ 最小边<320dp → 使用 `activity_main_watch.xml`（手机/平板不受影响，走原布局）
+**手表（Wear 类设备）UI 适配**（极简主页版 commit 8211f68；2026-09-11 实测）：
+- **形态自动切换**：`isWatchUi()` = `UI_MODE_TYPE_WATCH` ∥ `isScreenRound()` ∥ 最小边<320dp → 使用 `activity_main_watch.xml`（手机/平板不受影响，走原布局 `activity_main.xml`，已回归验证）
+- **主页极简（圆/方两档）**：仅 6 个控件——状态文字、语音大钮、设置入口、打字输入框、运行按钮。
+  日志、截图、历史、记忆、省电、授权**均不在主页**（日志与截图手表端不提供，adb logcat / engine.log 可查）
+- **设置页分离**（`WatchSettingsActivity` + `activity_watch_settings.xml`）：模型配置、历史记录、
+  全局记忆、省电策略、预授权管理、权限与授权（无障碍直达/电池白名单）、设备形态与校准
 - **圆形表盘档**（`values-round/dimens.xml`，OWW261 466×466@320dpi 实测）：
-  - 几何依据：R=233px，内接方形半边 164.7px → 水平边距 24dp；右上角按钮右缘 x=418 处安全 y≥91px → 顶部边距 48dp
-  - 实测入圆：btnConfig [318,96][418,176] ✓、功能按钮行 ✓、etTask 全宽居中（中心距圆心 6px）✓、btnMic/btnRun 仅 3px 角裁（中心完全可点）
-- **方形表档**（`values/dimens.xml`，模拟器 466×466@320dpi 非圆形实测）：边距收窄至 8dp/6dp，全部控件可用（无圆弧裁切）
-- 触摸目标 ≥ 42dp、字号收敛（标题 15sp/正文 10sp）、任务区垂直堆叠（圆形屏下横排会挤出圆外）
-- 滚动内容（形态卡/预览区）经过顶部/底部弧区时部分超圆——滚动视口固有特性，滚至中央即完全入圆
+  - 几何依据：R=233px，内接方形半边 164.7px → 水平边距 24dp
+  - 实测入圆：语音钮 [113,72][241,200] 完全在圆内 ✓、设置钮 [261,90][353,182] 完全在圆内 ✓、
+    输入框 [48,212][418,280] 完全在圆内 ✓、运行钮仅 1px 角裁（中心可点）✓
+  - 设计要点：语音钮与设置钮同排放在**圆最宽处**（避免右上角圆弧裁切）；状态文字居中窄条
+- **方形表档**（`values/dimens.xml`）：边距收窄至 8dp/10dp、语音钮 72dp，全部控件可用
+- 滚动内容（设置页）经过顶部/底部弧区时部分超圆——滚动视口固有特性，滚至中央即完全入圆
 
 **手表已知限制 / 运维要点**：
 - adb 起任务：`am start -n com.dsh.agentlite/.MainActivity --es task <t> --ez auto_run true`（任务文本避免空格，adb shell 会吃掉引号）
