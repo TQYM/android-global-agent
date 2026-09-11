@@ -380,13 +380,71 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
         }
         if (AgentA11yService.get() == null) {
             // 服务可能刚被系统重绑（例：刚从无障碍设置页返回）——短暂等待重试，
-            // 避免带着空感知启动任务（10 轮检查第 3 轮实测：会让模型看到「未开启」提示而误判失败）
+            // 避免带着空感知启动任务（10 轮检查实测：会让模型看到「未开启」提示而误判失败）
             toast("无障碍服务正在连接…");
             waitA11yThenRun(task, 0);
             return;
         }
+        startTask(task);
+    }
+
+    /**
+     * 统一任务启动出口。
+     * 1) 刷新无障碍状态（清掉可能残留的「未开启」横幅——否则横幅进入引擎首帧截图会误导模型）；
+     * 2) 网络预检 + WiFi 高性能锁（手表长时间运行会被省电策略断网，实测出现
+     *    「Unable to resolve host dashscope.aliyuncs.com」导致任务失败）；
+     * 3) 启动引擎；手表上随即把本界面退到后台，避免自身 UI 遮挡首帧。
+     */
+    private void startTask(String task) {
+        refreshA11y();
+        if (!networkReady()) {
+            toast("网络不可用：请检查手表 WiFi（省电模式下会被关闭）");
+            return;
+        }
+        acquireWifiLock();
         engine.start(task);
         toast("任务已启动，可上滑划出，灵动岛将实时显示进度");
+        if (watchUi) {
+            ui.postDelayed(() -> moveTaskToBack(true), 800);
+        }
+    }
+
+    /** 是否有可用网络（INTERNET 能力）。 */
+    private boolean networkReady() {
+        try {
+            android.net.ConnectivityManager cm =
+                    (android.net.ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+            if (cm == null) return true;
+            android.net.Network n = cm.getActiveNetwork();
+            if (n == null) return false;
+            android.net.NetworkCapabilities cap = cm.getNetworkCapabilities(n);
+            return cap != null && cap.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET);
+        } catch (Throwable t) {
+            return true;   // 检测异常时不阻塞任务
+        }
+    }
+
+    // ---- 任务期间 WiFi 高性能锁（防省电策略断网） ----
+    private android.net.wifi.WifiManager.WifiLock wifiLock;
+
+    private void acquireWifiLock() {
+        try {
+            android.net.wifi.WifiManager wm =
+                    (android.net.wifi.WifiManager) getApplicationContext().getSystemService(WIFI_SERVICE);
+            if (wm == null) return;
+            if (wifiLock == null) {
+                wifiLock = wm.createWifiLock(android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF,
+                        "agentlite:task");
+                wifiLock.setReferenceCounted(false);
+            }
+            if (!wifiLock.isHeld()) wifiLock.acquire();
+        } catch (Throwable ignored) { }
+    }
+
+    private void releaseWifiLock() {
+        try {
+            if (wifiLock != null && wifiLock.isHeld()) wifiLock.release();
+        } catch (Throwable ignored) { }
     }
 
     /**
@@ -395,8 +453,7 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
      */
     private void waitA11yThenRun(String task, int tries) {
         if (AgentA11yService.get() != null) {
-            engine.start(task);
-            toast("任务已启动，可上滑划出，灵动岛将实时显示进度");
+            startTask(task);
             return;
         }
         if (tries >= 6) {
@@ -458,6 +515,7 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
 
     @Override
     public void onStatus(boolean running, int step) {
+        if (!running) releaseWifiLock();   // 任务结束：释放 WiFi 高性能锁
         ui.post(() -> {
             tvStatus.setText(running ? "运行中 · 第 " + step + " 步" : "就绪");
             if (watchUi) return;   // 手表极简主页：只更新状态文字
