@@ -1,7 +1,8 @@
 # 鸿蒙（HarmonyOS NEXT）适配环境搭建与验证指南
 
 > 目标：在**本机无鸿蒙真机**的情况下，用官方模拟器（虚拟机）跑通 `tools/harmony-agent/` 外挂式 Agent。
-> 当前状态（2026-09-11）：**代码已就绪并通过 mock 全链路验证**；模拟器环境需按本文 §1 安装。
+> 当前状态（2026-09-12）：**已在 HarmonyOS 7.0 模拟器上跑通**——probe 5/5、端到端验收任务达成
+> （「打开设置 → 进入显示和亮度 → 返回上一页」4 步真实完成，节点数 32→38→30→38 佐证返回生效）。
 
 ---
 
@@ -69,15 +70,41 @@ AGENT_API_KEY=<key> python3 tools/harmony-agent/harmony_agent.py \
     --task "打开设置并搜索蓝牙" --serial <SN> --max-steps 20
 ```
 
-## 4. 已知坑与处置（probe 会逐条暴露）
+## 4. 实机校准结果（HarmonyOS 7.0 模拟器实测，2026-09-12）
 
-| 项 | 现象 | 处置 |
+模拟器全自动获取（无需 IDE 界面，只需 DevEco Studio 已安装，镜像可命令行下载）：
+
+```bash
+EMU=/Applications/DevEco-Studio.app/Contents/tools/emulator/Emulator
+HDC=/Applications/DevEco-Studio.app/Contents/sdk/default/openharmony/toolchains/hdc
+$EMU -license accept                                            # 自动接受许可
+$EMU -imageList                                                 # 列出可用镜像（phone/tablet/foldable/2in1/wearable/tv…）
+$EMU -install -deviceType phone -osVersion "HarmonyOS 7.0.0(26.0.0)"   # 下载镜像（实测 2.31GB）
+$EMU -create HarmonyPhone -deviceType phone -osVersion "HarmonyOS 7.0.0(26.0.0)"
+$EMU -start HarmonyPhone -noWindow                              # headless 启动
+$HDC list targets                                               # → 127.0.0.1:5555
+```
+
+| 能力 | 实测正确形式 | 踩坑 |
 |---|---|---|
-| `uitest uiInput text` 中文 | 报错/乱码 | `hdc.input_text` 已把非 ASCII 失败暴露给 LLM 换策略；必要时改剪贴板/逐字符 |
-| `dumpLayout` 需 uitest daemon | 首次调用失败 | 按 stderr 提示启动 uitest 服务后重试 |
-| 属性键名差异 | 解析不到节点 | `hdc.walk_nodes` 已兼容 `content-desc`/`text`/`clickable`（字符串 "true"/"false"）等 ArkXTest 形式 |
-| 截图命令名 | `snapshot_display` 或 `snapshot` | `hdc.screenshot` 双命令回退 |
-| 返回/主页键码 | 2050/2049 待核实 | `probe.py --inject` 实测确认 |
+| 屏幕尺寸 | `hidumper -s RenderService -a screen` → `render resolution=1256x2760` | `WindowManagerService` 通道无输出 |
+| 控件树 | `uitest dumpLayout -p <file>`；顶层**单对象**、属性**驼峰**（`longClickable`）、**空串即 false** | 原假设的连字符键名不存在 |
+| 截图 | `snapshot_display -f <file>`，**后缀必须 `.jpeg`**（`.png` 报 invalid） | 且需校验设备端文件真的生成（曾假阳性） |
+| 点击/滑动 | `uitest uiInput click <x> <y>` / `swipe <x1> <y1> <x2> <y2> <speed>` | 点击生效但**页面切换需 2–4s**（`--settle 3`），1.2s 会读到旧屏误判"点击无效" |
+| 返回/主页 | `uitest uiInput keyEvent Back` / `keyEvent Home`（**键名**） | 数字键码（2 / 2050 / 2049）**实测无效** |
+| 文本输入 | `uitest uiInput text <英文>` 可用；**中文失败** | 失败时 agent 已能按指引降级（实测自动改英文成功） |
+| 启动应用 | `aa start -b <bundle> -a <ability>` | — |
+
+**鸿蒙控件树的结构性差异（适配核心）**：可点容器（`Row`/`Column`）自身 `text` 为空，标签在子 `Text` 节点。
+平铺解析会让模型看到十几个空容器而无法决策 → `hdc.walk_nodes` 已对可点无文本节点做**子树文本聚合**
+（修复前 `Y '' Row`×13；修复后 `语言和地区 / 地区: 中国`、`输入法`、`重置` …）。
+
+**页面上下文**：`dumpLayout` 的 `bundleName`/`abilityName` 提取到 `hdc.LAST_WINDOW` 并写入 prompt
+（`当前页面: com.huawei.hmos.settings / MainActivity`），修「模型不知道自己在哪一页」；
+注意子页 `pagePath` 可能与主页相同，不能仅靠它判断层级。
+
+**滑动方向**：prompt 已明确 `py1 > py2` = 看更下方、`py1 < py2` = 回滚看更上方；
+并把「目标看不到时先向下回滚检查页面上方」写入守则（修掉反复上滑越滑越远的死循环）。
 
 ## 5. 文件一览
 

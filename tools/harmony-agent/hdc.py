@@ -214,12 +214,21 @@ def keyevent(serial, code):
     shell(serial, f"uitest uiInput keyEvent {code}", timeout=15)
 
 
+def key_event(serial, name):
+    """按键注入。实机核实（HarmonyOS 7.0 模拟器）：参数是**键名**（如 Back/Home），
+    不是 Android 式的数字键码（keyEvent 2 / 2050 实测均无效）。"""
+    out, rc = shell(serial, f"uitest uiInput keyEvent {name}", timeout=15, check=False)
+    if rc != 0:
+        raise HdcError(f"keyEvent {name} 失败: {out[:160]}")
+    return out
+
+
 def back(serial):
-    shell(serial, "uitest uiInput keyEvent 2050", timeout=15, check=False)  # 2050=返回（待核实）
+    return key_event(serial, "Back")
 
 
 def home(serial):
-    shell(serial, "uitest uiInput keyEvent 2049", timeout=15, check=False)  # 2049=主页（待核实）
+    return key_event(serial, "Home")
 
 
 # ---- 截图 ----
