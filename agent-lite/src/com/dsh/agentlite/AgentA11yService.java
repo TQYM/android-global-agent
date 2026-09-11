@@ -253,10 +253,22 @@ public class AgentA11yService extends AccessibilityService {
     }
 
     // ---- 手势（dispatchGesture，同步等待结果） ----
+    // 异形屏适配 T2：所有落点先 clamp 进安全触控区（含 root 路径），
+    // 挖孔/曲面边缘/系统栏落点向内修正，避免手势被系统吞掉或静默无效。
+
+    /** 最近一次 clamp 修正距离（px），供引擎在执行后告知模型调整策略。 */
+    private static volatile int sLastClampDist;
+
+    /** 取出并清零最近一次 clamp 修正距离。 */
+    public static int consumeClampDist() {
+        int d = sLastClampDist;
+        sLastClampDist = 0;
+        return d;
+    }
 
     public boolean tap(int x, int y) {
-        if (RootShell.available(this) && RootShell.tap(x, y)) return true;
-        int[] c = clampXY(x, y);
+        int[] c = clampPoint(x, y);
+        if (RootShell.available(this) && RootShell.tap(c[0], c[1])) return true;
         Path p = new Path();
         p.moveTo(c[0], c[1]);
         GestureDescription.StrokeDescription stroke =
@@ -266,8 +278,8 @@ public class AgentA11yService extends AccessibilityService {
 
     public boolean longPress(int x, int y, int durMs) {
         if (durMs <= 0) durMs = 900;
-        if (RootShell.available(this) && RootShell.longPress(x, y, durMs)) return true;
-        int[] c = clampXY(x, y);
+        int[] c = clampPoint(x, y);
+        if (RootShell.available(this) && RootShell.longPress(c[0], c[1], durMs)) return true;
         Path p = new Path();
         p.moveTo(c[0], c[1]);
         GestureDescription.StrokeDescription stroke =
@@ -277,8 +289,9 @@ public class AgentA11yService extends AccessibilityService {
 
     public boolean swipe(int x1, int y1, int x2, int y2, int durMs) {
         if (durMs <= 0) durMs = 400;
-        if (RootShell.available(this) && RootShell.swipe(x1, y1, x2, y2, durMs)) return true;
-        int[] a = clampXY(x1, y1), b = clampXY(x2, y2);
+        // 起点只做屏幕边界 clamp（保留 edge_back 等边缘手势语义），终点做安全区 clamp
+        int[] a = clampBounds(x1, y1), b = clampPoint(x2, y2);
+        if (RootShell.available(this) && RootShell.swipe(a[0], a[1], b[0], b[1], durMs)) return true;
         Path p = new Path();
         p.moveTo(a[0], a[1]);
         p.lineTo(b[0], b[1]);
@@ -287,7 +300,22 @@ public class AgentA11yService extends AccessibilityService {
         return dispatch(new GestureDescription.Builder().addStroke(stroke).build());
     }
 
-    private int[] clampXY(int x, int y) {
+    /** 安全区 clamp（挖孔/曲面/系统栏回避）；开关关闭或 spec 未就绪时退化为屏幕边界 clamp。 */
+    private int[] clampPoint(int x, int y) {
+        DisplaySpec s = sSpec;
+        if (s != null && new Prefs(this).specClamp()) {
+            int[] r = s.clampTouch(x, y);
+            if (r[2] > 40) {
+                sLastClampDist = r[2];
+                Log.i(TAG, "clampTouch 修正 " + r[2] + "px: (" + x + "," + y + ") → (" + r[0] + "," + r[1] + ")");
+            }
+            return new int[]{ r[0], r[1] };
+        }
+        return clampBounds(x, y);
+    }
+
+    /** 仅屏幕边界 clamp（旧行为）。 */
+    private int[] clampBounds(int x, int y) {
         android.graphics.Rect b = getSystemService(android.view.WindowManager.class)
                 .getCurrentWindowMetrics().getBounds();
         return new int[]{ Math.max(0, Math.min(b.width() - 1, x)),

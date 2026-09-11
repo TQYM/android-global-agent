@@ -96,4 +96,12 @@ public final class Prefs {
     public void setPlannerModel(String m) { sp.edit().putString("planner_model", m).apply(); }
 
     public void setRootMode(String m) { sp.edit().putString("root_mode", m).apply(); }
+
+    // ---- 异形屏适配开关（回滚保护，默认开启） ----
+    /** 感知提示词注入屏幕形态（挖孔/曲面/安全区）。 */
+    public boolean specInject() { return sp.getBoolean("spec_inject", true); }
+    /** 手势落点 clamp 进安全触控区。 */
+    public boolean specClamp()  { return sp.getBoolean("spec_clamp", true); }
+    public void setSpecInject(boolean v) { sp.edit().putBoolean("spec_inject", v).apply(); }
+    public void setSpecClamp(boolean v)  { sp.edit().putBoolean("spec_clamp", v).apply(); }
 }

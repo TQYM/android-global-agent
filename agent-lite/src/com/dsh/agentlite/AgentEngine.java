@@ -425,6 +425,8 @@ public class AgentEngine {
             }
             String appHint = lastApp == null ? "" :
                     "（当前在应用 " + lastApp + " 内，其二级/三级页面都是它的一部分，不要因界面变化就返回或重启）\n";
+            // 异形屏适配 T2：屏幕形态注入（挖孔/曲面/系统栏/安全触控区）
+            String specHint = specHint(prefs);
 
             // 视觉：截图降采样为 ≤640px JPEG data URL；连续失败自动降级纯节点模式
             JSONObject perceive;
@@ -447,7 +449,7 @@ public class AgentEngine {
                         prompt = appHint + (visionForced
                                 ? "【纯视觉模式】该应用为受限应用，禁止读取界面结构——你只能看截图操作。" : "") +
                                 "该应用屏蔽了无障碍节点（节点表为空），只能看截图用比例坐标操作。\n" +
-                                "屏幕宽=" + wb.width() + " 高=" + wb.height() + "。\n" +
+                                "屏幕宽=" + wb.width() + " 高=" + wb.height() + "。" + specHint + "\n" +
                                 "tap/longpress 用 px,py（0~1 比例），swipe 用 px1,py1,px2,py2。\n" +
                                 "关键守则：\n" +
                                 "1. 点中心：点击目标按钮/搜索框/Tab 的几何中心，不要点在边缘；\n" +
@@ -457,8 +459,8 @@ public class AgentEngine {
                     } else {
                         visionOnly = visionForced;
                         prompt = appHint + (nodes.isEmpty()
-                                ? "当前屏幕无节点（加载中）。请 wait 等待。"
-                                : NodeInfo.toPrompt(nodes, 25));
+                                ? "当前屏幕无节点（加载中）。请 wait 等待。" + specHint
+                                : NodeInfo.toPrompt(nodes, 25) + specHint);
                     }
                     perceive = LlmClient.visionMsg("user", prompt + "\n\n附屏幕截图。", dataUrl);
                     pushScreen(bmp);
@@ -469,13 +471,13 @@ public class AgentEngine {
                         log("截图连续失败（系统限频），转为纯节点模式");
                     }
                     perceive = LlmClient.textMsg("user", nodes.isEmpty()
-                            ? "当前屏幕无节点且截图失败。请 wait 重试。"
-                            : NodeInfo.toPrompt(nodes, 25));
+                            ? "当前屏幕无节点且截图失败。请 wait 重试。" + specHint
+                            : NodeInfo.toPrompt(nodes, 25) + specHint);
                 }
             } else {
                 perceive = LlmClient.textMsg("user", appHint + (nodes.isEmpty()
-                        ? "当前屏幕无节点（加载中）。请 wait 等待。"
-                        : NodeInfo.toPrompt(nodes, 25)));
+                        ? "当前屏幕无节点（加载中）。请 wait 等待。" + specHint
+                        : NodeInfo.toPrompt(nodes, 25) + specHint));
             }
             messages.put(perceive);
 
@@ -591,6 +593,12 @@ public class AgentEngine {
             String nextMsg = guidePaste
                     ? "目标文字已写入剪贴板并已长按输入框。屏幕上应弹出了含「粘贴」的菜单——请立即 tap「粘贴」按钮完成输入（节点被屏蔽时用 px/py 比例坐标点它）。没弹菜单就再 longpress 一次输入框，或换其他方式。"
                     : "已执行动作，这是执行后的屏幕，请继续下一步（或 done）。";
+            // 异形屏适配 T2：上一步坐标被安全区修正过 → 告知模型避免重试循环
+            int clampDist = AgentA11yService.consumeClampDist();
+            if (clampDist > 40) {
+                nextMsg += "\n注意：上一步坐标落入挖孔/曲面/系统栏禁触区，已被自动向内修正 " + clampDist +
+                        "px。若该动作未生效，请基于修正后的位置重新给出坐标。";
+            }
             if (repeats >= 1) {
                 nextMsg = "警告：你已连续 " + (repeats + 1) + " 次执行完全相同但没有进展的动作。" +
                         "禁止重复执行！当前页面未发生变化，必须立即换策略：换用不同坐标、通过 scroll 翻页找目标，或者返回上一页重试。";
@@ -861,6 +869,17 @@ public class AgentEngine {
     }
 
     // ---- 语义理解前置（轻量规划模型：人话 → 结构化执行简报） ----
+
+    /**
+     * 异形屏适配 T2：屏幕形态注入片段（≤120 字）。
+     * 开关关闭或无障碍服务未连接（spec 未采集）时返回空串，等价旧行为。
+     */
+    private String specHint(Prefs prefs) {
+        if (prefs == null || !prefs.specInject()) return "";
+        DisplaySpec s = AgentA11yService.spec();
+        if (s == null) return "";
+        return "\n【屏幕形态】" + s.promptFragment() + "。";
+    }
 
     /** 用轻量规划模型把口语任务极速转成结构化执行提示（限制 120 字，秒级响应）。 */
     private String planTask(Prefs prefs, String task) {
