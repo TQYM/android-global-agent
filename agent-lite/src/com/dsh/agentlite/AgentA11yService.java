@@ -100,6 +100,11 @@ public class AgentA11yService extends AccessibilityService {
     /** 上一次 collectNodes 的节点引用（供 tapNode 直点用），下次收集时回收。 */
     private final java.util.Map<Integer, AccessibilityNodeInfo> nodeRefs = new java.util.HashMap<>();
 
+    /** 最近一次感知时「最上层应用窗口」的屏幕 bounds（分屏/小窗检测用；全屏时≈全屏）。 */
+    private static volatile android.graphics.Rect sActiveWinBounds;
+
+    public static android.graphics.Rect activeWinBounds() { return sActiveWinBounds; }
+
     /**
      * 感知当前屏幕全部应用窗口（合并多窗口：主窗口 + 弹窗/权限对话框），
      * 并排除本助手自己的界面/覆盖层——防止模型看到并误触自家胶囊/面板/卡片。
@@ -108,6 +113,7 @@ public class AgentA11yService extends AccessibilityService {
         List<NodeInfo> out = new ArrayList<>();
         releaseRefs();
         String self = getPackageName();
+        android.graphics.Rect topBounds = null;
         try {
             List<android.view.accessibility.AccessibilityWindowInfo> wins = getWindows();
             if (wins != null && !wins.isEmpty()) {
@@ -120,6 +126,11 @@ public class AgentA11yService extends AccessibilityService {
                     if (root == null) continue;
                     CharSequence pkg = root.getPackageName();
                     if (pkg != null && self.contentEquals(pkg)) { root.recycle(); continue; }
+                    if (topBounds == null) {   // 最上层非自身应用窗口 = 焦点操作窗口
+                        android.graphics.Rect wb = new android.graphics.Rect();
+                        w.getBoundsInScreen(wb);
+                        topBounds = wb;
+                    }
                     walk(root, out, 0);
                     root.recycle();
                 }
@@ -131,11 +142,37 @@ public class AgentA11yService extends AccessibilityService {
             AccessibilityNodeInfo root = getRootInActiveWindow();
             if (root != null) {
                 CharSequence pkg = root.getPackageName();
-                if (pkg == null || !self.contentEquals(pkg)) walk(root, out, 0);
+                if (pkg == null || !self.contentEquals(pkg)) {
+                    if (topBounds == null) {
+                        android.graphics.Rect wb = new android.graphics.Rect();
+                        root.getBoundsInScreen(wb);
+                        topBounds = wb;
+                    }
+                    walk(root, out, 0);
+                }
                 root.recycle();
             }
         }
+        sActiveWinBounds = topBounds;
         return out;
+    }
+
+    /** 是否检测到多个显示上有窗口（外接屏/折叠外屏）；仅统计，不操作其他屏。 */
+    public static boolean multiDisplay() {
+        try {
+            if (sInstance == null) return false;
+            android.util.SparseArray<List<android.view.accessibility.AccessibilityWindowInfo>> all =
+                    sInstance.getWindowsOnAllDisplays();
+            if (all == null) return false;
+            int displaysWithWindows = 0;
+            for (int i = 0; i < all.size(); i++) {
+                List<android.view.accessibility.AccessibilityWindowInfo> ws = all.valueAt(i);
+                if (ws != null && !ws.isEmpty()) displaysWithWindows++;
+            }
+            return displaysWithWindows > 1;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private void releaseRefs() {

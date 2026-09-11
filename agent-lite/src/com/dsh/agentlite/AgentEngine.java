@@ -874,11 +874,42 @@ public class AgentEngine {
      * 异形屏适配 T2：屏幕形态注入片段（≤120 字）。
      * 开关关闭或无障碍服务未连接（spec 未采集）时返回空串，等价旧行为。
      */
+    private String lastSpecFp = "";   // 上一步屏幕形态指纹（旋转/分屏变化检测）
     private String specHint(Prefs prefs) {
         if (prefs == null || !prefs.specInject()) return "";
         DisplaySpec s = AgentA11yService.spec();
         if (s == null) return "";
-        return "\n【屏幕形态】" + s.promptFragment() + "。";
+        StringBuilder sb = new StringBuilder("\n【屏幕形态】").append(s.promptFragment()).append("。");
+
+        // T4-1 形态变化检测：旋转/分屏/外屏切换 → 旧感知全部作废
+        String fp = s.fingerprint();
+        if (!lastSpecFp.isEmpty() && !fp.equals(lastSpecFp)) {
+            sb.append("\n⚠ 屏幕形态刚发生变化（旋转/分屏/外屏切换）：旧截图与旧节点编号全部作废，请基于本次最新感知重新决策。");
+        }
+        if (!fp.isEmpty()) lastSpecFp = fp;
+
+        // T4-2 分屏/小窗：焦点操作窗口非全屏 → 告知区域，防比例坐标按全屏估算错位
+        android.graphics.Rect wb = AgentA11yService.activeWinBounds();
+        if (wb != null && !wb.isEmpty()
+                && (wb.width() < s.width * 9 / 10 || wb.height() < s.height * 9 / 10)) {
+            sb.append("\n【分屏/小窗】当前操作窗口仅占屏幕").append(hintRegion(wb, s))
+              .append("。tap#index 直点仍有效；px/py 比例坐标按全屏计算，不要按窗口内部比例估计。");
+        }
+
+        // T4-3 多显示：只操作主屏，其他屏明确不支持
+        if (AgentA11yService.multiDisplay()) {
+            sb.append("\n【多屏】检测到多个显示（外接屏/折叠外屏），本助手只操作主屏，其他屏上的目标请改用主屏完成。");
+        }
+        return sb.toString();
+    }
+
+    /** 焦点窗口在屏幕中的区域描述（左半/右半/上半/下半/自定义）。 */
+    private String hintRegion(android.graphics.Rect wb, DisplaySpec s) {
+        if (wb.right <= s.width / 2) return "左半";
+        if (wb.left >= s.width / 2) return "右半";
+        if (wb.bottom <= s.height / 2) return "上半";
+        if (wb.top >= s.height / 2) return "下半";
+        return wb.width() + "×" + wb.height() + " 区域 " + wb.flattenToString();
     }
 
     /** 用轻量规划模型把口语任务极速转成结构化执行提示（限制 120 字，秒级响应）。 */
