@@ -279,6 +279,9 @@ PC (Mac/Win) ── hdc (USB/WiFi) ──> 鸿蒙 NEXT 设备
 | 手势导航探测 | ✅ 手势模式识别（framework 资源 + 启发式） |
 | 端到端任务（内置 key，qwen3.5-omni-plus） | ✅ 「open_settings」13 步完成：规划→感知→截图→直点/滑动→完成卡片 |
 | 截图尺寸一致性校验 | ✅ 全程无告警（截图=spec 尺寸） |
+| S5 分屏（settings 上 + agent-lite 下，windowingMode 3/4） | ✅ 任务 3 步完成；模拟器 split 下 `getWindows()` 仅暴露自身窗口 → 纯视觉兜底正常；**分屏窗口区域注入留真机验证**（模拟器窗口 bounds 报告全屏，无法覆盖） |
+| S7 深色模式（`cmd uimode night yes`） | ✅ 任务 3 步完成，截图亮度 44 感知正常 |
+| 感知注入可观测 | ✅ specHint 变化时 `logcat -s AgentA11y` 可见完整注入内容（挖孔/瀑布/安全区/形态告警） |
 
 **模拟器验证暴露并已修复**：无窗口进程（A11y 服务）的 `WindowMetrics` 不暴露 waterfall side insets → 增补覆盖层窗口 `OnApplyWindowInsets` 回填通道（commit a50503a）。
 
