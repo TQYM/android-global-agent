@@ -64,6 +64,17 @@ public final class DisplaySpec {
     private static long sLastCollectMs;
     private static final long REFRESH_MS = 500;   // 节流：500ms 内不重复采集
 
+    // ---- 瀑布禁触区回填（来自 OverlayController 全屏窗口 insets 回调） ----
+    // 无窗口进程（A11y 服务）的 WindowMetrics 不暴露 waterfall side insets，
+    // 覆盖层窗口（NO_LIMITS + SHORT_EDGES）的 DisplayCutout.getWaterfallInsets() 是公开可达通道。
+    private static volatile int sWfL, sWfT, sWfR, sWfB;
+
+    public static void setWaterfallFallback(int l, int t, int r, int b) {
+        if (l == sWfL && t == sWfT && r == sWfR && b == sWfB) return;
+        sWfL = l; sWfT = t; sWfR = r; sWfB = b;
+        sLastCollectMs = 0;   // 值变化 → 强制下次重采集
+    }
+
     public static DisplaySpec last() { return sLast; }
 
     /** 采集（500ms 节流）；返回最新值。 */
@@ -145,8 +156,21 @@ public final class DisplaySpec {
                         if (r != null && !r.isEmpty()) s.cutout.add(new Rect(r));
                     }
                 }
+                // 补充通道：无窗口进程里 getWaterfallInsets 可能返回 0，
+                // 而瀑布区同时体现在 displayCutout insets 的 side（模拟器/部分 ROM 实测）
+                Insets dcSide = ins.getInsets(WindowInsets.Type.displayCutout());
+                if (dcSide != null) {
+                    if (s.waterfallL <= 0 && dcSide.left > 0) s.waterfallL = dcSide.left;
+                    if (s.waterfallR <= 0 && dcSide.right > 0) s.waterfallR = dcSide.right;
+                }
             } catch (Throwable t) { }
         }
+
+        // 瀑布回填通道（overlay 窗口 insets 回调）：本进程 WindowMetrics 拿不到时兜底
+        if (s.waterfallL <= 0) s.waterfallL = sWfL;
+        if (s.waterfallT <= 0) s.waterfallT = sWfT;
+        if (s.waterfallR <= 0) s.waterfallR = sWfR;
+        if (s.waterfallB <= 0) s.waterfallB = sWfB;
 
         // 导航模式：framework 资源探测（@hide config_navBarInteractionMode），失败启发式
         s.gestureNav = probeGestureNav(ctx, s);

@@ -609,6 +609,20 @@ public class OverlayController {
     private void ensureGlow() {
         if (glowView != null) return;
         glowView = new ScreenGlowView(svc);
+        // 异形屏适配：全屏窗口的 insets 回调含瀑布禁触区（无窗口进程的 WindowMetrics 不暴露），
+        // 回填 DisplaySpec，供 clampTouch/感知注入使用
+        glowView.setOnApplyWindowInsetsListener((v, insets) -> {
+            try {
+                android.view.DisplayCutout dc = insets.getDisplayCutout();
+                if (dc != null) {
+                    android.graphics.Insets wf = dc.getWaterfallInsets();
+                    if (wf != null && (wf.left > 0 || wf.right > 0)) {
+                        DisplaySpec.setWaterfallFallback(wf.left, wf.top, wf.right, wf.bottom);
+                    }
+                }
+            } catch (Throwable t) { }
+            return insets;
+        });
         wm.addView(glowView, lpFull(FLAGS_PASS));
     }
 
