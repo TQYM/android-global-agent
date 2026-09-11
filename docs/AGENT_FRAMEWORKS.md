@@ -12,8 +12,7 @@
 | 每步都要过一遍多模态模型，贵且慢 | XML 一次 dump（1–3 s）全程复用 |
 | FLAG_SECURE 黑屏即失明 | 语义树对 FLAG_SECURE 仍可见（截图黑是预期） |
 
-上一章的 shell 后端（[SHELL_BACKEND.md](SHELL_BACKEND.md)）保留为设备端
-常驻引擎的最小内核；日常任务自动化建议直接用下面的路线 A 或 B。
+旧的 C++ shell 后端与 AOSP 集成骨架已随整理移除；日常任务自动化建议直接用下面的路线 A 或 B。
 
 ## 路线 A：DSH 直驱（零框架，agent 即框架）
 
