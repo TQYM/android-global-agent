@@ -121,3 +121,31 @@ $HDC list targets                                               # → 127.0.0.1:
 NEXT 上三方无障碍服务不开放 → 设备端原生 App 路线冻结，改用 **PC 侧 Agent + HDC 通道**驱动，
 业界已有成熟先例（Open-AutoGLM PR#221、codeskyblue/uiautodev HarmonyOS Driver）。
 详见 `docs/HARMONY_NEXT_EVAL.zh-CN.md`。
+
+---
+
+## 7. 鸿蒙手表（wearable）验证记录（2026-09-12）
+
+手表镜像同样可命令行获取：`$EMU -install -deviceType wearable -osVersion "HarmonyOS 7.0.0(26.0.0)"`（954MB），
+`$EMU -create HarmonyWatch -deviceType wearable ...` → `$EMU -start HarmonyWatch -noWindow`。
+两台模拟器可同时在线（phone 5555 / watch 5557），用 `--serial` 区分。
+
+**屏幕形态：圆形表盘 466×466**（与 Android OPPO Watch 同几何）。判据（截图像素分析）：
+四角亮度 0、四边中点亮度 229-232、**对角线首个亮像素 68px**，与理论值 `466/2×(1−1/√2)=68.3px` 精确吻合。
+
+| 能力 | 手表实测 |
+|---|---|
+| probe 5/5 | ✅ list_targets / screen_size(466×466) / dumpLayout / collect_nodes / screenshot 全通过 |
+| 应用内节点 | ✅ 有文本（`设置/WLAN/已关闭/系统`），子树聚合生效（`'WLAN / 已关闭'`） |
+| 布局特征 | 弧形列表 `ArcList`，项沿圆弧排列（y=232→369→446，x 居中 233） |
+| 启动应用 | ⚠️ 需精确 bundle+ability：`aa start -b com.huawei.hmos.settings -a com.huawei.hmos.settings.MainAbility`<br>（`-a EntryAbility` 报 ability 不存在；`watch.intent.action.hybrid` 隐式启动报不存在） |
+| **表盘/桌面节点** | ❌ **无文本**（仅图形图标，9 个空节点）→ 纯节点模式在手表桌面不可用，**需要视觉模式** |
+| 滑动 | 设置"系统"页仅"重新启动"一项（无可滚内容，swipe 无变化属正常）；命令返回一条 i18n 权限 I/O 提示（不影响返回码） |
+
+**手表端到端任务实测**：
+- ✅ 「进入 WLAN 页面查看开关状态，然后返回设置主页」3 步完成（tap WLAN → 读状态"已关闭" → back → 真实返回）
+- ⚠️ 「进入系统页面，看看有哪些选项并告诉我，然后返回」失败（该页只有"重新启动"一项，模型无"看完"信号 → 卡死）。
+  结论：**信息型任务的完成判定需在 prompt 里明确"读完即 done"**，否则模型会找不到终止条件。
+
+**下一步（手表方向）**：① 视觉模式（截图 → 多模态模型，解决表盘无文本）；② 手表应用启动映射表（bundle+ability 白名单）；
+③ 信息型任务的终止条件提示。
