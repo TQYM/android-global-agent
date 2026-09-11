@@ -68,12 +68,18 @@ agent-lite 内置 `DisplaySpec` 屏幕形态采集（零 root，基于 WindowMet
 | 直板无挖孔（矩形） | 全字段为 0/默认 | 与旧版完全一致，注入/clamp 退化为空操作 | ✅ 实测（荣耀平板） |
 | 中置/左/右挖孔、药丸、刘海 | cutout rects 精确采集 | 挖孔区触点自动下移回避；提示词标注挖孔位置与「该区域触摸无效」 | ✅ 已实现，待真机矩阵回归 |
 | 瀑布/曲面屏 | WaterfallInsets（API 30 公开通道 DisplayCutout.getWaterfallInsets） | 左右禁触区落点向内 clamp；提示词标注禁触区宽度 | ✅ 已实现，待曲面真机验证 |
+| **圆形表盘（手表）** | `Configuration.isScreenRound()`（公开 API 23+） | safe 取内接正方形；clampTouch 专用径向修正（超出内切圆留 12dp 沿半径拉回，圆上下窄条保留可点）；提示词注入「四角无显示、px/py 禁止四角与边缘」 | ✅ **实测（OPPO Watch OWW261，466×466@320dpi，Android 11）**：spec=圆形 R=233、safe [69,69,397,397]、单测 7/7、端到端任务跑通（圆形提示正确注入 LLM） |
 | 手势导航 | navBar 高度 + framework 资源探测 | 底部保底 24dp 手势区不注入手势 | ✅ 已实现 |
 | 三键导航 | navBar insets | 底部导航区不注入手势 | ✅ 已实现 |
 | 分屏/小窗 | 最上层应用窗口 bounds 实时记录 | 提示词注入窗口区域（左/右/上/下半），px/py 按全屏计 | ✅ 已实现，待平板分屏实测 |
 | 旋转（横竖切换） | 形态指纹变化检测 | 旧截图/旧节点编号作废告警，强制重新观察 | ✅ 已实现，待实测 |
 | 多显示（外接/折叠外屏） | getWindowsOnAllDisplays 统计 | 明确只操作主屏，其他屏报「不支持」而非乱点 | ✅ 已实现 |
 | 折叠屏动态切换 | — | 本期不做（规划 P2 观察项） | ⏸ 规划中 |
+
+**手表（Wear 类设备）已知限制**（2026-09-11 OWW261 实测）：
+- Agent 核心链路（服务绑定/感知/截图/手势/LLM/注入）全通；adb 起任务 `am start -n com.dsh.agentlite/.MainActivity --es task <t> --ez auto_run true`（任务文本避免空格）
+- **UI 布局未适配手表**：手机布局无滚动，任务输入区（etTask/btnRun）在 466px 高度屏外，右上配置钮超圆 56px 半不可点——手表上请一律用 adb auto_run 入口；手表专用 UI 待规划
+- OPPO 桌面不提供 a11y 节点树（感知 0 节点）→ 纯视觉模式自动接管（正常工作）
 
 **回滚开关**（SharedPreferences，默认开）：`spec_inject`（形态注入）、`spec_clamp`（落点 clamp），
 关掉即回到 2026-09-06 行为。设备形态可在 App 配置页「设备形态」卡实时核对，「坐标校准」
