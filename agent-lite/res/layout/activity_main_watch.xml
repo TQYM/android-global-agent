@@ -1,10 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  手表主页面（极简版）：状态行 + 语音大钮 + 打字输入 + 运行 + 设置入口。
-   · 圆形表盘 / 方形表：边距由 values-round / values 两档 dimens 自适应
-   · 主页不含日志、截图、历史、记忆、省电、授权——历史/记忆/省电/授权在设置页
-     （WatchSettingsActivity），日志与截图手表端不提供
-   · 手机端仍用 activity_main.xml，由 MainActivity.isWatchUi() 自动切换
+  手表专用布局（Wear 类设备：圆形表盘 / 方形表）
+  由 MainActivity 运行时按形态选择（isWatchUi()）：圆形屏 或 边长 < 320dp
+  设计要点：
+   - 全部 id 与 activity_main.xml 一致（代码零改动，findViewById 不落空）
+   - 水平内缩 @dimen/watch_edge：圆形表 24dp（内接方形内），方形表 8dp
+   - 内容垂直堆叠 + ScrollView：466px 圆屏也能滚到每个区块
+   - 触控目标 ≥ 42dp，字号按手表可读性收敛（标题 15sp / 正文 10sp）
 -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/rootLayout"
@@ -14,109 +16,176 @@
     android:fillViewport="true"
     android:scrollbars="none">
 
+<LinearLayout
+    android:orientation="vertical"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:paddingLeft="@dimen/watch_edge"
+    android:paddingRight="@dimen/watch_edge"
+    android:paddingTop="@dimen/watch_edge_v"
+    android:paddingBottom="@dimen/watch_edge_v">
+
+    <!-- 顶栏：标题 + 设置 -->
     <LinearLayout
-        android:orientation="vertical"
+        android:orientation="horizontal"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:gravity="center_horizontal"
-        android:paddingLeft="@dimen/watch_edge"
-        android:paddingRight="@dimen/watch_edge"
-        android:paddingTop="@dimen/watch_pad_v"
-        android:paddingBottom="@dimen/watch_pad_v">
+        android:gravity="center_vertical">
 
-        <!-- 顶行：状态（圆形屏顶部窄条只在中部宽度足够，状态文字居中） -->
+        <LinearLayout
+            android:orientation="vertical"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="wrap_content">
+            <TextView
+                android:text="Agent Lite"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="@color/color_on_surface"
+                android:textSize="15sp"
+                android:fontFamily="sans-serif-medium"
+                android:textStyle="bold"/>
+            <TextView
+                android:text="手表版"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="@color/color_on_surface_variant"
+                android:textSize="9sp"/>
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/btnConfig"
+            android:layout_width="wrap_content"
+            android:layout_height="40dp"
+            android:text="设置"
+            android:textSize="11sp"
+            android:textColor="@color/color_on_surface"
+            android:background="@drawable/btn_ghost"
+            android:paddingLeft="14dp"
+            android:paddingRight="14dp"
+            android:minWidth="0dp"
+            android:minHeight="0dp"/>
+    </LinearLayout>
+
+    <!-- 状态行：无障碍 / 运行状态 -->
+    <LinearLayout
+        android:orientation="horizontal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:gravity="center_vertical">
         <TextView
             android:id="@+id/tvStatus"
             android:text="就绪"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_gravity="center_horizontal"
             android:textColor="@color/color_on_surface_variant"
-            android:textSize="13sp"
-            android:maxLines="1"
-            android:ellipsize="end"/>
-
-        <!-- 无障碍未开启提示（点击直达系统开启页；开启后代码置 GONE） -->
+            android:textSize="10sp"/>
         <TextView
             android:id="@+id/tvA11y"
-            android:text="无障碍未开启"
-            android:layout_width="wrap_content"
+            android:text="无障碍：检测中"
+            android:layout_width="0dp"
+            android:layout_weight="1"
             android:layout_height="wrap_content"
-            android:layout_marginTop="2dp"
-            android:layout_gravity="center_horizontal"
-            android:textColor="#F59E0B"
-            android:textSize="11sp"
-            android:maxLines="1"/>
+            android:layout_marginLeft="8dp"
+            android:textColor="@color/color_on_surface_variant"
+            android:textSize="10sp"/>
+    </LinearLayout>
 
-        <!-- 语音大钮 + 设置入口：置于圆最宽处，二者均完全落在圆内 -->
+    <!-- 无障碍未开启横幅（代码按状态显示） -->
+    <LinearLayout
+        android:id="@+id/a11yBanner"
+        android:orientation="vertical"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:padding="10dp"
+        android:background="@drawable/bg_card">
+        <TextView
+            android:text="无障碍服务未开启，Agent 无法操作手表"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="@color/color_on_surface"
+            android:textSize="10sp"/>
         <LinearLayout
             android:orientation="horizontal"
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="@dimen/watch_gap"
-            android:layout_gravity="center_horizontal"
-            android:gravity="center_vertical">
-
+            android:layout_marginTop="6dp">
             <Button
-                android:id="@+id/btnMic"
-                android:text="语音"
-                android:layout_width="@dimen/watch_mic_size"
-                android:layout_height="@dimen/watch_mic_size"
-                android:textSize="15sp"
-                android:textStyle="bold"
-                android:textColor="#FFFFFF"
-                android:background="@drawable/bg_watch_circle"
-                android:paddingLeft="0dp"
-                android:paddingRight="0dp"
+                android:id="@+id/btnA11yBanner"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="42dp"
+                android:text="一键开启"
+                android:textSize="12sp"
+                android:textColor="@color/color_on_surface"
+                android:background="@drawable/btn_primary"
                 android:minWidth="0dp"
                 android:minHeight="0dp"/>
-
             <Button
-                android:id="@+id/btnWatchSettings"
-                android:text="设置"
-                android:layout_width="46dp"
-                android:layout_height="46dp"
-                android:layout_marginLeft="10dp"
-                android:textSize="11sp"
+                android:id="@+id/btnA11y"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="42dp"
+                android:layout_marginLeft="6dp"
+                android:text="系统无障碍"
+                android:textSize="12sp"
                 android:textColor="@color/color_on_surface"
-                android:background="@drawable/bg_watch_ghost"
-                android:paddingLeft="0dp"
-                android:paddingRight="0dp"
+                android:background="@drawable/btn_ghost"
                 android:minWidth="0dp"
                 android:minHeight="0dp"/>
         </LinearLayout>
+    </LinearLayout>
 
-        <!-- 打字输入 -->
-        <EditText
-            android:id="@+id/etTask"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="@dimen/watch_gap"
-            android:hint="打字下达指令"
+        <!-- ===== 极简主页：仅保留 状态/无障碍横幅/任务输入/语音/运行 =====
+             历史、记忆、省电、授权、模型配置、设备形态一律移入设置页（WatchSettingsActivity）；
+             日志与截图手表端不提供。样式沿用原设计语言（btn_ghost/btn_primary/bg_input/bg_card）。 -->
+
+    <!-- 任务下达：输入框全宽 + 语音/运行两个大按钮（圆屏下垂直堆叠不挤出圆外） -->
+    <EditText
+        android:id="@+id/etTask"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:hint="下达指令，如：打开天气"
+        android:textSize="12sp"
+        android:minLines="1"
+        android:maxLines="2"
+        android:textColor="@color/color_on_surface"
+        android:textColorHint="@color/color_text_hint"
+        android:background="@drawable/bg_input"
+        android:padding="10dp"/>
+
+    <LinearLayout
+        android:orientation="horizontal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:layout_marginBottom="4dp">
+        <Button
+            android:id="@+id/btnMic"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="46dp"
+            android:text="语音"
             android:textSize="13sp"
-            android:minLines="1"
-            android:maxLines="2"
-            android:inputType="text"
             android:textColor="@color/color_on_surface"
-            android:textColorHint="@color/color_text_hint"
-            android:background="@drawable/bg_input"
-            android:paddingLeft="12dp"
-            android:paddingRight="12dp"
-            android:paddingTop="8dp"
-            android:paddingBottom="8dp"/>
-
-        <!-- 运行 / 停止 -->
+            android:background="@drawable/btn_ghost"
+            android:minWidth="0dp"
+            android:minHeight="0dp"/>
         <Button
             android:id="@+id/btnRun"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="46dp"
+            android:layout_marginLeft="8dp"
             android:text="运行"
-            android:layout_width="match_parent"
-            android:layout_height="40dp"
-            android:layout_marginTop="8dp"
-            android:layout_marginBottom="2dp"
-            android:textSize="14sp"
-            android:textColor="#FFFFFF"
+            android:textSize="13sp"
+            android:textColor="@color/color_on_surface"
             android:background="@drawable/btn_primary"
             android:minWidth="0dp"
             android:minHeight="0dp"/>
     </LinearLayout>
+</LinearLayout>
 </ScrollView>

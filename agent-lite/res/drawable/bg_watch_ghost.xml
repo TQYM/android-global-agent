@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- 手表小圆钮（设置/图标类）：低调底 + 圆形 -->
-<shape xmlns:android="http://schemas.android.com/apk/res/android"
-    android:shape="oval">
-    <solid android:color="@color/color_surface_variant" />
-</shape>

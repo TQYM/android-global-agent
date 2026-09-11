@@ -5,8 +5,5 @@
     <dimen name="watch_edge_v">6dp</dimen>     <!-- 手表布局垂直安全边距 -->
     <dimen name="watch_preview_h">110dp</dimen> <!-- 屏幕预览高度上限（手机布局遗留值） -->
     <dimen name="watch_log_h">90dp</dimen>     <!-- 调试日志区高度（手机布局遗留值） -->
-    <dimen name="watch_pad_v">10dp</dimen>     <!-- 极简主页垂直内边距 -->
-    <dimen name="watch_gap">8dp</dimen>        <!-- 极简主页元素间距 -->
-    <dimen name="watch_mic_size">72dp</dimen>  <!-- 语音大钮直径 -->
+    <dimen name="watch_pad_v">10dp</dimen>     <!-- 设置页垂直内边距 -->
 </resources>
-

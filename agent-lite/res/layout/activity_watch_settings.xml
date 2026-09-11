@@ -21,34 +21,53 @@
         android:paddingTop="@dimen/watch_pad_v"
         android:paddingBottom="@dimen/watch_pad_v">
 
-        <!-- 顶行：标题 + 返回 -->
+        <!-- 顶栏：沿用主布局设计语言（Agent Lite 标题 + 副标题 + 右侧按钮） -->
         <LinearLayout
             android:orientation="horizontal"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:gravity="center_vertical">
-            <TextView
-                android:text="设置"
+            <LinearLayout
+                android:orientation="vertical"
                 android:layout_width="0dp"
                 android:layout_weight="1"
-                android:layout_height="wrap_content"
-                android:textColor="@color/color_on_surface"
-                android:textSize="14sp"
-                android:textStyle="bold"/>
+                android:layout_height="wrap_content">
+                <TextView
+                    android:text="Agent Lite"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/color_on_surface"
+                    android:textSize="15sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:textStyle="bold"/>
+                <TextView
+                    android:text="设置"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/color_on_surface_variant"
+                    android:textSize="9sp"/>
+            </LinearLayout>
             <Button
                 android:id="@+id/btnBack"
                 android:text="返回"
-                android:layout_width="48dp"
-                android:layout_height="30dp"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
                 android:textSize="11sp"
                 android:textColor="@color/color_on_surface"
-                android:background="@drawable/bg_watch_ghost"
-                android:paddingLeft="0dp"
-                android:paddingRight="0dp"
+                android:background="@drawable/btn_ghost"
+                android:paddingLeft="14dp"
+                android:paddingRight="14dp"
                 android:minWidth="0dp"
                 android:minHeight="0dp"/>
         </LinearLayout>
 
+                <LinearLayout
+            android:orientation="vertical"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:padding="10dp"
+            android:background="@drawable/bg_card">
         <!-- ===== 一、模型配置 ===== -->
         <TextView
             android:text="模型配置"
@@ -198,6 +217,15 @@
             android:textColor="@color/color_on_surface_variant"
             android:textSize="10sp"/>
 
+        </LinearLayout>
+
+                <LinearLayout
+            android:orientation="vertical"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:padding="10dp"
+            android:background="@drawable/bg_card">
         <!-- ===== 二、数据与策略（历史/记忆/省电/授权） ===== -->
         <TextView
             android:text="数据与策略"
@@ -255,6 +283,15 @@
             android:minWidth="0dp"
             android:minHeight="0dp"/>
 
+        </LinearLayout>
+
+                <LinearLayout
+            android:orientation="vertical"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:padding="10dp"
+            android:background="@drawable/bg_card">
         <!-- ===== 三、权限与授权 ===== -->
         <TextView
             android:text="权限与授权"
@@ -288,6 +325,15 @@
             android:minWidth="0dp"
             android:minHeight="0dp"/>
 
+        </LinearLayout>
+
+                <LinearLayout
+            android:orientation="vertical"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:padding="10dp"
+            android:background="@drawable/bg_card">
         <!-- ===== 四、设备形态 ===== -->
         <TextView
             android:text="设备形态"
@@ -338,5 +384,7 @@
                 android:minWidth="0dp"
                 android:minHeight="0dp"/>
         </LinearLayout>
+        </LinearLayout>
+
     </LinearLayout>
 </ScrollView>

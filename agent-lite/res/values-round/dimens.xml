@@ -9,9 +9,6 @@
     <dimen name="watch_edge_v">48dp</dimen>
     <dimen name="watch_preview_h">88dp</dimen>
     <dimen name="watch_log_h">72dp</dimen>
-    <!-- 极简主页（语音+打字）：内容集中在圆内接方形内。
-         OWW261 可用高度 233dp：12+30+14+6+64+6+38+8+40+12 ≈ 230dp，ScrollView 兜底 -->
-    <dimen name="watch_pad_v">12dp</dimen>
-    <dimen name="watch_gap">6dp</dimen>
-    <dimen name="watch_mic_size">64dp</dimen>
+    <!-- 设置页垂直内边距（圆屏下顶栏需收进内接方形，同顶部边距策略） -->
+    <dimen name="watch_pad_v">48dp</dimen>
 </resources>

@@ -208,14 +208,16 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
     }
 
     private void wire() {
-        // ---- 手表极简主页：只连 语音 / 运行 / 设置入口 / 无障碍提示 ----
+        // ---- 手表极简主页：只连 设置入口 / 任务输入 / 语音 / 运行 / 无障碍引导 ----
         // 历史、记忆、省电、授权、模型配置、设备形态均在 WatchSettingsActivity；
-        // 日志与截图手表端不提供。
+        // 日志与截图手表端不提供。样式沿用原设计语言（顶栏/卡片/按钮不变）。
         if (watchUi) {
-            find(R.id.btnWatchSettings).setOnClickListener(v ->
+            find(R.id.btnConfig).setOnClickListener(v ->
                     startActivity(new android.content.Intent(this, WatchSettingsActivity.class)));
             btnRun.setOnClickListener(v -> onRunClicked());
             btnMic.setOnClickListener(v -> toggleMic());
+            find(R.id.btnA11yBanner).setOnClickListener(v -> openA11ySettingsDirectly());
+            find(R.id.btnA11y).setOnClickListener(v -> openA11ySettingsDirectly());
             tvA11y.setOnClickListener(v -> openA11ySettingsDirectly());
             return;
         }
