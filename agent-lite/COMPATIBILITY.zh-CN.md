@@ -76,11 +76,21 @@ agent-lite 内置 `DisplaySpec` 屏幕形态采集（零 root，基于 WindowMet
 | 多显示（外接/折叠外屏） | getWindowsOnAllDisplays 统计 | 明确只操作主屏，其他屏报「不支持」而非乱点 | ✅ 已实现 |
 | 折叠屏动态切换 | — | 本期不做（规划 P2 观察项） | ⏸ 规划中 |
 
-**手表（Wear 类设备）已知限制**（2026-09-11 OWW261 实测）：
-- Agent 核心链路（服务绑定/感知/截图/手势/LLM/注入）全通；adb 起任务 `am start -n com.dsh.agentlite/.MainActivity --es task <t> --ez auto_run true`（任务文本避免空格）
-- **UI 浏览可达（d400325）**：主布局 ScrollView 化后配置区/校准卡/输入行滚动可达；但 etTask 在 OPPO Wear ROM 上实测宽 42px（weight 行水平测量异常，待查），**手表起任务仍推荐 adb auto_run 入口**
+**手表（Wear 类设备）UI 适配**（commit 0cd53b9；2026-09-11 实测）：
+- **形态自动切换**：`isWatchUi()` = `UI_MODE_TYPE_WATCH` ∥ `isScreenRound()` ∥ 最小边<320dp → 使用 `activity_main_watch.xml`（手机/平板不受影响，走原布局）
+- **圆形表盘档**（`values-round/dimens.xml`，OWW261 466×466@320dpi 实测）：
+  - 几何依据：R=233px，内接方形半边 164.7px → 水平边距 24dp；右上角按钮右缘 x=418 处安全 y≥91px → 顶部边距 48dp
+  - 实测入圆：btnConfig [318,96][418,176] ✓、功能按钮行 ✓、etTask 全宽居中（中心距圆心 6px）✓、btnMic/btnRun 仅 3px 角裁（中心完全可点）
+- **方形表档**（`values/dimens.xml`，模拟器 466×466@320dpi 非圆形实测）：边距收窄至 8dp/6dp，全部控件可用（无圆弧裁切）
+- 触摸目标 ≥ 42dp、字号收敛（标题 15sp/正文 10sp）、任务区垂直堆叠（圆形屏下横排会挤出圆外）
+- 滚动内容（形态卡/预览区）经过顶部/底部弧区时部分超圆——滚动视口固有特性，滚至中央即完全入圆
+
+**手表已知限制 / 运维要点**：
+- adb 起任务：`am start -n com.dsh.agentlite/.MainActivity --es task <t> --ez auto_run true`（任务文本避免空格，adb shell 会吃掉引号）
 - OPPO 桌面不提供 a11y 节点树（感知 0 节点）→ 纯视觉模式自动接管（正常工作）
-- force-stop 后无障碍绑定会丢且 stopped 状态阻止自启：先 `am start` 主界面清 stopped，再 `settings delete` + `settings put` enabled_accessibility_services 重绑
+- force-stop 后绑定丢失且 stopped 阻止自启：先 `am start` 清 stopped，再 `settings delete` + `settings put`
+- 反复 force-stop/toggle 后 OPPO 框架可能进入 Crashed 且无法再绑定（无 Java 异常栈）→ **卸载重装即恢复**（0cd53b9 期间实测）
+- OPPO Wear ROM 上手机布局的 etTask 实测宽 42px（weight 行测量怪癖）→ 手表专用布局已绕过该问题
 
 **回滚开关**（SharedPreferences，默认开）：`spec_inject`（形态注入）、`spec_clamp`（落点 clamp），
 关掉即回到 2026-09-06 行为。设备形态可在 App 配置页「设备形态」卡实时核对，「坐标校准」
