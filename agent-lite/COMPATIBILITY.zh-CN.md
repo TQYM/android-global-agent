@@ -94,8 +94,16 @@ agent-lite 内置 `DisplaySpec` 屏幕形态采集（零 root，基于 WindowMet
 - adb 起任务：`am start -n com.dsh.agentlite/.MainActivity --es task <t> --ez auto_run true`（任务文本避免空格，adb shell 会吃掉引号）
 - OPPO 桌面不提供 a11y 节点树（感知 0 节点）→ 纯视觉模式自动接管（正常工作）
 - force-stop 后绑定丢失且 stopped 阻止自启：先 `am start` 清 stopped，再 `settings delete` + `settings put`
-- 反复 force-stop/toggle 后 OPPO 框架可能进入 Crashed 且无法再绑定（无 Java 异常栈）→ **卸载重装即恢复**（0cd53b9 期间实测）
+- **系统页显示「无法运行」的两大成因与恢复**（commit 6fb08fc 修复后 App 内可直接识别）：
+  ① 无障碍总开关被关（`accessibility_enabled=0`）；② 服务进程被强杀后残留 crashed 标记。
+  恢复：`settings put secure accessibility_enabled 1` → `settings delete secure enabled_accessibility_services`
+  → `settings put secure enabled_accessibility_services com.dsh.agentlite/com.dsh.agentlite.AgentA11yService`
+  （App 内：设置页「无障碍服务」按钮会显示「未连接（点此重开）」并直达系统页）
+- **无障碍跳转策略**（`A11yLauncher`，手机/手表共用）：只走可导出组件。手表 ROM 上带 data 的
+  `ACCESSIBILITY_DETAILS_SETTINGS` 无法解析、`com.android.settings/.SubSettings` 未导出（直连会
+  Permission Denial）→ 实际落到 `ACTION_ACCESSIBILITY_SETTINGS`（OWW261 实测一次到位）
 - OPPO Wear ROM 上手机布局的 etTask 实测宽 42px（weight 行测量怪癖）→ 手表专用布局已绕过该问题
+- 稳定性检查脚本：`python3 tests/watch_check10.py [serial] [rounds]`（服务状态/无障碍跳转/主页 UI/设置页/端到端任务）
 
 **回滚开关**（SharedPreferences，默认开）：`spec_inject`（形态注入）、`spec_clamp`（落点 clamp），
 关掉即回到 2026-09-06 行为。设备形态可在 App 配置页「设备形态」卡实时核对，「坐标校准」

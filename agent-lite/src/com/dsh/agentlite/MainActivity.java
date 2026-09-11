@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 package com.dsh.agentlite;
 
 import android.Manifest;
@@ -377,12 +379,32 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
             return;
         }
         if (AgentA11yService.get() == null) {
-            toast("请先开启无障碍服务");
-            refreshA11y();
+            // 服务可能刚被系统重绑（例：刚从无障碍设置页返回）——短暂等待重试，
+            // 避免带着空感知启动任务（10 轮检查第 3 轮实测：会让模型看到「未开启」提示而误判失败）
+            toast("无障碍服务正在连接…");
+            waitA11yThenRun(task, 0);
             return;
         }
         engine.start(task);
         toast("任务已启动，可上滑划出，灵动岛将实时显示进度");
+    }
+
+    /**
+     * 等待无障碍服务就绪后再启动任务（最多 6 秒）。
+     * 系统在无障碍设置页往返 / 进程回收后会短暂解绑再重绑服务，立即启动会拿到空感知。
+     */
+    private void waitA11yThenRun(String task, int tries) {
+        if (AgentA11yService.get() != null) {
+            engine.start(task);
+            toast("任务已启动，可上滑划出，灵动岛将实时显示进度");
+            return;
+        }
+        if (tries >= 6) {
+            toast("无障碍服务未连接：请在设置中重新开启");
+            refreshA11y();
+            return;
+        }
+        ui.postDelayed(() -> waitA11yThenRun(task, tries + 1), 1000);
     }
 
     private void toggleMic() {
