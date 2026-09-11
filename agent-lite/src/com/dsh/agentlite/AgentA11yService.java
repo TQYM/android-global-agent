@@ -33,6 +33,17 @@ public class AgentA11yService extends AccessibilityService {
     private static volatile AgentA11yService sInstance;
     private static long sLastShotMs;
 
+    /** 屏幕形态（异形屏适配 T1）：服务连接时采集，事件流 2s 节流刷新。 */
+    private static volatile DisplaySpec sSpec;
+    private static long sLastSpecMs;
+
+    public static DisplaySpec spec() { return sSpec; }
+
+    /** 强制重采集（配置页设备形态卡「刷新」按钮）。 */
+    public static void refreshSpec() {
+        if (sInstance != null) sSpec = DisplaySpec.refresh(sInstance);
+    }
+
     /** 代理可见性覆盖层（灵动岛胶囊/边缘光晕/接管卡片），随服务生命周期存活。 */
     private OverlayController overlay;
 
@@ -44,11 +55,22 @@ public class AgentA11yService extends AccessibilityService {
     public void onServiceConnected() {
         sInstance = this;
         overlay = new OverlayController(this);
-        Log.i(TAG, "service connected");
+        sSpec = DisplaySpec.get(this);
+        Log.i(TAG, "service connected; spec=" + sSpec);
     }
 
     @Override
-    public void onAccessibilityEvent(AccessibilityEvent event) { /* 不需要事件流 */ }
+    public void onAccessibilityEvent(AccessibilityEvent event) {
+        // 节流刷新屏幕形态：窗口切换/旋转/分屏后 2s 内感知一次变化
+        long now = System.currentTimeMillis();
+        if (now - sLastSpecMs < 2000) return;
+        sLastSpecMs = now;
+        DisplaySpec old = sSpec;
+        sSpec = DisplaySpec.get(this);
+        if (old != null && sSpec != null && !old.fingerprint().equals(sSpec.fingerprint())) {
+            Log.i(TAG, "屏幕形态变化: " + old.fingerprint() + " → " + sSpec.fingerprint());
+        }
+    }
 
     @Override
     public void onInterrupt() { }

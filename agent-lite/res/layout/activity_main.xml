@@ -320,6 +320,50 @@
                     android:textColor="@color/color_on_surface_variant"/>
             </LinearLayout>
 
+            <!-- 设备形态卡（异形屏适配）：DisplaySpec 实时采集展示 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/pill_gray"
+                android:padding="10dp">
+                <LinearLayout
+                    android:orientation="horizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical">
+                    <TextView
+                        android:text="设备形态（挖孔/曲面/系统栏）"
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
+                        android:layout_height="wrap_content"
+                        android:textSize="12sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/color_on_surface"/>
+                    <Button
+                        android:id="@+id/btnDisplayRefresh"
+                        android:text="重新采集"
+                        android:textSize="11sp"
+                        android:layout_width="wrap_content"
+                        android:layout_height="28dp"
+                        android:textColor="@color/color_primary"
+                        android:background="@drawable/btn_chip"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
+                        android:paddingLeft="8dp"
+                        android:paddingRight="8dp"/>
+                </LinearLayout>
+                <TextView
+                    android:id="@+id/tvDisplay"
+                    android:text="无障碍服务未连接，无法采集"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:textSize="11sp"
+                    android:textColor="@color/color_on_surface_variant"/>
+            </LinearLayout>
+
             <LinearLayout
                 android:orientation="horizontal"
                 android:layout_width="match_parent"

@@ -39,6 +39,8 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
     private EditText etTask, etBase, etKey, etModel, etAsr, etMaxSteps, etPlanner;
     private Switch swVision;
     private Button btnRun, btnMic, btnResetTokens;
+    private TextView tvDisplay;
+    private Button btnDisplayRefresh;
     private View llConfig, vTap;
     private ImageView ivScreen;
     private ScrollView svLog;
@@ -125,6 +127,8 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
         swVision = findViewById(R.id.swVision);
         tvTokens = findViewById(R.id.tvTokens);
         btnResetTokens = findViewById(R.id.btnResetTokens);
+        tvDisplay = findViewById(R.id.tvDisplay);
+        btnDisplayRefresh = findViewById(R.id.btnDisplayRefresh);
         btnRun = findViewById(R.id.btnRun);
         btnMic = findViewById(R.id.btnMic);
         llConfig = findViewById(R.id.llConfig);
@@ -172,6 +176,10 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
                 refreshTokens();
                 toast("Token 消耗计数已归零");
             });
+        }
+
+        if (btnDisplayRefresh != null) {
+            btnDisplayRefresh.setOnClickListener(v -> refreshDisplay());
         }
 
         findViewById(R.id.btnSave).setOnClickListener(v -> {
@@ -465,6 +473,19 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
         super.onResume();
         refreshA11y();
         refreshTokens();
+        refreshDisplay();
+    }
+
+    /** 设备形态卡：读取 DisplaySpec（含挖孔/曲面/系统栏/安全触控区），供真机核对。 */
+    private void refreshDisplay() {
+        if (tvDisplay == null) return;
+        AgentA11yService.refreshSpec();
+        DisplaySpec s = AgentA11yService.spec();
+        if (s == null) {
+            tvDisplay.setText("设备形态：无障碍服务未连接，无法采集");
+            return;
+        }
+        tvDisplay.setText("设备形态（异形屏适配）\n" + s);
     }
 
     @Override
