@@ -2,7 +2,7 @@
 
 > 面向 Android 11+ 的视觉与语义驱动手机自动化 Agent。项目以无障碍服务为通用执行底座，并可在已授权的 Root 设备上启用更快的截图、输入和隔离虚拟屏能力。
 
-[项目全景](PROJECT_OVERVIEW.md) · [兼容性说明](agent-lite/COMPATIBILITY.zh-CN.md) · [安全模型](docs/SECURITY.md) · [Apache-2.0 许可证](LICENSE)
+[项目全景](PROJECT_OVERVIEW.md) · [兼容性说明](agent-lite/COMPATIBILITY.zh-CN.md) · [安全审查](SECURITY_REVIEW_2026-09-05.zh-CN.md) · [Apache-2.0 许可证](LICENSE)
 
 ## 三步上手（Android 11+）
 
@@ -73,8 +73,7 @@ Root 不是 `agent-lite` 的运行前提。隔离虚拟屏仅适用于已解锁�
 | `agent-lite/` | **推荐** | 零 Root 原生客户端，当前主要开发方向，包名 `com.dsh.agentlite` |
 | `agent-client/` | 可选 | 完整客户端，包名 `com.dsh.agent`，包含可选 Root 加速和虚拟屏沙盒 |
 | `agentd-go/` + `agentd-apk/` | 实验性 | Root 常驻 Go 守护进程、WebUI 与无障碍桥接方案 |
-| `src/`、`include/`、`android/` | 平台骨架 | C++20 状态机、Shell/AOSP 后端、AIDL、init 与 SELinux 集成 |
-| `tests/`、`tools/` | 工具 | 主机测试、设备测试计划、构建及验证脚本 |
+| `tests/`、`tools/` | 工具 | 设备测试计划、测试 harness 与 UI 采集工具 |
 | `docs/` | 文档 | 架构、安全、兼容性、操作记录和专项设计说明 |
 
 ## 环境要求
@@ -169,20 +168,6 @@ adb install -r build/agent-client.apk
 
 产物为 `agent-client/build/agent-client.apk`。Root 与沙盒模式需设备端 Root 管理器明确授权。
 
-### C++ 主机测试
-
-```bash
-tools/run-tests.sh
-```
-
-### Android NDK 桩构建
-
-```bash
-tools/build-android-stub.sh
-```
-
-该流程验证可移植核心能否针对 Android arm64 交叉编译，不包含 AOSP 私有 `libgui` 实现。
-
 ### Go 守护进程（实验性）
 
 ```bash
@@ -209,8 +194,7 @@ GOOS=android GOARCH=arm64 CGO_ENABLED=0 \
 - 无 Root 时不能静默切换 Wi-Fi、蓝牙或绕过系统权限确认；
 - 系统弹窗、支付、验证码、授权协议等必须由用户检查或接管；
 - 多窗口、横竖屏切换、OEM 后台策略和复杂输入法仍需持续适配；
-- 模型可能误解界面或生成错误动作，不能把自然语言模型当作可靠的安全授权机制；
-- AOSP 私有 API 需要针对目标系统源码和厂商实现重新构建与验收。
+- 模型可能误解界面或生成错误动作，不能把自然语言模型当作可靠的安全授权机制。
 
 ## 安全与隐私
 
@@ -223,28 +207,27 @@ GOOS=android GOARCH=arm64 CGO_ENABLED=0 \
 - API Key、签名文件、测试 APK、日志、截图和设备标识不得提交到公共仓库；
 - Root 组件只应在隔离测试设备上使用，并坚持最小权限和本机访问原则。
 
-详细设计与历史审计见 [`docs/SECURITY.md`](docs/SECURITY.md) 和仓库内安全审查文档。当前项目仍处于开发与研究阶段，不建议用于无人值守的生产环境或任何高风险业务。
+历史安全审查见 [`SECURITY_REVIEW_2026-09-05.zh-CN.md`](SECURITY_REVIEW_2026-09-05.zh-CN.md)。当前项目仍处于开发与研究阶段，不建议用于无人值守的生产环境或任何高风险业务。
 
 ## 文档导航
 
 - [`PROJECT_OVERVIEW.md`](PROJECT_OVERVIEW.md)：项目架构、技术决策和当前状态；
 - [`agent-lite/COMPATIBILITY.zh-CN.md`](agent-lite/COMPATIBILITY.zh-CN.md)：Android 11+ 兼容性和装机说明；
 - [`docs/DOUBAO_SPEC_ADAPTATION.zh-CN.md`](docs/DOUBAO_SPEC_ADAPTATION.zh-CN.md)：Agent Lite 交互规格实现；
-- [`docs/SHELL_BACKEND.md`](docs/SHELL_BACKEND.md)：Shell 指令后端；
-- [`docs/AOSP_INTEGRATION.md`](docs/AOSP_INTEGRATION.md)：AOSP 集成；
-- [`docs/OPERATIONS_MANUAL.md`](docs/OPERATIONS_MANUAL.md)：操作手册；
-- [`docs/VALIDATION.md`](docs/VALIDATION.md)：验证要求。
+- [`docs/PROGRESS_2026-09-06.zh-CN.md`](docs/PROGRESS_2026-09-06.zh-CN.md)：最近一次真机实测与待办；
+- [`docs/AGENT_FRAMEWORKS.md`](docs/AGENT_FRAMEWORKS.md)：第三方 Agent 框架选型与 DSH 直驱手册；
+- [`SECURITY_REVIEW_2026-09-05.zh-CN.md`](SECURITY_REVIEW_2026-09-05.zh-CN.md)：安全审查报告。
 
 ## 开发建议
 
 提交代码前至少执行与改动范围对应的检查：
 
 ```bash
-# C++ 主机测试
-tools/run-tests.sh
-
 # Agent Lite 构建
 cd agent-lite && sh build-mac.sh
+
+# 完整客户端构建
+cd agent-client && sh build-mac.sh
 ```
 
 请勿使用 `git add -A` 盲目提交整个工作目录；先检查 `git status`，排除密钥、APK、ZIP、设备日志、上传文件和一次性运维脚本。

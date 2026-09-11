@@ -1,5 +1,3 @@
-/build/
-/outputs/
 *.bin
 *.log
 .DS_Store
