@@ -1,0 +1,589 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  手表专用布局（Wear 类设备：圆形表盘 / 方形表）
+  由 MainActivity 运行时按形态选择（isWatchUi()）：圆形屏 或 边长 < 320dp
+  设计要点：
+   - 全部 id 与 activity_main.xml 一致（代码零改动，findViewById 不落空）
+   - 水平内缩 @dimen/watch_edge：圆形表 24dp（内接方形内），方形表 8dp
+   - 内容垂直堆叠 + ScrollView：466px 圆屏也能滚到每个区块
+   - 触控目标 ≥ 42dp，字号按手表可读性收敛（标题 15sp / 正文 10sp）
+-->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/rootLayout"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/color_surface"
+    android:fillViewport="true"
+    android:scrollbars="none">
+
+<LinearLayout
+    android:orientation="vertical"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:paddingLeft="@dimen/watch_edge"
+    android:paddingRight="@dimen/watch_edge"
+    android:paddingTop="@dimen/watch_edge_v"
+    android:paddingBottom="@dimen/watch_edge_v">
+
+    <!-- 顶栏：标题 + 设置 -->
+    <LinearLayout
+        android:orientation="horizontal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical">
+
+        <LinearLayout
+            android:orientation="vertical"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="wrap_content">
+            <TextView
+                android:text="Agent Lite"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="@color/color_on_surface"
+                android:textSize="15sp"
+                android:fontFamily="sans-serif-medium"
+                android:textStyle="bold"/>
+            <TextView
+                android:text="手表版"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="@color/color_on_surface_variant"
+                android:textSize="9sp"/>
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/btnConfig"
+            android:layout_width="wrap_content"
+            android:layout_height="40dp"
+            android:text="设置"
+            android:textSize="11sp"
+            android:textColor="@color/color_on_surface"
+            android:background="@drawable/btn_ghost"
+            android:paddingLeft="14dp"
+            android:paddingRight="14dp"
+            android:minWidth="0dp"
+            android:minHeight="0dp"/>
+    </LinearLayout>
+
+    <!-- 状态行：无障碍 / 运行状态 -->
+    <LinearLayout
+        android:orientation="horizontal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:gravity="center_vertical">
+        <TextView
+            android:id="@+id/tvStatus"
+            android:text="就绪"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="@color/color_on_surface_variant"
+            android:textSize="10sp"/>
+        <TextView
+            android:id="@+id/tvA11y"
+            android:text="无障碍：检测中"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="wrap_content"
+            android:layout_marginLeft="8dp"
+            android:textColor="@color/color_on_surface_variant"
+            android:textSize="10sp"/>
+    </LinearLayout>
+
+    <!-- 无障碍未开启横幅（代码按状态显示） -->
+    <LinearLayout
+        android:id="@+id/a11yBanner"
+        android:orientation="vertical"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:padding="10dp"
+        android:background="@drawable/bg_card">
+        <TextView
+            android:text="无障碍服务未开启，Agent 无法操作手表"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="@color/color_on_surface"
+            android:textSize="10sp"/>
+        <LinearLayout
+            android:orientation="horizontal"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp">
+            <Button
+                android:id="@+id/btnA11yBanner"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="42dp"
+                android:text="一键开启"
+                android:textSize="12sp"
+                android:textColor="@color/color_on_surface"
+                android:background="@drawable/btn_primary"
+                android:minWidth="0dp"
+                android:minHeight="0dp"/>
+            <Button
+                android:id="@+id/btnA11y"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="42dp"
+                android:layout_marginLeft="6dp"
+                android:text="系统无障碍"
+                android:textSize="12sp"
+                android:textColor="@color/color_on_surface"
+                android:background="@drawable/btn_ghost"
+                android:minWidth="0dp"
+                android:minHeight="0dp"/>
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- 功能按钮行：历史 / 授权 / 省电 / 记忆（两行两列，圆屏下不挤） -->
+    <LinearLayout
+        android:orientation="horizontal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp">
+        <Button
+            android:id="@+id/btnHistory"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="42dp"
+            android:text="历史"
+            android:textSize="11sp"
+            android:textColor="@color/color_on_surface"
+            android:background="@drawable/btn_ghost"
+            android:minWidth="0dp"
+            android:minHeight="0dp"/>
+        <Button
+            android:id="@+id/btnAuth"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="42dp"
+            android:layout_marginLeft="6dp"
+            android:text="授权"
+            android:textSize="11sp"
+            android:textColor="@color/color_on_surface"
+            android:background="@drawable/btn_ghost"
+            android:minWidth="0dp"
+            android:minHeight="0dp"/>
+        <Button
+            android:id="@+id/btnEco"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="42dp"
+            android:layout_marginLeft="6dp"
+            android:text="省电"
+            android:textSize="11sp"
+            android:textColor="@color/color_on_surface"
+            android:background="@drawable/btn_ghost"
+            android:minWidth="0dp"
+            android:minHeight="0dp"/>
+        <Button
+            android:id="@+id/btnMemory"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="42dp"
+            android:layout_marginLeft="6dp"
+            android:text="记忆"
+            android:textSize="11sp"
+            android:textColor="@color/color_on_surface"
+            android:background="@drawable/btn_ghost"
+            android:minWidth="0dp"
+            android:minHeight="0dp"/>
+    </LinearLayout>
+
+    <!-- 屏幕预览（限高，避免圆屏上挤掉任务区） -->
+    <FrameLayout
+        android:id="@+id/flScreen"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/watch_preview_h"
+        android:layout_marginTop="6dp"
+        android:background="@drawable/bg_card">
+        <ImageView
+            android:id="@+id/ivScreen"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:scaleType="fitCenter"
+            android:contentDescription="屏幕预览"/>
+        <View
+            android:id="@+id/vTap"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="#66FF4081"
+            android:visibility="gone"/>
+    </FrameLayout>
+
+    <!-- 设备形态卡 -->
+    <LinearLayout
+        android:orientation="vertical"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:padding="10dp"
+        android:background="@drawable/bg_card">
+        <TextView
+            android:id="@+id/tvDisplay"
+            android:text="设备形态：采集中…"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="@color/color_on_surface"
+            android:textSize="9sp"/>
+        <LinearLayout
+            android:orientation="horizontal"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp">
+            <Button
+                android:id="@+id/btnDisplayRefresh"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="40dp"
+                android:text="刷新形态"
+                android:textSize="11sp"
+                android:textColor="@color/color_on_surface"
+                android:background="@drawable/btn_ghost"
+                android:minWidth="0dp"
+                android:minHeight="0dp"/>
+            <Button
+                android:id="@+id/btnDisplayCalib"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="40dp"
+                android:layout_marginLeft="6dp"
+                android:text="坐标校准"
+                android:textSize="11sp"
+                android:textColor="@color/color_on_surface"
+                android:background="@drawable/btn_ghost"
+                android:minWidth="0dp"
+                android:minHeight="0dp"/>
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- 配置区（默认折叠，btnConfig 展开） -->
+    <LinearLayout
+        android:id="@+id/llConfig"
+        android:orientation="vertical"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:padding="10dp"
+        android:background="@drawable/bg_card"
+        android:visibility="gone">
+
+        <EditText
+            android:id="@+id/etBase"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Base URL"
+            android:textSize="11sp"
+            android:minLines="1"
+            android:maxLines="2"
+            android:textColor="@color/color_on_surface"
+            android:textColorHint="@color/color_text_hint"
+            android:background="@drawable/bg_input"
+            android:padding="8dp"/>
+        <EditText
+            android:id="@+id/etKey"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:hint="API Key"
+            android:textSize="11sp"
+            android:minLines="1"
+            android:maxLines="2"
+            android:inputType="textPassword"
+            android:textColor="@color/color_on_surface"
+            android:textColorHint="@color/color_text_hint"
+            android:background="@drawable/bg_input"
+            android:padding="8dp"/>
+        <EditText
+            android:id="@+id/etModel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:hint="主模型"
+            android:textSize="11sp"
+            android:minLines="1"
+            android:maxLines="1"
+            android:textColor="@color/color_on_surface"
+            android:textColorHint="@color/color_text_hint"
+            android:background="@drawable/bg_input"
+            android:padding="8dp"/>
+        <EditText
+            android:id="@+id/etAsr"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:hint="ASR 模型"
+            android:textSize="11sp"
+            android:minLines="1"
+            android:maxLines="1"
+            android:textColor="@color/color_on_surface"
+            android:textColorHint="@color/color_text_hint"
+            android:background="@drawable/bg_input"
+            android:padding="8dp"/>
+        <EditText
+            android:id="@+id/etPlanner"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:hint="规划模型"
+            android:textSize="11sp"
+            android:minLines="1"
+            android:maxLines="1"
+            android:textColor="@color/color_on_surface"
+            android:textColorHint="@color/color_text_hint"
+            android:background="@drawable/bg_input"
+            android:padding="8dp"/>
+        <EditText
+            android:id="@+id/etMaxSteps"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:hint="最大步数"
+            android:textSize="11sp"
+            android:minLines="1"
+            android:maxLines="1"
+            android:inputType="number"
+            android:textColor="@color/color_on_surface"
+            android:textColorHint="@color/color_text_hint"
+            android:background="@drawable/bg_input"
+            android:padding="8dp"/>
+
+        <LinearLayout
+            android:orientation="horizontal"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:gravity="center_vertical">
+            <Switch
+                android:id="@+id/swVision"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:text="视觉模式"
+                android:textSize="11sp"
+                android:textColor="@color/color_on_surface"/>
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/tvTokens"
+            android:text="总计: 0"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:textColor="@color/color_on_surface_variant"
+            android:textSize="9sp"/>
+
+        <LinearLayout
+            android:orientation="horizontal"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp">
+            <Button
+                android:id="@+id/btnResetTokens"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="40dp"
+                android:text="清零 Token"
+                android:textSize="11sp"
+                android:textColor="@color/color_on_surface"
+                android:background="@drawable/btn_ghost"
+                android:minWidth="0dp"
+                android:minHeight="0dp"/>
+            <Button
+                android:id="@+id/btnSave"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="40dp"
+                android:layout_marginLeft="6dp"
+                android:text="保存"
+                android:textSize="11sp"
+                android:textColor="@color/color_on_surface"
+                android:background="@drawable/btn_primary"
+                android:minWidth="0dp"
+                android:minHeight="0dp"/>
+            <Button
+                android:id="@+id/btnBatteryIgnore"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="40dp"
+                android:layout_marginLeft="6dp"
+                android:text="电池白名单"
+                android:textSize="10sp"
+                android:textColor="@color/color_on_surface"
+                android:background="@drawable/btn_ghost"
+                android:minWidth="0dp"
+                android:minHeight="0dp"/>
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- 调试台（默认折叠，btnDebug 展开） -->
+    <LinearLayout
+        android:orientation="vertical"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp">
+
+        <Button
+            android:id="@+id/btnDebug"
+            android:layout_width="match_parent"
+            android:layout_height="40dp"
+            android:text="调试台"
+            android:textSize="11sp"
+            android:textColor="@color/color_on_surface"
+            android:background="@drawable/btn_ghost"
+            android:minWidth="0dp"
+            android:minHeight="0dp"/>
+
+        <ScrollView
+            android:id="@+id/dbgScroll"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:scrollbars="none"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:id="@+id/llDebug"
+                android:orientation="vertical"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:visibility="gone">
+
+                <LinearLayout
+                    android:orientation="horizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content">
+                    <Button
+                        android:id="@+id/btnDbgNodes" android:layout_width="0dp" android:layout_weight="1" android:layout_height="36dp"
+                        android:text="节点" android:textSize="9sp" android:textColor="@color/color_on_surface"
+                        android:background="@drawable/btn_ghost" android:minWidth="0dp" android:minHeight="0dp"/>
+                    <Button
+                        android:id="@+id/btnDbgShot" android:layout_width="0dp" android:layout_weight="1" android:layout_height="36dp" android:layout_marginLeft="4dp"
+                        android:text="截图" android:textSize="9sp" android:textColor="@color/color_on_surface"
+                        android:background="@drawable/btn_ghost" android:minWidth="0dp" android:minHeight="0dp"/>
+                    <Button
+                        android:id="@+id/btnDbgTap" android:layout_width="0dp" android:layout_weight="1" android:layout_height="36dp" android:layout_marginLeft="4dp"
+                        android:text="点按" android:textSize="9sp" android:textColor="@color/color_on_surface"
+                        android:background="@drawable/btn_ghost" android:minWidth="0dp" android:minHeight="0dp"/>
+                    <Button
+                        android:id="@+id/btnDbgBack" android:layout_width="0dp" android:layout_weight="1" android:layout_height="36dp" android:layout_marginLeft="4dp"
+                        android:text="返回" android:textSize="9sp" android:textColor="@color/color_on_surface"
+                        android:background="@drawable/btn_ghost" android:minWidth="0dp" android:minHeight="0dp"/>
+                </LinearLayout>
+
+                <LinearLayout
+                    android:orientation="horizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp">
+                    <Button
+                        android:id="@+id/btnDbgEdge" android:layout_width="0dp" android:layout_weight="1" android:layout_height="36dp"
+                        android:text="边缘" android:textSize="9sp" android:textColor="@color/color_on_surface"
+                        android:background="@drawable/btn_ghost" android:minWidth="0dp" android:minHeight="0dp"/>
+                    <Button
+                        android:id="@+id/btnDbgHome" android:layout_width="0dp" android:layout_weight="1" android:layout_height="36dp" android:layout_marginLeft="4dp"
+                        android:text="主页" android:textSize="9sp" android:textColor="@color/color_on_surface"
+                        android:background="@drawable/btn_ghost" android:minWidth="0dp" android:minHeight="0dp"/>
+                    <Button
+                        android:id="@+id/btnDbgRecents" android:layout_width="0dp" android:layout_weight="1" android:layout_height="36dp" android:layout_marginLeft="4dp"
+                        android:text="多任务" android:textSize="9sp" android:textColor="@color/color_on_surface"
+                        android:background="@drawable/btn_ghost" android:minWidth="0dp" android:minHeight="0dp"/>
+                    <Button
+                        android:id="@+id/btnDbgNotif" android:layout_width="0dp" android:layout_weight="1" android:layout_height="36dp" android:layout_marginLeft="4dp"
+                        android:text="通知" android:textSize="9sp" android:textColor="@color/color_on_surface"
+                        android:background="@drawable/btn_ghost" android:minWidth="0dp" android:minHeight="0dp"/>
+                </LinearLayout>
+
+                <LinearLayout
+                    android:orientation="horizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp">
+                    <Button
+                        android:id="@+id/btnDbgWifi" android:layout_width="0dp" android:layout_weight="1" android:layout_height="36dp"
+                        android:text="WiFi" android:textSize="9sp" android:textColor="@color/color_on_surface"
+                        android:background="@drawable/btn_ghost" android:minWidth="0dp" android:minHeight="0dp"/>
+                    <Button
+                        android:id="@+id/btnDbgVol" android:layout_width="0dp" android:layout_weight="1" android:layout_height="36dp" android:layout_marginLeft="4dp"
+                        android:text="音量" android:textSize="9sp" android:textColor="@color/color_on_surface"
+                        android:background="@drawable/btn_ghost" android:minWidth="0dp" android:minHeight="0dp"/>
+                    <Button
+                        android:id="@+id/btnDbgText" android:layout_width="0dp" android:layout_weight="1" android:layout_height="36dp" android:layout_marginLeft="4dp"
+                        android:text="文本" android:textSize="9sp" android:textColor="@color/color_on_surface"
+                        android:background="@drawable/btn_ghost" android:minWidth="0dp" android:minHeight="0dp"/>
+                    <Button
+                        android:id="@+id/btnDbgIme" android:layout_width="0dp" android:layout_weight="1" android:layout_height="36dp" android:layout_marginLeft="4dp"
+                        android:text="输入法" android:textSize="9sp" android:textColor="@color/color_on_surface"
+                        android:background="@drawable/btn_ghost" android:minWidth="0dp" android:minHeight="0dp"/>
+                </LinearLayout>
+
+                <ScrollView
+                    android:id="@+id/svLog"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/watch_log_h"
+                    android:layout_marginTop="4dp"
+                    android:scrollbars="none"
+                    android:background="@drawable/bg_input">
+                    <TextView
+                        android:id="@+id/tvLog"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:padding="8dp"
+                        android:textSize="9sp"
+                        android:textColor="@color/color_on_surface_variant"
+                        android:textIsSelectable="true"/>
+                </ScrollView>
+            </LinearLayout>
+        </ScrollView>
+    </LinearLayout>
+
+    <!-- 任务下达：输入框全宽 + 语音/运行两个大按钮（圆屏下垂直堆叠不挤出圆外） -->
+    <EditText
+        android:id="@+id/etTask"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:hint="下达指令，如：打开天气"
+        android:textSize="12sp"
+        android:minLines="1"
+        android:maxLines="2"
+        android:textColor="@color/color_on_surface"
+        android:textColorHint="@color/color_text_hint"
+        android:background="@drawable/bg_input"
+        android:padding="10dp"/>
+
+    <LinearLayout
+        android:orientation="horizontal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:layout_marginBottom="4dp">
+        <Button
+            android:id="@+id/btnMic"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="46dp"
+            android:text="语音"
+            android:textSize="13sp"
+            android:textColor="@color/color_on_surface"
+            android:background="@drawable/btn_ghost"
+            android:minWidth="0dp"
+            android:minHeight="0dp"/>
+        <Button
+            android:id="@+id/btnRun"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="46dp"
+            android:layout_marginLeft="8dp"
+            android:text="运行"
+            android:textSize="13sp"
+            android:textColor="@color/color_on_surface"
+            android:background="@drawable/btn_primary"
+            android:minWidth="0dp"
+            android:minHeight="0dp"/>
+    </LinearLayout>
+</LinearLayout>
+</ScrollView>

@@ -32,6 +32,30 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
     private final Handler ui = new Handler(Looper.getMainLooper());
     private Prefs prefs;
     private AgentEngine engine;
+    private boolean watchUi;   // 手表形态（圆形表盘 / 方形小屏）→ activity_main_watch 布局
+
+    /**
+     * 手表形态判定（决定用哪套布局）：
+     *  1) UI_MODE_TYPE_WATCH（标准 Wear 声明）；
+     *  2) isScreenRound()（圆形表盘，手机无此形态）；
+     *  3) 屏幕最小边 < 320dp 兜底（OWW261 466px@320dpi = 233dp；手机最小边 ≥ 320dp）。
+     * 任一命中按手表 UI 渲染；判定异常回退手机布局（不崩）。
+     */
+    private boolean isWatchUi() {
+        try {
+            android.content.res.Configuration c = getResources().getConfiguration();
+            if ((c.uiMode & android.content.res.Configuration.UI_MODE_TYPE_MASK)
+                    == android.content.res.Configuration.UI_MODE_TYPE_WATCH) return true;
+            if (c.isScreenRound()) return true;
+            android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
+            if (dm.density > 0) {
+                int minDp = (int) (Math.min(dm.widthPixels, dm.heightPixels) / dm.density);
+                return minDp > 0 && minDp < 320;
+            }
+        } catch (Throwable t) { }
+        return false;
+    }
+
     private VoiceRecorder recorder;
     private Bitmap lastBmp;
 
@@ -69,13 +93,21 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
                     | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
         }
 
-        setContentView(R.layout.activity_main);
-        View root = findViewById(R.id.rootLayout);
+        watchUi = isWatchUi();
+        setContentView(watchUi ? R.layout.activity_main_watch : R.layout.activity_main);
+        View root = find(R.id.rootLayout);
         if (root != null) {
+            final boolean isWatch = watchUi;
             root.setOnApplyWindowInsetsListener((v, insets) -> {
                 int top = insets.getSystemWindowInsetTop();
                 int bottom = insets.getSystemWindowInsetBottom();
-                v.setPadding(dp(16), top + dp(4), dp(16), bottom + dp(8));
+                if (isWatch) {
+                    // 手表：水平安全边距由布局（@dimen/watch_edge，圆形/方形分档）控制，
+                    // 此处只补系统栏，避免覆盖圆形屏的内接方形边距
+                    v.setPadding(v.getPaddingLeft(), top, v.getPaddingRight(), bottom);
+                } else {
+                    v.setPadding(dp(16), top + dp(4), dp(16), bottom + dp(8));
+                }
                 return insets.consumeSystemWindowInsets();
             });
         }
@@ -114,29 +146,37 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
     }
 
     private void bind() {
-        tvStatus = findViewById(R.id.tvStatus);
-        tvA11y = findViewById(R.id.tvA11y);
-        tvLog = findViewById(R.id.tvLog);
-        etTask = findViewById(R.id.etTask);
-        etBase = findViewById(R.id.etBase);
-        etKey = findViewById(R.id.etKey);
-        etModel = findViewById(R.id.etModel);
-        etAsr = findViewById(R.id.etAsr);
-        etPlanner = findViewById(R.id.etPlanner);
-        etMaxSteps = findViewById(R.id.etMaxSteps);
-        swVision = findViewById(R.id.swVision);
-        tvTokens = findViewById(R.id.tvTokens);
-        btnResetTokens = findViewById(R.id.btnResetTokens);
-        tvDisplay = findViewById(R.id.tvDisplay);
-        btnDisplayRefresh = findViewById(R.id.btnDisplayRefresh);
-        btnDisplayCalib = findViewById(R.id.btnDisplayCalib);
-        btnRun = findViewById(R.id.btnRun);
-        btnMic = findViewById(R.id.btnMic);
-        llConfig = findViewById(R.id.llConfig);
-        vTap = findViewById(R.id.vTap);
-        ivScreen = findViewById(R.id.ivScreen);
-        svLog = findViewById(R.id.svLog);
-        flScreen = findViewById(R.id.flScreen);
+        tvStatus = find(R.id.tvStatus);
+        tvA11y = find(R.id.tvA11y);
+        tvLog = find(R.id.tvLog);
+        etTask = find(R.id.etTask);
+        etBase = find(R.id.etBase);
+        etKey = find(R.id.etKey);
+        etModel = find(R.id.etModel);
+        etAsr = find(R.id.etAsr);
+        etPlanner = find(R.id.etPlanner);
+        etMaxSteps = find(R.id.etMaxSteps);
+        swVision = find(R.id.swVision);
+        tvTokens = find(R.id.tvTokens);
+        btnResetTokens = find(R.id.btnResetTokens);
+        tvDisplay = find(R.id.tvDisplay);
+        btnDisplayRefresh = find(R.id.btnDisplayRefresh);
+        btnDisplayCalib = find(R.id.btnDisplayCalib);
+        btnRun = find(R.id.btnRun);
+        btnMic = find(R.id.btnMic);
+        llConfig = find(R.id.llConfig);
+        vTap = find(R.id.vTap);
+        ivScreen = find(R.id.ivScreen);
+        svLog = find(R.id.svLog);
+        flScreen = find(R.id.flScreen);
+    }
+
+    /** 空安全的 findViewById：布局形态差异（手机/手表/精简布局）缺控件时返回不可见占位，绝不 NPE。 */
+    @SuppressWarnings("unchecked")
+    private <T extends View> T find(int id) {
+        View v = findViewById(id);
+        if (v == null) v = new View(this);
+        return (T) v;
     }
 
     private void loadCfg() {
@@ -165,7 +205,7 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
     }
 
     private void wire() {
-        findViewById(R.id.btnConfig).setOnClickListener(v -> {
+        find(R.id.btnConfig).setOnClickListener(v -> {
             boolean show = llConfig.getVisibility() == View.GONE;
             llConfig.setVisibility(show ? View.VISIBLE : View.GONE);
             if (show) refreshTokens();
@@ -186,7 +226,7 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
             btnDisplayCalib.setOnClickListener(v -> runCalibrate());
         }
 
-        findViewById(R.id.btnSave).setOnClickListener(v -> {
+        find(R.id.btnSave).setOnClickListener(v -> {
             int steps = 50;
             try { steps = Integer.parseInt(etMaxSteps.getText().toString().trim()); } catch (Exception ignored) { }
             prefs.save(etBase.getText().toString().trim(), etKey.getText().toString().trim(),
@@ -196,24 +236,24 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
             onLog("配置已保存");
         });
 
-        findViewById(R.id.btnA11y).setOnClickListener(v -> openA11ySettingsDirectly());
-        findViewById(R.id.btnA11yBanner).setOnClickListener(v -> openA11ySettingsDirectly());
+        find(R.id.btnA11y).setOnClickListener(v -> openA11ySettingsDirectly());
+        find(R.id.btnA11yBanner).setOnClickListener(v -> openA11ySettingsDirectly());
 
         // 锁屏保活与电池白名单配置指引
-        View btnBatteryIgnore = findViewById(R.id.btnBatteryIgnore);
+        View btnBatteryIgnore = find(R.id.btnBatteryIgnore);
         if (btnBatteryIgnore != null) {
             btnBatteryIgnore.setOnClickListener(v -> requestIgnoreBatteryOptimizations());
         }
 
         // 管理入口（豆包规格事后层：可回查、可撤回、可清除）
-        findViewById(R.id.btnHistory).setOnClickListener(v -> showHistory());
-        findViewById(R.id.btnAuth).setOnClickListener(v -> showAuthMgr());
-        findViewById(R.id.btnEco).setOnClickListener(v -> showEco());
-        findViewById(R.id.btnMemory).setOnClickListener(v -> showMemory());
+        find(R.id.btnHistory).setOnClickListener(v -> showHistory());
+        find(R.id.btnAuth).setOnClickListener(v -> showAuthMgr());
+        find(R.id.btnEco).setOnClickListener(v -> showEco());
+        find(R.id.btnMemory).setOnClickListener(v -> showMemory());
 
         // 调试台折叠开关（默认收起，保持主界面干净）
-        final View dbgScroll = findViewById(R.id.dbgScroll);
-        findViewById(R.id.btnDebug).setOnClickListener(v -> {
+        final View dbgScroll = find(R.id.dbgScroll);
+        find(R.id.btnDebug).setOnClickListener(v -> {
             boolean show = dbgScroll.getVisibility() != View.VISIBLE;
             dbgScroll.setVisibility(show ? View.VISIBLE : View.GONE);
             ((android.widget.Button) v).setText(show ? "收起调试" : "调试台");
@@ -542,7 +582,7 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
         tvA11y.setTextColor(a11yOn ? 0xFF3FB950 : 0xFFF85149);
         tvA11y.setBackgroundResource(a11yOn ? R.drawable.pill_green : R.drawable.pill_red);
         // 引导横幅：无障碍未开时置顶显示一键开启
-        View banner = findViewById(R.id.a11yBanner);
+        View banner = find(R.id.a11yBanner);
         if (banner != null) banner.setVisibility(a11yOn ? View.GONE : View.VISIBLE);
     }
 

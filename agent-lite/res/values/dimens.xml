@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 默认值：方形表（圆角矩形屏）——四角可用，仅留窄边距 -->
+<resources>
+    <dimen name="watch_edge">8dp</dimen>       <!-- 手表布局水平安全边距 -->
+    <dimen name="watch_edge_v">6dp</dimen>     <!-- 手表布局垂直安全边距 -->
+    <dimen name="watch_preview_h">110dp</dimen> <!-- 屏幕预览高度上限 -->
+    <dimen name="watch_log_h">90dp</dimen>     <!-- 调试日志区高度 -->
+</resources>
