@@ -34,3 +34,10 @@ agent-lite/build/
 # Non-repo staging: unrelated local/prototype files kept out of git
 /_local/
 
+# Local competition materials (kept on disk, not part of the repo)
+/竞赛材料/
+
+# Built daemon binary and per-device test result logs (regenerated)
+agentd-go/build/
+tests/results-*.jsonl
+
