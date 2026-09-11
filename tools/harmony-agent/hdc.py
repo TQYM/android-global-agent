@@ -79,27 +79,38 @@ def dump_layout(serial, timeout=30):
 def walk_nodes(node, out, depth=0, max_depth=60, max_nodes=400):
     """递归展平控件树 → 扁平节点表（对齐 agent-lite NodeInfo 语义）。
 
-    鸿蒙控件树常见键：attributes.text / bounds / id / type / clickable（以真机 dumpLayout 输出为准，
-    解析器对多种键名兼容，首日探测后固化）。
+    ArkXTest dumpLayout 属性键（真机实测清单，解析层全兼容）：
+      text / content-desc（连字符形式）/ id / type / bounds("[x1,y1][x2,y2]")
+      clickable / scrollable / enabled / visible / checked / selected（字符串 "true"/"false"）
     """
     if node is None or depth > max_depth or len(out) >= max_nodes:
         return
     attrs = node.get("attributes", node)
     text = attrs.get("text", "") or ""
-    desc = attrs.get("accessibilityDescription", "") or attrs.get("description", "") or ""
-    bounds = node.get("bounds", "") or ""
-    clickable = attrs.get("clickable", False) or attrs.get("enabled", False)
-    scrollable = attrs.get("scrollable", False)
-    # bounds 格式兼容: "x1,y1,x2,y2" 或 "[x1,y1][x2,y2]"
+    desc = (attrs.get("content-desc") or attrs.get("contentDescription")
+            or attrs.get("accessibilityDescription") or attrs.get("description") or "")
+    bounds = attrs.get("bounds", "") or node.get("bounds", "") or ""
+    ctype = attrs.get("type", "") or ""
+    clickable = _bool(attrs.get("clickable")) or _bool(attrs.get("longClickable")) \
+        or _bool(attrs.get("long-clickable"))
+    scrollable = _bool(attrs.get("scrollable"))
+    enabled = attrs.get("enabled")
+    visible = attrs.get("visible")
+    if visible is not None and not _bool(visible):
+        return   # 不可见节点不入表（鸿蒙树里常见占位节点）
+    if enabled is not None and not _bool(enabled):
+        clickable = False
+    # bounds 格式兼容: "[x1,y1][x2,y2]"（ArkXTest）或 "x1,y1,x2,y2"
     m = re.search(r"\[?(-?\d+),(-?\d+)\]?\[?(-?\d+),(-?\d+)\]?", bounds)
     if m:
         x1, y1, x2, y2 = map(int, m.groups())
-        interesting = clickable or scrollable or bool(text.strip()) or bool(str(desc).strip())
-        if interesting:
+        interesting = clickable or scrollable or bool(str(text).strip()) or bool(str(desc).strip())
+        if interesting and x2 > x1 and y2 > y1:
             out.append({
                 "index": len(out),
                 "text": str(text).strip()[:60],
                 "desc": str(desc).strip()[:60],
+                "type": str(ctype)[:24],
                 "clickable": bool(clickable),
                 "scrollable": bool(scrollable),
                 "cx": (x1 + x2) // 2,
@@ -107,6 +118,15 @@ def walk_nodes(node, out, depth=0, max_depth=60, max_nodes=400):
             })
     for child in node.get("children", []) or []:
         walk_nodes(child, out, depth + 1, max_depth, max_nodes)
+
+
+def _bool(v):
+    """鸿蒙属性值是字符串 'true'/'false'，也兼容原生 bool。"""
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, str):
+        return v.strip().lower() == "true"
+    return bool(v)
 
 
 def collect_nodes(serial):
