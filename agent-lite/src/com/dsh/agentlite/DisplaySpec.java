@@ -47,6 +47,18 @@ public final class DisplaySpec {
     /** 是否竖屏（宽度 < 高度）；横屏平板 natural 状态即宽>高。 */
     public boolean portrait() { return width < height; }
 
+    // ---- 厂商 ROM 坐标偏移修正（T3 校准：节点坐标与截图坐标系统不一致时使用） ----
+    /** 全局偏移量（px）：节点/截图坐标执行前统一加上的 Δ。默认 0。 */
+    public static volatile int offsetX, offsetY;
+
+    /** 设置全局坐标偏移（诊断页校准发现偏移后由用户/日志触发）。 */
+    public static void setOffset(int dx, int dy) { offsetX = dx; offsetY = dy; }
+
+    /** 应用全局偏移：返回修正后坐标。 */
+    public static int[] applyOffset(int x, int y) {
+        return new int[]{ x + offsetX, y + offsetY };
+    }
+
     // ---- 静态缓存（节流刷新） ----
     private static volatile DisplaySpec sLast;
     private static long sLastCollectMs;

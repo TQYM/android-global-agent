@@ -342,6 +342,19 @@
                         android:textStyle="bold"
                         android:textColor="@color/color_on_surface"/>
                     <Button
+                        android:id="@+id/btnDisplayCalib"
+                        android:text="坐标校准"
+                        android:textSize="11sp"
+                        android:layout_width="wrap_content"
+                        android:layout_height="28dp"
+                        android:layout_marginRight="6dp"
+                        android:textColor="@color/color_primary"
+                        android:background="@drawable/btn_chip"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
+                        android:paddingLeft="8dp"
+                        android:paddingRight="8dp"/>
+                    <Button
                         android:id="@+id/btnDisplayRefresh"
                         android:text="重新采集"
                         android:textSize="11sp"

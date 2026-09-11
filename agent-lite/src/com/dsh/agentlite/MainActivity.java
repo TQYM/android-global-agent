@@ -40,7 +40,7 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
     private Switch swVision;
     private Button btnRun, btnMic, btnResetTokens;
     private TextView tvDisplay;
-    private Button btnDisplayRefresh;
+    private Button btnDisplayRefresh, btnDisplayCalib;
     private View llConfig, vTap;
     private ImageView ivScreen;
     private ScrollView svLog;
@@ -129,6 +129,7 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
         btnResetTokens = findViewById(R.id.btnResetTokens);
         tvDisplay = findViewById(R.id.tvDisplay);
         btnDisplayRefresh = findViewById(R.id.btnDisplayRefresh);
+        btnDisplayCalib = findViewById(R.id.btnDisplayCalib);
         btnRun = findViewById(R.id.btnRun);
         btnMic = findViewById(R.id.btnMic);
         llConfig = findViewById(R.id.llConfig);
@@ -180,6 +181,9 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
 
         if (btnDisplayRefresh != null) {
             btnDisplayRefresh.setOnClickListener(v -> refreshDisplay());
+        }
+        if (btnDisplayCalib != null) {
+            btnDisplayCalib.setOnClickListener(v -> runCalibrate());
         }
 
         findViewById(R.id.btnSave).setOnClickListener(v -> {
@@ -477,6 +481,7 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
     }
 
     /** 设备形态卡：读取 DisplaySpec（含挖孔/曲面/系统栏/安全触控区），供真机核对。 */
+    private String lastCalib = "";
     private void refreshDisplay() {
         if (tvDisplay == null) return;
         AgentA11yService.refreshSpec();
@@ -485,7 +490,22 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
             tvDisplay.setText("设备形态：无障碍服务未连接，无法采集");
             return;
         }
-        tvDisplay.setText("设备形态（异形屏适配）\n" + s);
+        String txt = "设备形态（异形屏适配）\n" + s;
+        if (!lastCalib.isEmpty()) txt += "\n\n校准结果：\n" + lastCalib;
+        tvDisplay.setText(txt);
+    }
+
+    /** 坐标校准（T3）：根窗口 bounds 与节点越界统计，结果展示在形态卡。 */
+    private void runCalibrate() {
+        AgentA11yService svc = AgentA11yService.get();
+        if (svc == null) {
+            toast("无障碍服务未连接，无法校准");
+            return;
+        }
+        lastCalib = svc.calibrate();
+        refreshDisplay();
+        toast(lastCalib.startsWith("校准失败") || lastCalib.startsWith("校准异常")
+                ? "校准发现问题，详见形态卡" : "校准完成：坐标系统一致");
     }
 
     @Override

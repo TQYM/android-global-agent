@@ -394,12 +394,15 @@ public class AgentA11yService extends AccessibilityService {
     /** 同步截图；失败返回 null。root 时走 screencap 无限频；否则 takeScreenshot（ColorOS 限频，自动间隔+重试）。 */
     private boolean shotLogged;
     public Bitmap screenshot() {
+        Bitmap out;
         if (RootShell.available(this)) {
             Bitmap fast = RootShell.screenshot(this);
             if (fast != null) {
                 if (!shotLogged) { shotLogged = true; android.util.Log.i("AgentA11y", "截图通道: root screencap（无限频）"); }
                 sLastShotMs = System.currentTimeMillis();
-                return fast;
+                out = fast;
+                checkShotSize(out);
+                return out;
             }
         }
         for (int attempt = 0; attempt < 2; attempt++) {
@@ -409,9 +412,90 @@ public class AgentA11yService extends AccessibilityService {
             }
             sLastShotMs = System.currentTimeMillis();
             Bitmap bmp = screenshotOnce();
-            if (bmp != null) return bmp;
+            if (bmp != null) {
+                checkShotSize(bmp);
+                return bmp;
+            }
         }
         return null;
+    }
+
+    /**
+     * 坐标一致性自检（T3-1 尺寸校验）：截图尺寸与 DisplaySpec 不一致 →
+     * 告警并强制重采集（旋转/多屏切换瞬间属正常，重采集即可跟上）。
+     */
+    private void checkShotSize(Bitmap bmp) {
+        DisplaySpec s = sSpec;
+        if (s == null || bmp == null) return;
+        if (bmp.getWidth() != s.width || bmp.getHeight() != s.height) {
+            Log.w(TAG, "截图尺寸与 DisplaySpec 不一致: shot=" + bmp.getWidth() + "x" + bmp.getHeight()
+                    + " spec=" + s.width + "x" + s.height + "（旋转/多屏切换？强制重采集）");
+            sSpec = DisplaySpec.refresh(this);
+        }
+    }
+
+    /**
+     * 坐标一致性自检（T3-2 锚点校准，配置页手动触发）：
+     * 校验活动窗口 root bounds 与屏幕尺寸、统计节点中心越界数，
+     * 返回人类可读诊断串（同时写日志）。
+     */
+    public String calibrate() {
+        DisplaySpec s = sSpec;
+        if (s == null) return "校准失败：屏幕形态未采集（无障碍服务未连接？）";
+        StringBuilder sb = new StringBuilder();
+        try {
+            AccessibilityNodeInfo root = getRootInActiveWindow();
+            if (root == null) return "校准失败：当前无活动窗口";
+            Rect rb = new Rect();
+            root.getBoundsInScreen(rb);
+            boolean rootOk = rb.left >= 0 && rb.top >= 0
+                    && rb.right <= s.width && rb.bottom <= s.height
+                    && rb.width() > 0 && rb.height() > 0;
+            sb.append("根窗口 bounds=").append(rb.flattenToString())
+              .append("（屏幕 ").append(s.width).append('x').append(s.height).append("）")
+              .append(rootOk ? " ✓" : " ✗ 越界！ROM 坐标系统与截图不一致").append('\n');
+
+            // 节点中心越界统计
+            int[] stat = countOutOfBounds(root, s);
+            sb.append("节点总数=").append(stat[0]).append("，中心越界=").append(stat[1]);
+            if (stat[1] > 0) {
+                sb.append("（max 偏差 ").append(stat[2]).append("px）✗ 需设置坐标偏移修正");
+                Log.w(TAG, "calibrate: " + stat[1] + " 个节点中心越界，max 偏差 " + stat[2] + "px");
+            } else {
+                sb.append(" ✓");
+            }
+            root.recycle();
+        } catch (Exception e) {
+            return "校准异常：" + e.getMessage();
+        }
+        Log.i(TAG, "calibrate: " + sb.toString().replace('\n', ' '));
+        return sb.toString();
+    }
+
+    /** 统计节点数与中心越界节点数；返回 [总数, 越界数, 最大越界像素]。 */
+    private int[] countOutOfBounds(AccessibilityNodeInfo n, DisplaySpec s) {
+        int[] r = new int[3];
+        if (n == null) return r;
+        try {
+            Rect b = new Rect();
+            n.getBoundsInScreen(b);
+            r[0]++;
+            int cx = b.centerX(), cy = b.centerY();
+            if (cx < 0 || cy < 0 || cx >= s.width || cy >= s.height) {
+                r[1]++;
+                int over = Math.max(Math.max(-cx, cx - s.width + 1), Math.max(-cy, cy - s.height + 1));
+                r[2] = Math.max(r[2], Math.max(0, over));
+            }
+            int kids = n.getChildCount();
+            for (int i = 0; i < kids; i++) {
+                AccessibilityNodeInfo c = n.getChild(i);
+                if (c == null) continue;
+                int[] sub = countOutOfBounds(c, s);
+                r[0] += sub[0]; r[1] += sub[1]; r[2] = Math.max(r[2], sub[2]);
+                c.recycle();
+            }
+        } catch (Exception ignored) { }
+        return r;
     }
 
     private Bitmap screenshotOnce() {

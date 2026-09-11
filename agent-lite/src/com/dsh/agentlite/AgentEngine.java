@@ -1196,30 +1196,38 @@ public class AgentEngine {
 
     /** 解析点击目标：优先 index → 节点中心；px/py 比例坐标；否则 x/y。 */
     private int[] resolvePoint(AgentA11yService svc, JSONObject a, List<NodeInfo> currentNodes) throws Exception {
+        int[] pt;
         if (a.has("index")) {
             int idx = a.optInt("index");
             // 优先从本轮传入的 currentNodes 匹配
+            pt = null;
             if (currentNodes != null) {
                 for (NodeInfo n : currentNodes) {
-                    if (n.index == idx) return new int[]{n.cx, n.cy};
+                    if (n.index == idx) { pt = new int[]{n.cx, n.cy}; break; }
                 }
             }
             // 兜底再次收集尝试
-            List<NodeInfo> fresh = svc.collectNodes();
-            if (fresh != null) {
-                for (NodeInfo n : fresh) {
-                    if (n.index == idx) return new int[]{n.cx, n.cy};
+            if (pt == null) {
+                List<NodeInfo> fresh = svc.collectNodes();
+                if (fresh != null) {
+                    for (NodeInfo n : fresh) {
+                        if (n.index == idx) { pt = new int[]{n.cx, n.cy}; break; }
+                    }
                 }
             }
-            throw new Exception("节点编号 " + idx + " 不在当前节点表中（共 " + (fresh != null ? fresh.size() : 0) + " 个）");
-        }
-        if (a.has("px") || a.has("py")) {
+            if (pt == null)
+                throw new Exception("节点编号 " + idx + " 不在当前节点表中（共 "
+                        + (currentNodes != null ? currentNodes.size() : 0) + " 个）");
+        } else if (a.has("px") || a.has("py")) {
             android.graphics.Rect wb = svc.getSystemService(android.view.WindowManager.class)
                     .getCurrentWindowMetrics().getBounds();
-            return new int[]{ (int) (a.optDouble("px", 0.5) * wb.width()),
-                              (int) (a.optDouble("py", 0.5) * wb.height()) };
+            pt = new int[]{ (int) (a.optDouble("px", 0.5) * wb.width()),
+                            (int) (a.optDouble("py", 0.5) * wb.height()) };
+        } else {
+            pt = new int[]{a.optInt("x"), a.optInt("y")};
         }
-        return new int[]{a.optInt("x"), a.optInt("y")};
+        // 异形屏适配 T3：应用厂商 ROM 坐标偏移修正（校准发现越界时启用，默认 0 无影响）
+        return DisplaySpec.applyOffset(pt[0], pt[1]);
     }
 
     /** 阻塞等待用户回答（5 分钟超时；等待期间用户可随时停止任务）。 */
