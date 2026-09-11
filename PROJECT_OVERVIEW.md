@@ -200,10 +200,12 @@ sh build-mac.sh
 
 - [x] **平板零 root 适配**：YLP-W00 全链路实测通过（2026-09-06）
 - [x] **沙盒稳定性**：看门狗自愈已上线并实测（守护死亡 1s 内重建）
+- [x] **异形屏适配（代码+模拟器）**：DisplaySpec 采集/注入/clamp/自检已落地并模拟器矩阵验证（2026-09-11，见 `docs/PLAN_DISPLAY_HARMONY_2026-09-11.zh-CN.md`）；**两台真机回归待做**
 - [ ] **DashScope 账户欠费**：dev.local 已把 key 编译进 APK（2026-09-06 实测 qwen3.5-omni-plus 正常调用），但 15:02 起返回 HTTP 400 Arrearage——需充值/换 key 后才能跑任务
 - [ ] **ASR 质量**：Omni 音频转写对实际中文语音的准确率待用户验证
 - [ ] **模型包名 cheat sheet 扩展**：继续补充更多常用 App
-- [ ] **平板横屏/多窗口适配**：分辨率差异、密度差异、横屏布局
+- [x] **平板横屏/多窗口适配**：分辨率差异由比例坐标天然解决；横屏/分屏/旋转已由 DisplaySpec 形态注入 + 分屏窗口区域提示覆盖（2026-09-11，待真机回归）
+- [ ] **鸿蒙设备适配**：兼容层 2–4.x 验证与 NEXT HDC 外挂原型挂起等真机；NEXT 原生评估已出（`docs/HARMONY_NEXT_EVAL.zh-CN.md`：HDC 外挂式为主路线，原生重写冻结）
 - [ ] ~~**HarmonyOS 兼容性**~~ → 实为荣耀 MagicOS（hihonor 系），a11y API 行为与 AOSP 一致，已验证
 
 ---
