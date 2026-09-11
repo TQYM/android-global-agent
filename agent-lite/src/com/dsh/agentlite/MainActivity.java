@@ -581,6 +581,9 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
 
     private void handleIntent(android.content.Intent it) {
         if (it == null) return;
+        // 复用已在前台的实例（singleTask）时不会走 onResume：这里补一次状态刷新，
+        // 否则从系统无障碍页返回 / adb 唤起的场景会显示过期的服务状态（横幅滞留）。
+        refreshA11y();
         String task = it.getStringExtra("task");
         if (task != null && !task.trim().isEmpty()) {
             etTask.setText(task.trim());
@@ -600,15 +603,17 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
             RootShell.ensureA11y(this);
             a11yOn = AgentA11yService.get() != null;
         }
+        // 状态文案统一由 A11yLauncher 判定：区分「未开启」与「已启用但未连接（被强杀/回收）」
+        String hint = a11yOn ? null : A11yLauncher.statusHint(this);
         if (watchUi) {
-            // 手表极简主页：tvA11y 是「未开启」提示（点击直达系统设置），开启后隐藏
-            tvA11y.setText(a11yOn ? "" : "无障碍未开启 · 点此开启");
-            tvA11y.setVisibility(a11yOn ? View.GONE : View.VISIBLE);
+            // 手表极简主页：tvA11y 是提示行（点击直达系统设置），正常时隐藏
+            tvA11y.setText(hint == null ? "" : hint);
+            tvA11y.setVisibility(hint == null ? View.GONE : View.VISIBLE);
             return;
         }
         tvA11y.setText(a11yOn
                 ? (root ? "无障碍已开启 (Root)" : "无障碍已开启")
-                : "无障碍未开启");
+                : hint);
         tvA11y.setTextColor(a11yOn ? 0xFF3FB950 : 0xFFF85149);
         tvA11y.setBackgroundResource(a11yOn ? R.drawable.pill_green : R.drawable.pill_red);
         // 引导横幅：无障碍未开时置顶显示一键开启
@@ -721,40 +726,10 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
     }
 
     /**
-     * 智能自动定位无障碍详情页（针对不同 OEM 深度优化直达入口）
+     * 智能自动定位无障碍详情页（各 ROM 入口差异 → 统一走 A11yLauncher 的可靠降级链）。
      */
     private void openA11ySettingsDirectly() {
-        android.content.ComponentName cn = new android.content.ComponentName(this, AgentA11yService.class);
-        String serviceComp = cn.flattenToString();
-
-        // 1. Android 14+ 官方直达细节入口 (android.settings.ACCESSIBILITY_DETAILS_SETTINGS)
-        try {
-            Intent intent = new Intent("android.settings.ACCESSIBILITY_DETAILS_SETTINGS");
-            intent.setData(android.net.Uri.fromParts("package", getPackageName(), null));
-            intent.putExtra(Intent.EXTRA_COMPONENT_NAME, serviceComp);
-            if (intent.resolveActivity(getPackageManager()) != null) {
-                startActivity(intent);
-                return;
-            }
-        } catch (Throwable ignored) { }
-
-        // 2. ColorOS / Oplus 直达「已下载的应用」或细节页
-        try {
-            Intent intent = new Intent();
-            intent.setComponent(new android.content.ComponentName("com.android.settings", "com.android.settings.SubSettings"));
-            intent.putExtra(":settings:show_fragment", "com.android.settings.accessibility.AccessibilityDownloadedSettings");
-            if (intent.resolveActivity(getPackageManager()) != null) {
-                startActivity(intent);
-                return;
-            }
-        } catch (Throwable ignored) { }
-
-        // 3. 兜底回退至系统无障碍设置主列表
-        try {
-            startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
-        } catch (Throwable t) {
-            toast("打开无障碍设置失败: " + t.getMessage());
-        }
+        A11yLauncher.open(this);
     }
 
     /** 申请忽略电池优化白名单（锁屏保活核心） */

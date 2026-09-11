@@ -27,6 +27,7 @@ public class WatchSettingsActivity extends Activity {
 
     private Prefs prefs;
     private TextView tvDisplay, tvTokens;
+    private Button btnA11y;
 
     @Override
     protected void onCreate(Bundle b) {
@@ -51,7 +52,8 @@ public class WatchSettingsActivity extends Activity {
         ((Button) findViewById(R.id.btnEco)).setOnClickListener(v -> showEco());
         ((Button) findViewById(R.id.btnAuth)).setOnClickListener(v -> showAuthMgr());
 
-        ((Button) findViewById(R.id.btnA11y)).setOnClickListener(v -> openA11ySettings());
+        btnA11y = findViewById(R.id.btnA11y);
+        btnA11y.setOnClickListener(v -> openA11ySettings());
         ((Button) findViewById(R.id.btnBatteryIgnore)).setOnClickListener(v -> requestBatteryWhitelist());
 
         ((Button) findViewById(R.id.btnDisplayRefresh)).setOnClickListener(v -> refreshDisplay());
@@ -63,6 +65,19 @@ public class WatchSettingsActivity extends Activity {
         super.onResume();
         refreshDisplay();
         refreshTokens();
+        refreshA11yStatus();
+    }
+
+    /** 无障碍按钮上直接显示服务状态（区分未开启 / 已启用但未连接）。 */
+    private void refreshA11yStatus() {
+        if (btnA11y == null) return;
+        if (AgentA11yService.get() != null) {
+            btnA11y.setText("无障碍服务 · 已开启");
+        } else if (A11yLauncher.isEnabledInSettings(this)) {
+            btnA11y.setText("无障碍服务 · 未连接（点此重开）");
+        } else {
+            btnA11y.setText("无障碍服务 · 未开启");
+        }
     }
 
     // ---- 配置 ----
@@ -182,11 +197,7 @@ public class WatchSettingsActivity extends Activity {
     // ---- 权限与授权 ----
 
     private void openA11ySettings() {
-        try {
-            startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
-        } catch (Throwable t) {
-            toast("无法打开无障碍设置：" + t.getMessage());
-        }
+        A11yLauncher.open(this);
     }
 
     private void requestBatteryWhitelist() {
