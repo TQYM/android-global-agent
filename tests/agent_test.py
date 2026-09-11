@@ -11,6 +11,7 @@ ADB = os.path.expanduser("~/Library/Android/sdk/platform-tools/adb")
 DEVICES = {
     "tablet":   {"serial": "AAQLBB5C03000706", "pkg": "com.dsh.agentlite"},
     "oneplus":  {"serial": "3B15B401NPF00000", "pkg": "com.dsh.agentlite"},
+    "emu":      {"serial": "emulator-5554", "pkg": "com.dsh.agentlite"},
 }
 
 def sh(serial, cmd, timeout=30):

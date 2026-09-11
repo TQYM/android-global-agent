@@ -1,11 +1,11 @@
 #!/bin/bash
 # 异形屏适配真机回归矩阵（规划书 §6 标准任务集 + 形态专项）
-# 用法: sh tests/plan-display-matrix.sh [oneplus|tablet|all]
-# 前置: 设备 USB 已连接并开启开发者调试。
+# 用法: sh tests/plan-display-matrix.sh [oneplus|tablet|emu|all]
+# 前置: 设备 USB 已连接并开启开发者调试（emu = 模拟器 emulator-5554）。
 #
 # 阶段 A: 装机 + 无障碍绑定 + 形态核对 + 坐标校准
 # 阶段 B: 标准任务集（harness 驱动，结果写入 tests/results-<dev>.jsonl）
-# 阶段 C: 平板专项（旋转 + 分屏，人工观察 engine.log / 设备形态卡）
+# 阶段 C: 平板/模拟器专项（旋转 + 分屏，人工观察 engine.log / 设备形态卡）
 set -e
 ADB="$HOME/Library/Android/sdk/platform-tools/adb"
 APK="agent-lite/build/agent-lite.apk"
@@ -15,6 +15,7 @@ TARGET="${1:-all}"
 
 ONE="3B15B401NPF00000"      # 一加 13T（中置挖孔，root）
 TAB="AAQLBB5C03000706"      # 荣耀 MagicPad3 Pro（横屏平板，无 root）
+EMU="emulator-5554"         # Android 14 模拟器（cutout/瀑布/旋转可控形态）
 
 ensure_a11y() {   # $1=serial  荣耀/MagicOS 重装后绑定会被清空
   $ADB -s "$1" shell settings put secure enabled_accessibility_services "$SVC" 2>/dev/null || true
@@ -86,8 +87,9 @@ phase_c_tablet() {   # 平板专项：旋转 + 分屏（人工观察）
 case "$TARGET" in
   oneplus) phase_a "$ONE" "oneplus";  phase_b oneplus 1 ;;
   tablet)  phase_a "$TAB" "tablet";   phase_b tablet 1; phase_c_tablet ;;
+  emu)     phase_a "$EMU" "emu";      phase_b emu 1 ;;
   all)     phase_a "$ONE" "oneplus";  phase_b oneplus 1
            phase_a "$TAB" "tablet";   phase_b tablet 1; phase_c_tablet ;;
-  *) echo "用法: sh tests/plan-display-matrix.sh [oneplus|tablet|all]"; exit 1 ;;
+  *) echo "用法: sh tests/plan-display-matrix.sh [oneplus|tablet|emu|all]"; exit 1 ;;
 esac
 echo "=== 完成。结果: tests/results-<dev>.jsonl ==="

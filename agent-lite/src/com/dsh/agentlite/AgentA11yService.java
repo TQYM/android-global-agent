@@ -130,6 +130,7 @@ public class AgentA11yService extends AccessibilityService {
                         android.graphics.Rect wb = new android.graphics.Rect();
                         w.getBoundsInScreen(wb);
                         topBounds = wb;
+                        Log.i(TAG, "collectNodes 顶层窗口: pkg=" + pkg + " bounds=" + wb.flattenToString());
                     }
                     walk(root, out, 0);
                     root.recycle();

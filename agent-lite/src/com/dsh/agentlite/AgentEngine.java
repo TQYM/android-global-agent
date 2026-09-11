@@ -900,8 +900,17 @@ public class AgentEngine {
         if (AgentA11yService.multiDisplay()) {
             sb.append("\n【多屏】检测到多个显示（外接屏/折叠外屏），本助手只操作主屏，其他屏上的目标请改用主屏完成。");
         }
-        return sb.toString();
+
+        // 可观测性：注入内容变化时打日志（真机回归/模拟器分屏诊断用；内容不变不刷屏）
+        String hint = sb.toString();
+        if (!hint.equals(lastHintLogged)) {
+            lastHintLogged = hint;
+            android.util.Log.i("AgentA11y", "感知注入: " + hint.replace('\n', '⏎'));
+        }
+        return hint;
     }
+
+    private String lastHintLogged = "";
 
     /** 焦点窗口在屏幕中的区域描述（左半/右半/上半/下半/自定义）。 */
     private String hintRegion(android.graphics.Rect wb, DisplaySpec s) {
