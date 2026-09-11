@@ -103,6 +103,11 @@ agent-lite 内置 `DisplaySpec` 屏幕形态采集（零 root，基于 WindowMet
   `ACCESSIBILITY_DETAILS_SETTINGS` 无法解析、`com.android.settings/.SubSettings` 未导出（直连会
   Permission Denial）→ 实际落到 `ACTION_ACCESSIBILITY_SETTINGS`（OWW261 实测一次到位）
 - OPPO Wear ROM 上手机布局的 etTask 实测宽 42px（weight 行测量怪癖）→ 手表专用布局已绕过该问题
+- **长时间运行会被省电策略断网**（实测 `Wi-Fi is disabled` → 模型调用报
+  `Unable to resolve host dashscope.aliyuncs.com`）：已加 `WifiLock(FULL_HIGH_PERF)` +
+  启动前 `networkReady()` 预检（不通则提示检查 WiFi，不进入执行循环，commit 6c71caf）
+- 任务首帧自干扰：极简主页在 466px 圆屏上占满整屏，会连同提示横幅进入首帧截图误导模型
+  → 启动前刷新无障碍状态、手表上启动后 `moveTaskToBack` 让自身退到后台
 - 稳定性检查脚本：`python3 tests/watch_check10.py [serial] [rounds]`（服务状态/无障碍跳转/主页 UI/设置页/端到端任务）
 
 **回滚开关**（SharedPreferences，默认开）：`spec_inject`（形态注入）、`spec_clamp`（落点 clamp），
