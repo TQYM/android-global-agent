@@ -146,29 +146,31 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
     }
 
     private void bind() {
+        // 手机/手表共有的核心控件：用 find（缺控件时占位不崩）
         tvStatus = find(R.id.tvStatus);
         tvA11y = find(R.id.tvA11y);
-        tvLog = find(R.id.tvLog);
         etTask = find(R.id.etTask);
-        etBase = find(R.id.etBase);
-        etKey = find(R.id.etKey);
-        etModel = find(R.id.etModel);
-        etAsr = find(R.id.etAsr);
-        etPlanner = find(R.id.etPlanner);
-        etMaxSteps = find(R.id.etMaxSteps);
-        swVision = find(R.id.swVision);
-        tvTokens = find(R.id.tvTokens);
-        btnResetTokens = find(R.id.btnResetTokens);
-        tvDisplay = find(R.id.tvDisplay);
-        btnDisplayRefresh = find(R.id.btnDisplayRefresh);
-        btnDisplayCalib = find(R.id.btnDisplayCalib);
         btnRun = find(R.id.btnRun);
         btnMic = find(R.id.btnMic);
-        llConfig = find(R.id.llConfig);
-        vTap = find(R.id.vTap);
-        ivScreen = find(R.id.ivScreen);
-        svLog = find(R.id.svLog);
-        flScreen = find(R.id.flScreen);
+        // 仅手机布局存在的控件：直接 findViewById（手表极简主页无这些控件，保持 null 并由使用点判空）
+        tvLog = findViewById(R.id.tvLog);
+        etBase = findViewById(R.id.etBase);
+        etKey = findViewById(R.id.etKey);
+        etModel = findViewById(R.id.etModel);
+        etAsr = findViewById(R.id.etAsr);
+        etPlanner = findViewById(R.id.etPlanner);
+        etMaxSteps = findViewById(R.id.etMaxSteps);
+        swVision = findViewById(R.id.swVision);
+        tvTokens = findViewById(R.id.tvTokens);
+        btnResetTokens = findViewById(R.id.btnResetTokens);
+        tvDisplay = findViewById(R.id.tvDisplay);
+        btnDisplayRefresh = findViewById(R.id.btnDisplayRefresh);
+        btnDisplayCalib = findViewById(R.id.btnDisplayCalib);
+        llConfig = findViewById(R.id.llConfig);
+        vTap = findViewById(R.id.vTap);
+        ivScreen = findViewById(R.id.ivScreen);
+        svLog = findViewById(R.id.svLog);
+        flScreen = findViewById(R.id.flScreen);
     }
 
     /** 空安全的 findViewById：布局形态差异（手机/手表/精简布局）缺控件时返回不可见占位，绝不 NPE。 */
@@ -180,6 +182,7 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
     }
 
     private void loadCfg() {
+        if (watchUi) return;   // 手表：模型配置在 WatchSettingsActivity，主页无配置控件
         etBase.setText(prefs.baseUrl());
         etKey.setText(prefs.apiKey());
         etModel.setText(prefs.model());
@@ -205,6 +208,18 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
     }
 
     private void wire() {
+        // ---- 手表极简主页：只连 语音 / 运行 / 设置入口 / 无障碍提示 ----
+        // 历史、记忆、省电、授权、模型配置、设备形态均在 WatchSettingsActivity；
+        // 日志与截图手表端不提供。
+        if (watchUi) {
+            find(R.id.btnWatchSettings).setOnClickListener(v ->
+                    startActivity(new android.content.Intent(this, WatchSettingsActivity.class)));
+            btnRun.setOnClickListener(v -> onRunClicked());
+            btnMic.setOnClickListener(v -> toggleMic());
+            tvA11y.setOnClickListener(v -> openA11ySettingsDirectly());
+            return;
+        }
+
         find(R.id.btnConfig).setOnClickListener(v -> {
             boolean show = llConfig.getVisibility() == View.GONE;
             llConfig.setVisibility(show ? View.VISIBLE : View.GONE);
@@ -259,30 +274,7 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
             ((android.widget.Button) v).setText(show ? "收起调试" : "调试台");
         });
 
-        btnRun.setOnClickListener(v -> {
-            if (engine.isRunning()) {
-                engine.stop();
-                return;
-            }
-            String task = etTask.getText().toString().trim();
-            if (task.isEmpty()) { toast("请输入任务"); return; }
-            // 记忆写入显式通道（报告 §7.1）：「记一下…」直接写入全局记忆，不进入执行循环
-            if (task.startsWith("记一下")) {
-                String mem = task.substring(3).trim();
-                if (mem.isEmpty()) { toast("「记一下」后面跟上要记住的内容"); return; }
-                MemoryStore.add(this, mem);
-                onLog("已写入记忆：" + mem + "（之后任务会静默使用）");
-                etTask.setText("");
-                return;
-            }
-            if (AgentA11yService.get() == null) {
-                toast("请先开启无障碍服务");
-                refreshA11y();
-                return;
-            }
-            engine.start(task);
-            toast("任务已启动，可上滑划出，灵动岛将实时显示进度");
-        });
+        btnRun.setOnClickListener(v -> onRunClicked());
 
         btnMic.setOnClickListener(v -> toggleMic());
 
@@ -365,6 +357,32 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
 
     // ---- 语音 ----
 
+    /** 运行/停止（手机与手表极简主页共用）。 */
+    private void onRunClicked() {
+        if (engine.isRunning()) {
+            engine.stop();
+            return;
+        }
+        String task = etTask.getText().toString().trim();
+        if (task.isEmpty()) { toast("请输入任务"); return; }
+        // 记忆写入显式通道（报告 §7.1）：「记一下…」直接写入全局记忆，不进入执行循环
+        if (task.startsWith("记一下")) {
+            String mem = task.substring(3).trim();
+            if (mem.isEmpty()) { toast("「记一下」后面跟上要记住的内容"); return; }
+            MemoryStore.add(this, mem);
+            onLog("已写入记忆：" + mem + "（之后任务会静默使用）");
+            etTask.setText("");
+            return;
+        }
+        if (AgentA11yService.get() == null) {
+            toast("请先开启无障碍服务");
+            refreshA11y();
+            return;
+        }
+        engine.start(task);
+        toast("任务已启动，可上滑划出，灵动岛将实时显示进度");
+    }
+
     private void toggleMic() {
         if (recorder != null && recorder.isRecording()) {
             byte[] wav = recorder.stopToWav();
@@ -404,6 +422,7 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
     @Override
     public void onLog(String line) {
         android.util.Log.i("AgentUI", line);
+        if (watchUi) return;   // 手表端不显示日志区（adb logcat / engine.log 可查）
         String ts = new SimpleDateFormat("HH:mm:ss", Locale.US).format(new Date());
         ui.post(() -> {
             logBuf.append('[').append(ts).append("] ").append(line).append('\n');
@@ -416,7 +435,8 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
     @Override
     public void onStatus(boolean running, int step) {
         ui.post(() -> {
-            tvStatus.setText(running ? "运行中 · 第 " + step + " 步" : "空闲");
+            tvStatus.setText(running ? "运行中 · 第 " + step + " 步" : "就绪");
+            if (watchUi) return;   // 手表极简主页：只更新状态文字
             tvStatus.setTextColor(running ? 0xFF34D399 : 0xFF94A3B8);
             tvStatus.setBackgroundResource(running ? R.drawable.pill_green : R.drawable.pill_gray);
             btnRun.setText(running ? "停止" : "运行");
@@ -425,11 +445,13 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
 
     @Override
     public void onScreen(Bitmap bmp) {
+        if (watchUi) return;   // 手表端不显示屏幕预览（省内存/流量）
         ui.post(() -> { lastBmp = bmp; ivScreen.setImageBitmap(bmp); });
     }
 
     @Override
     public void onTap(int x, int y) {
+        if (watchUi) return;   // 手表端无预览画布，跳过点击标记
         ui.post(() -> {
             if (lastBmp == null) return;
             flScreen.post(() -> {
@@ -575,6 +597,12 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
         if (root && !a11yOn) {
             RootShell.ensureA11y(this);
             a11yOn = AgentA11yService.get() != null;
+        }
+        if (watchUi) {
+            // 手表极简主页：tvA11y 是「未开启」提示（点击直达系统设置），开启后隐藏
+            tvA11y.setText(a11yOn ? "" : "无障碍未开启 · 点此开启");
+            tvA11y.setVisibility(a11yOn ? View.GONE : View.VISIBLE);
+            return;
         }
         tvA11y.setText(a11yOn
                 ? (root ? "无障碍已开启 (Root)" : "无障碍已开启")

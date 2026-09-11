@@ -35,6 +35,13 @@
             </intent-filter>
         </activity>
 
+        <!-- 手表设置页：历史/记忆/省电/授权/模型配置/设备形态（日志与截图不在手表端提供） -->
+        <activity
+            android:name=".WatchSettingsActivity"
+            android:exported="false"
+            android:label="设置"
+            android:launchMode="singleTop"/>
+
         <!-- 辅助语音搜索入口（已关闭电源键硬件唤醒动作） -->
         <activity
             android:name=".AssistActivity"
