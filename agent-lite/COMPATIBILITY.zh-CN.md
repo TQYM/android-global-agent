@@ -78,8 +78,9 @@ agent-lite 内置 `DisplaySpec` 屏幕形态采集（零 root，基于 WindowMet
 
 **手表（Wear 类设备）已知限制**（2026-09-11 OWW261 实测）：
 - Agent 核心链路（服务绑定/感知/截图/手势/LLM/注入）全通；adb 起任务 `am start -n com.dsh.agentlite/.MainActivity --es task <t> --ez auto_run true`（任务文本避免空格）
-- **UI 布局未适配手表**：手机布局无滚动，任务输入区（etTask/btnRun）在 466px 高度屏外，右上配置钮超圆 56px 半不可点——手表上请一律用 adb auto_run 入口；手表专用 UI 待规划
+- **UI 浏览可达（d400325）**：主布局 ScrollView 化后配置区/校准卡/输入行滚动可达；但 etTask 在 OPPO Wear ROM 上实测宽 42px（weight 行水平测量异常，待查），**手表起任务仍推荐 adb auto_run 入口**
 - OPPO 桌面不提供 a11y 节点树（感知 0 节点）→ 纯视觉模式自动接管（正常工作）
+- force-stop 后无障碍绑定会丢且 stopped 状态阻止自启：先 `am start` 主界面清 stopped，再 `settings delete` + `settings put` enabled_accessibility_services 重绑
 
 **回滚开关**（SharedPreferences，默认开）：`spec_inject`（形态注入）、`spec_clamp`（落点 clamp），
 关掉即回到 2026-09-06 行为。设备形态可在 App 配置页「设备形态」卡实时核对，「坐标校准」
