@@ -88,13 +88,24 @@ def run(task, serial, base_url, api_key, model, max_steps=30, verbose=True):
     messages = [{"role": "system", "content": SCHEMA}, {"role": "user", "content": task}]
 
     last_key, repeats, fp_history = "", 0, []
+    stasis_asked = False
     for step in range(1, max_steps + 1):
         nodes = hdc.collect_nodes(serial)
         fp = fingerprint(nodes)
         fp_history.append(fp)
         if len(fp_history) >= 6 and len(set(fp_history[-6:])) == 1:
-            log(f"第 {step} 步：屏幕连续 6 步无变化，疑似卡死")
-            return "fail: 屏幕无变化卡死"
+            if not stasis_asked:
+                # 有些操作成功但屏幕不变（静默开关/后台生效）→ 先问模型一次，避免误判
+                stasis_asked = True
+                log(f"第 {step} 步：屏幕连续无变化，询问模型是否已完成")
+                messages.append({"role": "user", "content":
+                    "屏幕已连续多步无变化（可能操作已静默生效，也可能卡死）。"
+                    "若任务目标已达成，输出 {\"action\":\"done\",\"summary\":\"...\"}；"
+                    "若未达成，输出 {\"action\":\"fail\",\"reason\":\"具体原因\"}。"
+                    "不要再重复相同操作。"})
+                continue
+            log(f"第 {step} 步：模型未能给出结论，判定卡死")
+            return "fail: 屏幕无变化且模型未给出结论（目标可能不存在/界面卡住）"
         log(f"第 {step} 步：感知 {len(nodes)} 个节点")
         prompt = to_prompt(nodes, w, h)
         messages.append({"role": "user", "content": "当前屏幕：\n" + prompt})
@@ -158,8 +169,16 @@ def run(task, serial, base_url, api_key, model, max_steps=30, verbose=True):
                 raise ValueError("unknown action " + kind)
         except hdc.HdcError as e:
             log(f"执行失败: {e}")
-            messages.append({"role": "user",
-                             "content": f"动作 {kind} 执行报错：{str(e)[:200]}。换一种方式继续。"})
+            msg = f"动作 {kind} 执行报错：{str(e)[:200]}。"
+            if kind == "text":
+                msg += ("中文/特殊字符输入在该设备上可能不支持。按顺序尝试替代方案："
+                        "① 改用英文关键词或拼音输入（如 bluetooth）；"
+                        "② 优先用点击/滑动等不依赖文字输入的方式找到目标；"
+                        "③ 都不可行时如实输出 {\"action\":\"fail\",\"reason\":\"中文输入不可用\"}，"
+                        "严禁在目标未达成时输出 done。")
+            else:
+                msg += "换一种方式继续。"
+            messages.append({"role": "user", "content": msg})
             continue
         except Exception as e:
             log(f"执行异常: {e}")

@@ -46,6 +46,54 @@ def _page_root(pkg, children):
     return [root]
 
 
+def scenario():
+    """场景选择：FAKE_SCENARIO=bt(默认) | text_input | not_found | swipe_needed"""
+    return os.environ.get("FAKE_SCENARIO", "bt")
+
+
+def screen_search(text_entered=False, opened=False):
+    """text_input 场景：必须先输入文字（验证 uiInput text 路径），点结果后进入蓝牙页"""
+    if opened:
+        return _page_root("com.huawei.hmos.settings", [
+            _attr(type="text", text="蓝牙", bounds="[80,80][400,180]"),
+            _attr(type="toggle", text="蓝牙已开启", clickable="true",
+                  bounds="[900,300][1160,420]", id="bt_switch"),
+        ])
+    return _page_root("com.huawei.hmos.settings", [
+        _attr(type="text", text="搜索设置项", bounds="[80,80][600,180]"),
+        _attr(type="text-input", text="大模型" if text_entered else "", clickable="true",
+              bounds="[100,300][1160,440]", id="search_box"),
+        _attr(type="list-item", text="搜索结果：蓝牙" if text_entered else "请先输入关键词",
+              clickable="true" if text_entered else "false",
+              bounds="[0,600][1260,760]", id="search_result"),
+    ])
+
+
+def screen_hidden_target(swiped=False, opened=False):
+    """swipe_needed 场景：目标在屏幕外，滑动后可见，点击后进入应用页"""
+    if opened:
+        return _page_root("com.example.targetapp", [
+            _attr(type="text", text="目标应用", bounds="[80,80][600,180]"),
+            _attr(type="text", text="已打开", bounds="[80,300][600,400]"),
+        ])
+    children = [_attr(type="text", text="应用列表", bounds="[80,80][600,180]")]
+    if swiped:
+        children.append(_attr(type="button", text="目标应用", clickable="true",
+                              bounds="[430,1200][830,1600]", id="target_app"))
+    else:
+        children.append(_attr(type="text", text="（向下滑动查看更多）", bounds="[80,2400][1000,2500]"))
+    return _page_root("com.huawei.hmos.launcher", children)
+
+
+def screen_not_found():
+    """not_found 场景：目标不存在（所有点击无反应，验证模型 fail 归因）"""
+    return _page_root("com.huawei.hmos.launcher", [
+        _attr(type="text", text="桌面", bounds="[80,80][600,180]"),
+        _attr(type="button", text="电话", clickable="true", bounds="[180,980][430,1380]"),
+        _attr(type="button", text="相机", clickable="true", bounds="[430,980][830,1380]"),
+    ])
+
+
 def screen_home():
     return _page_root("com.huawei.hmos.launcher", [
         _attr(type="text", text="10:24", bounds="[560,40][700,120]"),
@@ -77,6 +125,13 @@ def screen_bt_on(on):
 
 
 def current_screen(st):
+    sc = scenario()
+    if sc == "text_input":
+        return screen_search(st.get("text_entered", False), st.get("opened", False))
+    if sc == "swipe_needed":
+        return screen_hidden_target(st.get("swiped", False), st.get("opened", False))
+    if sc == "not_found":
+        return screen_not_found()
     stage = st.get("stage", 0)
     if stage == 0:
         return screen_home()
@@ -107,6 +162,21 @@ def in_rect(x, y, bounds):
 
 
 def handle_click(st, x, y):
+    sc = scenario()
+    st.setdefault("log", []).append(f"click({x},{y})@[{sc}]")
+    if sc == "text_input":
+        if st.get("text_entered") and in_rect(x, y, "[0,600][1260,760]"):
+            st["opened"] = True
+        save(st)
+        return
+    if sc == "swipe_needed":
+        if st.get("swiped") and in_rect(x, y, "[430,1200][830,1600]"):
+            st["opened"] = True
+        save(st)
+        return
+    if sc == "not_found":
+        save(st)      # 任何点击都无反应
+        return
     stage = st.get("stage", 0)
     st.setdefault("log", []).append(f"click({x},{y})@stage{stage}")
     if stage == 0 and in_rect(x, y, "[430,980][830,1380]"):
@@ -142,14 +212,20 @@ def shell_cmd(st, cmd):
         return "click successful", 0
     if cmd.startswith("uitest uiInput swipe"):
         st.setdefault("log", []).append(cmd)
+        if scenario() == "swipe_needed":
+            st["swiped"] = True
         save(st)
         return "swipe successful", 0
     if cmd.startswith("uitest uiInput text"):
         txt = cmd[len("uitest uiInput text"):].strip()
         st.setdefault("log", []).append(f"text:{txt}")
-        save(st)
+        # 真实失败语义：中文输入失败时设备状态不发生任何变化
         if any(ord(c) > 127 for c in txt):
+            save(st)
             return "error: text input failed (unsupported character)", 1   # 复现中文输入坑
+        if scenario() == "text_input" and txt:
+            st["text_entered"] = True
+        save(st)
         return "text successful", 0
     if cmd.startswith("uitest uiInput keyEvent"):
         st.setdefault("log", []).append(cmd)

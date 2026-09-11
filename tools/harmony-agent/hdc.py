@@ -178,19 +178,30 @@ def home(serial):
 
 # ---- 截图 ----
 
-def screenshot(serial, local_path, remote="/data/local/tmp/agent_shot.png"):
-    """截图（命令名待真机核实：snapshot_display / snapshot）。返回 True。"""
-    out, rc = shell(serial, f"snapshot_display -f {remote}", timeout=20, check=False)
-    if rc != 0:
-        # 备选命令名
-        out, rc = shell(serial, f"snapshot -f {remote}", timeout=20, check=False)
-    if rc != 0:
-        raise HdcError(f"截图失败: {out[:200]}")
+def screenshot(serial, local_path, remote="/data/local/tmp/agent_shot.jpeg"):
+    """截图并拉回本地。实测（HarmonyOS 7.0 模拟器）：
+    `snapshot_display [-i displayId] -f <file>`，**文件名后缀必须是 .jpeg**（.png 会报 invalid）。
+    返回本地文件大小（>0 即成功）；失败抛 HdcError。
+    """
+    if not remote.endswith(".jpeg"):
+        remote = remote.rsplit(".", 1)[0] + ".jpeg"   # 后缀强制 .jpeg（命令限制）
+    sh(serial, f"rm -f {remote}", timeout=10, check=False)
+    out, rc = shell(serial, f"snapshot_display -f {remote}", timeout=25, check=False)
+    if rc != 0 or "invalid" in out.lower():
+        raise HdcError(f"snapshot_display 失败: {out[:200]}")
+    # 校验设备端文件确实生成（避免假阳性）
+    sizeOut, _ = shell(serial, f"ls -la {remote}", timeout=10, check=False)
+    m = re.search(r"\s(\d+)\s", sizeOut)
+    if not m or int(m.group(1)) <= 0:
+        raise HdcError(f"截图文件未生成或为空: {sizeOut[:120]}")
     r = subprocess.run([HDC] + (["-t", serial] if serial else []) + ["file", "recv", remote, local_path],
-                       capture_output=True, text=True, timeout=30)
+                       capture_output=True, text=True, timeout=40)
     if r.returncode != 0:
-        raise HdcError(f"截图拉取失败: {r.stderr[:200]}")
-    return True
+        raise HdcError(f"截图拉取失败: {(r.stdout + r.stderr)[:200]}")
+    try:
+        return os.path.getsize(local_path)
+    except OSError as e:
+        raise HdcError(f"本地截图文件缺失: {e}")
 
 
 # ---- 设备与应用 ----
@@ -208,19 +219,27 @@ def start_app(serial, bundle, ability):
 
 
 def screen_size(serial):
-    """返回 (w, h)。经 dumpLayout 根节点 bounds 或 hidumper（首日探测确认）。"""
+    """返回 (w, h)。实测通道（HarmonyOS 7.0 模拟器）：
+    ① hidumper -s RenderService -a screen → "render resolution=1256x2760"（首选）
+    ② dumpLayout 根节点 bounds 兜底。
+    """
     try:
-        out, _ = shell(serial, "hidumper -s WindowManagerService -a '-a'", timeout=20, check=False)
-        m = re.search(r"(\d+)x(\d+)", out)
+        out, _ = shell(serial, "hidumper -s RenderService -a screen", timeout=20, check=False)
+        m = re.search(r"render resolution=(\d+)x(\d+)", out)
+        if m:
+            return int(m.group(1)), int(m.group(2))
+        m = re.search(r"(\d{3,})x(\d{3,})", out)
         if m:
             return int(m.group(1)), int(m.group(2))
     except Exception:
         pass
-    data = dump_layout(serial)
-    roots = data if isinstance(data, list) else data.get("children", [])
-    if roots and isinstance(roots, dict):
-        bounds = roots.get("bounds", "")
-        m = re.search(r"\[?(-?\d+),(-?\d+)\]?\[?(\d+),(\d+)\]?", bounds)
+    try:
+        data = dump_layout(serial)
+        root = data[0] if isinstance(data, list) and data else data
+        attrs = root.get("attributes", root) if isinstance(root, dict) else {}
+        m = re.search(r"\[(-?\d+),(-?\d+)\]\[(\d+),(\d+)\]", attrs.get("bounds", ""))
         if m:
             return int(m.group(3)), int(m.group(4))
+    except Exception:
+        pass
     return 0, 0

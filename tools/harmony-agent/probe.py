@@ -21,7 +21,7 @@ PROBES = [
     ("screen_size", lambda s: hdc.screen_size(s), "屏幕尺寸获取"),
     ("dumpLayout", lambda s: len(hdc.dump_layout(s)) > 0, "控件树导出（感知核心）"),
     ("collect_nodes", lambda s: hdc.collect_nodes(s), "节点表展平（可点排序）"),
-    ("screenshot", lambda s: hdc.screenshot(s, "/tmp/agent_probe.png"), "截图（snapshot 命令名核实）"),
+    ("screenshot", lambda s: hdc.screenshot(s, "/tmp/agent_probe.jpeg"), "截图（snapshot_display，.jpeg 后缀）"),
 ]
 
 

@@ -1,0 +1,41 @@
+{
+  "serial": "127.0.0.1:5555",
+  "time": "2026-09-12 00:30:50",
+  "probes": [
+    {
+      "name": "list_targets",
+      "ok": true,
+      "secs": 0.0,
+      "detail": "['127.0.0.1:5555']",
+      "desc": "设备枚举"
+    },
+    {
+      "name": "screen_size",
+      "ok": true,
+      "secs": 0.0,
+      "detail": "(1256, 2760)",
+      "desc": "屏幕尺寸获取"
+    },
+    {
+      "name": "dumpLayout",
+      "ok": true,
+      "secs": 0.7,
+      "detail": "True",
+      "desc": "控件树导出（感知核心）"
+    },
+    {
+      "name": "collect_nodes",
+      "ok": true,
+      "secs": 0.7,
+      "detail": "[{'index': 31, 'text': '12, :, 30', 'desc': '长按时间切换显示格式', 'type': 'Row', 'clickable': True, 'scrollable': False, 'cx': 161, 'cy': 71}, {'index': 1, 'text': '', 'desc': '', 'type': 'NavRouter', 'clicka",
+      "desc": "节点表展平（可点排序）"
+    },
+    {
+      "name": "screenshot",
+      "ok": true,
+      "secs": 0.2,
+      "detail": "161381",
+      "desc": "截图（snapshot_display，.jpeg 后缀）"
+    }
+  ]
+}
