@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """fake_hdc — 无真机/模拟器时验证 harmony_agent 全链路的模拟 hdc 设备。
 
 原理：本脚本冒充 `hdc` 可执行文件（HDC 环境变量指向它），按 ArkXTest 真实输出格式

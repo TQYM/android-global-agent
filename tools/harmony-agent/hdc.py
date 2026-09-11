@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """hdc.py — HarmonyOS HDC 命令封装层（T8 外挂式原型）。
 
 所有命令集中于此，首日真机探测后如需修正命令名/参数只改这一处。
@@ -106,9 +107,13 @@ def walk_nodes(node, out, depth=0, max_depth=60, max_nodes=400):
         x1, y1, x2, y2 = map(int, m.groups())
         interesting = clickable or scrollable or bool(str(text).strip()) or bool(str(desc).strip())
         if interesting and x2 > x1 and y2 > y1:
+            label = str(text).strip()
+            if not label and not str(desc).strip() and clickable:
+                # 鸿蒙可点容器自无文本 → 取子树文本（否则模型只见空容器）
+                label = subtree_text(node)
             out.append({
                 "index": len(out),
-                "text": str(text).strip()[:60],
+                "text": label[:60],
                 "desc": str(desc).strip()[:60],
                 "type": str(ctype)[:24],
                 "clickable": bool(clickable),
@@ -120,6 +125,25 @@ def walk_nodes(node, out, depth=0, max_depth=60, max_nodes=400):
         walk_nodes(child, out, depth + 1, max_depth, max_nodes)
 
 
+def subtree_text(node, max_parts=3, limit=48):
+    """聚合子树文本：鸿蒙可点容器（Row/Column）自身常无 text，标签在子 Text 节点。
+    不聚合则模型只看到一堆空的可点容器，无法决策（实机踩坑）。"""
+    parts = []
+
+    def rec(n, depth=0):
+        if n is None or depth > 6 or len(parts) >= max_parts:
+            return
+        a = n.get("attributes", n) if isinstance(n, dict) else {}
+        t = (a.get("text") or a.get("description") or "").strip()
+        if t and t not in parts:
+            parts.append(t)
+        for c in (n.get("children", []) if isinstance(n, dict) else []) or []:
+            rec(c, depth + 1)
+
+    rec(node)
+    return " / ".join(parts[:max_parts])[:limit]
+
+
 def _bool(v):
     """鸿蒙属性值是字符串 'true'/'false'，也兼容原生 bool。"""
     if isinstance(v, bool):
@@ -129,9 +153,31 @@ def _bool(v):
     return bool(v)
 
 
+LAST_WINDOW = {}   # 最近一次感知的窗口归属（bundle/ability/page），供 prompt 提供页面上下文
+
+
+def _extract_window(node, found=None):
+    """从控件树提取窗口归属（鸿蒙 dumpLayout 的 bundleName/abilityName/pagePath）。"""
+    if found is None:
+        found = {}
+    if node is None or len(found) >= 3:
+        return found
+    attrs = node.get("attributes", node) if isinstance(node, dict) else {}
+    for key, out in (("bundleName", "bundle"), ("abilityName", "ability"), ("pagePath", "page")):
+        if not found.get(out):
+            v = attrs.get(key)
+            if v:
+                found[out] = str(v)[:64]
+    for c in (node.get("children", []) if isinstance(node, dict) else []) or []:
+        _extract_window(c, found)
+    return found
+
+
 def collect_nodes(serial):
-    """感知：返回扁平节点表（可点击优先排序）。"""
+    """感知：返回扁平节点表（可点击优先排序）。同时记录窗口归属到 LAST_WINDOW。"""
+    global LAST_WINDOW
     data = dump_layout(serial)
+    LAST_WINDOW = _extract_window(data if isinstance(data, dict) else {"children": data})
     roots = data if isinstance(data, list) else data.get("children", data.get("nodes", []))
     if isinstance(roots, dict):
         roots = [roots]

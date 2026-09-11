@@ -31,7 +31,8 @@ SCHEMA = (
     "只输出一个 JSON 动作（严禁任何其他文字）：\n"
     "- {\"action\":\"tap\",\"index\":N} 点击节点 N（优先，最稳）\n"
     "- {\"action\":\"tap\",\"px\":0.5,\"py\":0.3} 比例坐标点击（节点表缺失时，0~1 全屏比例）\n"
-    "- {\"action\":\"swipe\",\"px1\":..,\"py1\":..,\"px2\":..,\"py2\":..} 滑动\n"
+    "- {\"action\":\"swipe\",\"px1\":..,\"py1\":..,\"px2\":..,\"py2\":..} 滑动（px/py 均为 0~1 比例坐标）\n"
+    "  方向语义：py1 > py2 = 内容向上滚动（看更**下方**的内容）；py1 < py2 = 内容向下回滚（看更**上方**的内容）。\n"
     "- {\"action\":\"text\",\"text\":\"..\"} 输入文字（中文可能失败，失败换 wait+重试或 ask）\n"
     "- {\"action\":\"back\"} / {\"action\":\"home\"} 返回/主页\n"
     "- {\"action\":\"app\",\"bundle\":\"..\",\"ability\":\"..\"} 启动应用\n"
@@ -39,7 +40,11 @@ SCHEMA = (
     "- {\"action\":\"done\",\"summary\":\"..\"} 任务完成\n"
     "- {\"action\":\"fail\",\"reason\":\"..\"} 任务无法完成（如实归因）\n"
     "守则：1) 点击优先用节点编号，禁止沿用旧编号（每步重新分配）；2) 页面加载中先 wait 不要盲点；"
-    "3) 禁止重复点击同一位置，无进展立即换策略；4) 支付/密码等敏感操作必须 fail 请用户手动。\n"
+    "3) 禁止重复点击同一位置，无进展立即换策略；4) 支付/密码等敏感操作必须 fail 请用户手动；"
+    "5) 注意「当前页面」字段：若不在目标应用内，先用 home 回桌面或 back 退出当前页，再重新进入；"
+    "6) 同一页面上找不到目标时，不要反复滑动，改用返回上级/回桌面换入口；"
+    "7) 页面可能停在中间位置：目标是常见项却看不到时，先**向下回滚**（py1 < py2）检查页面上方，"
+    "不要一味向上滑（那样只会越滑越远）。\n"
 )
 
 
@@ -64,9 +69,14 @@ def parse_action(reply):
 
 
 def to_prompt(nodes, screen_w, screen_h, max_nodes=40):
+    win = getattr(hdc, "LAST_WINDOW", {}) or {}
+    prefix = []
+    if win.get("bundle"):
+        prefix.append(f"当前页面: {win.get('bundle')}"
+                      + (f" / {win.get('ability')}" if win.get("ability") else ""))
     if not nodes:
-        return "（当前控件树为空，页面可能加载中，请 wait）"
-    lines = [f"屏幕 {screen_w}x{screen_h}。节点表（共 {len(nodes)}，显示前 {max_nodes}）："]
+        return "\n".join(prefix + ["（当前控件树为空，页面可能加载中，请 wait）"])
+    lines = prefix + [f"屏幕 {screen_w}x{screen_h}。节点表（共 {len(nodes)}，显示前 {max_nodes}）："]
     for n in nodes[:max_nodes]:
         flag = ("可点" if n["clickable"] else "") + ("|可滚" if n["scrollable"] else "")
         t = (n["text"] or n["desc"] or "").replace("\n", " ")
@@ -78,7 +88,7 @@ def fingerprint(nodes):
     return "|".join(f"{n['cx']},{n['cy']},{n['text']}" for n in nodes[:20])
 
 
-def run(task, serial, base_url, api_key, model, max_steps=30, verbose=True):
+def run(task, serial, base_url, api_key, model, max_steps=30, verbose=True, settle=2.5):
     def log(msg):
         if verbose:
             print(msg, flush=True)
@@ -89,6 +99,8 @@ def run(task, serial, base_url, api_key, model, max_steps=30, verbose=True):
 
     last_key, repeats, fp_history = "", 0, []
     stasis_asked = False
+    action_counts = {}          # 全局动作计数（防循环）
+    from collections import Counter
     for step in range(1, max_steps + 1):
         nodes = hdc.collect_nodes(serial)
         fp = fingerprint(nodes)
@@ -126,6 +138,7 @@ def run(task, serial, base_url, api_key, model, max_steps=30, verbose=True):
         act_key = f"{kind}|{a.get('index')}|{int(a.get('px', 0) * 1000)},{int(a.get('py', 0) * 1000)}"
         repeats = repeats + 1 if act_key == last_key else 0
         last_key = act_key
+        action_counts[act_key] = action_counts.get(act_key, 0) + 1
 
         try:
             if kind == "tap":
@@ -186,10 +199,24 @@ def run(task, serial, base_url, api_key, model, max_steps=30, verbose=True):
             continue
 
         log(f"第 {step} 步：执行 {label}")
-        time.sleep(1.2)  # 等待 UI 稳定
+        time.sleep(settle)  # 等待 UI 稳定（鸿蒙模拟器实测页面切换需 2-4s，1.2s 会读到旧屏）
         nxt = "已执行动作，这是执行后的屏幕，请继续下一步（或 done）。"
         if repeats >= 1:
             nxt = "警告：连续重复相同动作且无进展！必须换策略：换坐标、滑动翻页、或 back 重来。"
+        # 全局循环检测：同一动作累计 ≥3 次 或 最近屏幕往返 ≥3 次
+        if action_counts[act_key] >= 3:
+            kind_cn = {"tap": "点击", "swipe": "滑动", "back": "返回", "home": "主页",
+                       "wait": "等待", "text": "输入", "app": "启动应用"}.get(kind, kind)
+            nxt += (f"\n⚠ 该动作（{kind_cn} {label}）本任务中已重复 {action_counts[act_key]} 次仍未达成目标，"
+                    "说明这条路径无效。必须换完全不同的策略："
+                    "① 若在设置里找不到目标，先回上一级换其他入口；② 用滑动浏览列表而非反复点击；"
+                    "③ 目标确实不存在时如实输出 {\"action\":\"fail\",\"reason\":\"...\"}。")
+            log(f"   ↳ 循环告警：{kind} 已 {action_counts[act_key]} 次")
+        if len(fp_history) >= 8:
+            top_fp, top_n = Counter(fp_history[-8:]).most_common(1)[0]
+            if top_n >= 3:
+                nxt += ("\n⚠ 检测到你在少数几个页面之间来回切换（同一屏出现 %d 次/最近 8 步）。"
+                        "请停下重复操作，重新规划路径：先明确当前在哪一级页面，再决定下一步。" % top_n)
         messages.append({"role": "user", "content": nxt})
     return "fail: 达到最大步数"
 
@@ -202,6 +229,8 @@ def main():
     ap.add_argument("--api-key", default=os.environ.get("AGENT_API_KEY", ""))
     ap.add_argument("--model", default=os.environ.get("AGENT_MODEL", "qwen3.5-flash"))
     ap.add_argument("--max-steps", type=int, default=30)
+    ap.add_argument("--settle", type=float, default=2.5,
+                    help="动作后等待 UI 稳定秒数（鸿蒙模拟器建议 2.5-4）")
     args = ap.parse_args()
 
     if not args.api_key:
@@ -215,7 +244,8 @@ def main():
             sys.exit(2)
         serial = targets[0]
     print(f"目标设备: {serial}  模型: {args.model}")
-    result = run(args.task, serial, args.base_url, args.api_key, args.model, args.max_steps)
+    result = run(args.task, serial, args.base_url, args.api_key, args.model, args.max_steps,
+                 settle=args.settle)
     print("RESULT:", result)
 
 

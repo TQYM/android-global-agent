@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """probe.py — NEXT 真机首日命令可用性探测（0.5d 探针，规划 R2 止损机制）。
 
 用法: python3 tools/harmony-agent/probe.py [--serial SN]
