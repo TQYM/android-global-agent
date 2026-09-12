@@ -313,26 +313,63 @@
             android:minWidth="0dp"
             android:minHeight="0dp"/>
 
-        <TextView
+        <LinearLayout
+            android:orientation="vertical"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:padding="10dp"
+            android:background="@drawable/bg_card">
+
+            <TextView
+                android:text="保活与后台运行"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textSize="11sp"
+                android:textStyle="bold"
+                android:textColor="@color/color_on_surface"/>
+
+            <TextView
                 android:id="@+id/tvKeepAlive"
-                android:text="保活自检中…"
+                android:text="自检中…"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
+                android:layout_marginTop="2dp"
                 android:textSize="10sp"
+                android:maxLines="2"
+                android:ellipsize="end"
                 android:textColor="@color/color_on_surface_variant"/>
 
-            <Button
-                android:id="@+id/btnAutoStart"
-                android:text="自启动/后台运行设置"
+            <LinearLayout
+                android:orientation="horizontal"
                 android:layout_width="match_parent"
-                android:layout_height="40dp"
-                android:layout_marginTop="4dp"
-                android:textSize="11sp"
-                android:textColor="@color/color_primary"
-                android:background="@drawable/btn_ghost"
-                android:minWidth="0dp"
-                android:minHeight="0dp"/>
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp">
+                <Button
+                    android:id="@+id/btnAutoStart"
+                    android:text="自启动设置"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_height="34dp"
+                    android:textSize="10sp"
+                    android:textColor="@color/color_on_surface"
+                    android:background="@drawable/btn_ghost"
+                    android:minWidth="0dp"
+                    android:minHeight="0dp"/>
+                <Button
+                    android:id="@+id/btnBatteryIgnore"
+                    android:text="电池无限制"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_height="34dp"
+                    android:layout_marginLeft="6dp"
+                    android:textSize="10sp"
+                    android:textColor="@color/color_on_surface"
+                    android:background="@drawable/btn_ghost"
+                    android:minWidth="0dp"
+                    android:minHeight="0dp"/>
+            </LinearLayout>
+        </LinearLayout>
 
             <Button
             android:id="@+id/btnBatteryIgnore"

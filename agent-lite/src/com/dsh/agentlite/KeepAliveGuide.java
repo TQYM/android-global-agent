@@ -78,21 +78,21 @@ public final class KeepAliveGuide {
     public static String summary(Context ctx) {
         StringBuilder sb = new StringBuilder();
         sb.append(a11yBound() ? "无障碍✓" : "无障碍✗");
-        sb.append(" ｜ ").append(ignoringBattery(ctx) ? "电池白名单✓" : "电池白名单✗");
-        sb.append(" ｜ ").append(notificationsEnabled(ctx) ? "通知✓" : "通知✗");
-        sb.append(" ｜ ").append(guardProcessAlive(ctx) ? "守护进程✓" : "守护进程✗");
+        sb.append(" · ").append(ignoringBattery(ctx) ? "电池✓" : "电池✗");
+        sb.append(" · ").append(notificationsEnabled(ctx) ? "通知✓" : "通知✗");
+        sb.append(" · ").append(guardProcessAlive(ctx) ? "守护✓" : "守护✗");
         return sb.toString();
     }
 
     /** 未完成项数量与建议（供横幅/卡片提示）。 */
     public static String advice(Context ctx) {
-        if (!a11yBound()) return "无障碍服务未连接 · 点「一键开启」恢复";
+        if (!a11yBound()) return "无障碍未连接 · 点「一键开启」恢复";
         java.util.List<String> todo = new java.util.ArrayList<>();
-        if (!ignoringBattery(ctx)) todo.add("电池改为「无限制」");
+        if (!ignoringBattery(ctx)) todo.add("电池无限制");
         if (!notificationsEnabled(ctx)) todo.add("允许通知");
-        if (!guardProcessAlive(ctx)) todo.add("允许后台运行/自启动");
-        if (todo.isEmpty()) return "保活配置完整，掉线可自动恢复";
-        return "建议开启：" + String.join("、", todo) + "（可显著降低掉线率）";
+        if (!guardProcessAlive(ctx)) todo.add("后台运行");
+        if (todo.isEmpty()) return "配置完整 · 掉线可自动恢复";
+        return "建议开启：" + String.join(" / ", todo);
     }
 
     // ---- ROM 识别与手动路径指引 ----
@@ -116,18 +116,16 @@ public final class KeepAliveGuide {
     public static String manualSteps(Context ctx) {
         String r = romName();
         if (r.startsWith("ColorOS")) {
-            return "本机 " + r + "：点下方按钮进入应用详情 → 「耗电管理」→ 打开「允许后台运行」"
-                 + "；再进「应用管理 → 自启动」为本应用打开开关";
+            return "ColorOS 路径：「耗电管理」→ 允许后台运行；再进「应用管理 → 自启动」打开开关";
         }
         if (r.startsWith("MIUI")) {
-            return "本机 " + r + "：安全中心 → 应用管理 → 权限 → 自启动管理，允许本应用；"
-                 + "并在「省电策略」中选「无限制」";
+            return "MIUI 路径：安全中心 → 应用管理 → 权限 → 自启动管理；省电策略选「无限制」";
         }
         if (r.startsWith("EMUI") || r.startsWith("MagicOS")) {
-            return "本机 " + r + "：设置 → 应用 → 应用启动管理，关闭「自动管理」并勾选全部允许";
+            return "路径：设置 → 应用 → 应用启动管理，关闭「自动管理」并全部允许";
         }
         if (r.startsWith("OriginOS")) {
-            return "本机 " + r + "：i管家 → 应用管理 → 权限管理 → 自启动，允许本应用";
+            return "OriginOS 路径：i管家 → 应用管理 → 权限管理 → 自启动";
         }
         return "请在系统设置的「应用管理 / 电池」中允许本应用自启动与后台运行";
     }

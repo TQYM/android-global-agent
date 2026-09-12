@@ -203,8 +203,7 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
     private void refreshKeepAlive() {
         TextView tv = find(R.id.tvKeepAlive);
         if (tv == null) return;
-        tv.setText("保活自检：" + KeepAliveGuide.summary(this) + "\n" + KeepAliveGuide.advice(this)
-                + "\n" + KeepAliveGuide.manualSteps(this));
+        tv.setText(KeepAliveGuide.summary(this) + "\n" + KeepAliveGuide.advice(this));
     }
 
     private void refreshTokens() {
@@ -276,7 +275,10 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
             btnBatteryIgnore.setOnClickListener(v -> KeepAliveGuide.openBatterySettings(this));
         }
         // 保活引导：一键跳厂商「自启动/后台运行」管理页（零 root 保活的关键系统配置）
-        find(R.id.btnAutoStart).setOnClickListener(v -> KeepAliveGuide.openAutoStartSettings(this));
+        find(R.id.btnAutoStart).setOnClickListener(v -> {
+            KeepAliveGuide.openAutoStartSettings(this);
+            toast(KeepAliveGuide.manualSteps(this));   // 详细操作路径随跳转一并提示
+        });
 
         // 管理入口（豆包规格事后层：可回查、可撤回、可清除）
         find(R.id.btnHistory).setOnClickListener(v -> showHistory());

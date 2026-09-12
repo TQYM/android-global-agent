@@ -410,36 +410,68 @@
                     android:minHeight="0dp"/>
             </LinearLayout>
 
-            <TextView
-                android:id="@+id/tvKeepAlive"
-                android:text="保活自检中…"
+            <!-- 保活与后台运行（零 root 保活关键配置）：与「设备形态」卡同风格 -->
+            <LinearLayout
+                android:orientation="vertical"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:textSize="11sp"
-                android:textColor="@color/color_on_surface_variant"/>
+                android:layout_marginTop="10dp"
+                android:padding="12dp"
+                android:background="@drawable/bg_card">
 
-            <Button
-                android:id="@+id/btnAutoStart"
-                android:text="打开自启动/后台运行设置（保活必需）"
-                android:layout_width="match_parent"
-                android:layout_height="40dp"
-                android:layout_marginTop="6dp"
-                android:textSize="12sp"
-                android:textColor="@color/color_primary"
-                android:background="@drawable/btn_chip"
-                android:minHeight="0dp"/>
+                <TextView
+                    android:text="保活与后台运行"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/color_on_surface"/>
 
-            <Button
-                android:id="@+id/btnBatteryIgnore"
-                android:text="锁屏运行保活（忽略电池优化/防后台速冻）"
-                android:layout_width="match_parent"
-                android:layout_height="40dp"
-                android:layout_marginTop="8dp"
-                android:textSize="12sp"
-                android:textColor="@color/color_primary"
-                android:background="@drawable/btn_chip"
-                android:minHeight="0dp"/>
+                <TextView
+                    android:id="@+id/tvKeepAlive"
+                    android:text="自检中…"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:textSize="11sp"
+                    android:maxLines="2"
+                    android:ellipsize="end"
+                    android:textColor="@color/color_on_surface_variant"/>
+
+                <LinearLayout
+                    android:orientation="horizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp">
+                    <Button
+                        android:id="@+id/btnAutoStart"
+                        android:text="自启动设置"
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
+                        android:layout_height="28dp"
+                        android:textSize="11sp"
+                        android:textColor="@color/color_primary"
+                        android:background="@drawable/btn_chip"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
+                        android:paddingLeft="8dp"
+                        android:paddingRight="8dp"/>
+                    <Button
+                        android:id="@+id/btnBatteryIgnore"
+                        android:text="电池无限制"
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
+                        android:layout_height="28dp"
+                        android:layout_marginLeft="6dp"
+                        android:textSize="11sp"
+                        android:textColor="@color/color_primary"
+                        android:background="@drawable/btn_chip"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
+                        android:paddingLeft="8dp"
+                        android:paddingRight="8dp"/>
+                </LinearLayout>
+            </LinearLayout>
         </LinearLayout>
     </ScrollView>
 
@@ -485,8 +517,8 @@
         <Button
             android:id="@+id/btnDebug"
             android:text="调试台"
-            android:layout_width="wrap_content"
-            android:layout_height="32dp"
+            android:layout_width="match_parent"
+            android:layout_height="42dp"
             android:textSize="12sp"
             android:textColor="@color/color_primary"
             android:background="@drawable/btn_ghost"
@@ -558,7 +590,7 @@
             android:layout_width="0dp"
             android:layout_weight="1"
             android:layout_height="wrap_content"
-            android:hint="下达指令，如：在B站搜大模型并总结"
+            android:hint="下达指令…"
             android:textSize="14sp"
             android:minLines="1"
             android:maxLines="3"

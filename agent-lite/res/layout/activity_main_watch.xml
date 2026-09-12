@@ -148,7 +148,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="8dp"
-        android:hint="下达指令，如：打开天气"
+        android:hint="下达指令…"
         android:textSize="12sp"
         android:minLines="1"
         android:maxLines="2"
