@@ -313,7 +313,28 @@
             android:minWidth="0dp"
             android:minHeight="0dp"/>
 
-        <Button
+        <TextView
+                android:id="@+id/tvKeepAlive"
+                android:text="保活自检中…"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:textSize="10sp"
+                android:textColor="@color/color_on_surface_variant"/>
+
+            <Button
+                android:id="@+id/btnAutoStart"
+                android:text="自启动/后台运行设置"
+                android:layout_width="match_parent"
+                android:layout_height="40dp"
+                android:layout_marginTop="4dp"
+                android:textSize="11sp"
+                android:textColor="@color/color_primary"
+                android:background="@drawable/btn_ghost"
+                android:minWidth="0dp"
+                android:minHeight="0dp"/>
+
+            <Button
             android:id="@+id/btnBatteryIgnore"
             android:layout_width="match_parent"
             android:layout_height="42dp"

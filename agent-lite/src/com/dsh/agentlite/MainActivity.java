@@ -97,6 +97,10 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
 
         watchUi = isWatchUi();
         setContentView(watchUi ? R.layout.activity_main_watch : R.layout.activity_main);
+
+        // 启动即与同步服务对账一次：首次自动注册，之后增量上行 + 配置下发。
+        // 内部走单线程 executor，不阻塞首帧；服务器不可达时静默失败、下次启动重试。
+        SyncClient.syncNow(this);
         View root = find(R.id.rootLayout);
         if (root != null) {
             final boolean isWatch = watchUi;
@@ -195,6 +199,14 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
         refreshTokens();
     }
 
+    /** 保活自检卡：显示无障碍/电池/通知/守护进程状态与建议。 */
+    private void refreshKeepAlive() {
+        TextView tv = find(R.id.tvKeepAlive);
+        if (tv == null) return;
+        tv.setText("保活自检：" + KeepAliveGuide.summary(this) + "\n" + KeepAliveGuide.advice(this)
+                + "\n" + KeepAliveGuide.manualSteps(this));
+    }
+
     private void refreshTokens() {
         if (tvTokens == null) return;
         long tot = prefs.totalTokens();
@@ -261,8 +273,10 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
         // 锁屏保活与电池白名单配置指引
         View btnBatteryIgnore = find(R.id.btnBatteryIgnore);
         if (btnBatteryIgnore != null) {
-            btnBatteryIgnore.setOnClickListener(v -> requestIgnoreBatteryOptimizations());
+            btnBatteryIgnore.setOnClickListener(v -> KeepAliveGuide.openBatterySettings(this));
         }
+        // 保活引导：一键跳厂商「自启动/后台运行」管理页（零 root 保活的关键系统配置）
+        find(R.id.btnAutoStart).setOnClickListener(v -> KeepAliveGuide.openAutoStartSettings(this));
 
         // 管理入口（豆包规格事后层：可回查、可撤回、可清除）
         find(R.id.btnHistory).setOnClickListener(v -> showHistory());
@@ -621,6 +635,7 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
         super.onResume();
         // 前台自检：回前台时纠正"设置里已开启但服务未连接"的静默掉线（李跳跳式保活的一环）
         A11yGuard.check(this, "前台自检");
+        refreshKeepAlive();
         refreshA11y();
         refreshTokens();
         refreshDisplay();

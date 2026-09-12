@@ -39,6 +39,20 @@ public class WatchSettingsActivity extends Activity {
 
         tvDisplay = findViewById(R.id.tvDisplay);
         tvTokens = findViewById(R.id.tvTokens);
+        // 保活引导：状态自检 + 一键跳厂商自启动/后台运行设置（零 root 保活的关键配置）
+        TextView tvKeep = findViewById(R.id.tvKeepAlive);
+        if (tvKeep != null) {
+            tvKeep.setText("保活自检：" + KeepAliveGuide.summary(this) + "\n"
+                    + KeepAliveGuide.advice(this) + "\n" + KeepAliveGuide.manualSteps(this));
+        }
+        android.view.View btnAuto = findViewById(R.id.btnAutoStart);
+        if (btnAuto != null) {
+            btnAuto.setOnClickListener(v -> KeepAliveGuide.openAutoStartSettings(this));
+        }
+        android.view.View btnBat = findViewById(R.id.btnBatteryIgnore);
+        if (btnBat != null) {
+            btnBat.setOnClickListener(v -> KeepAliveGuide.openBatterySettings(this));
+        }
 
         loadCfg();
         ((Button) findViewById(R.id.btnBack)).setOnClickListener(v -> finish());
