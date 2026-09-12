@@ -1,6 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- 全局统一原生 Android 主题：透明沉浸式状态栏与导航栏、Material 3 容器底色 -->
+    <!--
+      全局主题：Material 3 深色语言
+      · 色板来自 res/values/colors.xml（M3 token），API 31+ 由 values-v31 动态取色覆盖
+      · 形状规范：按钮 stadium(100dp)、卡片 12dp、输入框 filled 上圆角 4dp
+      · 字阶采用 M3 type scale（下列 TextAppearance 供布局按需引用）
+    -->
     <style name="Theme.AgentLite" parent="@android:style/Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/color_surface</item>
         <item name="android:colorBackground">@color/color_surface</item>
@@ -8,13 +13,19 @@
         <item name="android:colorPrimaryDark">@color/color_surface</item>
         <item name="android:colorAccent">@color/color_primary</item>
 
-        <!-- 彻底消除状态栏与底栏黑块闪烁，全面开启沉浸式 Edge-to-Edge -->
+        <!-- M3 状态层（ripple 高亮）与控件着色 -->
+        <item name="android:colorControlHighlight">@color/color_primary</item>
+        <item name="android:colorControlActivated">@color/color_primary</item>
+        <item name="android:colorButtonNormal">@color/color_secondary_container</item>
+
+        <!-- 沉浸式 Edge-to-Edge -->
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowDrawsSystemBarBackgrounds">true</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
 
+        <!-- M3 默认文本色 -->
         <item name="android:textColorPrimary">@color/color_on_surface</item>
         <item name="android:textColorSecondary">@color/color_on_surface_variant</item>
         <item name="android:textColorHint">@color/color_text_hint</item>
@@ -26,5 +37,34 @@
         <item name="android:colorBackground">@android:color/transparent</item>
         <item name="android:windowNoTitle">true</item>
         <item name="android:windowAnimationStyle">@android:style/Animation.Dialog</item>
+    </style>
+
+    <!-- ===== M3 字阶（Type Scale）===== -->
+    <style name="M3.HeadlineSmall" parent="@android:style/TextAppearance.Material.Headline">
+        <item name="android:textSize">24sp</item>
+    </style>
+    <style name="M3.TitleLarge" parent="@android:style/TextAppearance.Material.Title">
+        <item name="android:textSize">22sp</item>
+    </style>
+    <style name="M3.TitleMedium" parent="@android:style/TextAppearance.Material.Title">
+        <item name="android:textSize">16sp</item>
+    </style>
+    <style name="M3.BodyLarge" parent="@android:style/TextAppearance.Material.Body1">
+        <item name="android:textSize">16sp</item>
+    </style>
+    <style name="M3.BodyMedium" parent="@android:style/TextAppearance.Material.Body1">
+        <item name="android:textSize">14sp</item>
+    </style>
+    <style name="M3.BodySmall" parent="@android:style/TextAppearance.Material.Body2">
+        <item name="android:textSize">12sp</item>
+    </style>
+    <style name="M3.LabelLarge" parent="@android:style/TextAppearance.Material.Button">
+        <item name="android:textSize">14sp</item>
+    </style>
+    <style name="M3.LabelMedium" parent="@android:style/TextAppearance.Material.Caption">
+        <item name="android:textSize">12sp</item>
+    </style>
+    <style name="M3.LabelSmall" parent="@android:style/TextAppearance.Material.Caption">
+        <item name="android:textSize">11sp</item>
     </style>
 </resources>

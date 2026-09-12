@@ -119,7 +119,7 @@
                 android:layout_height="42dp"
                 android:text="一键开启"
                 android:textSize="12sp"
-                android:textColor="@color/color_on_surface"
+                android:textColor="@color/color_on_primary"
                 android:background="@drawable/btn_primary"
                 android:minWidth="0dp"
                 android:minHeight="0dp"/>
@@ -182,7 +182,7 @@
             android:layout_marginLeft="8dp"
             android:text="运行"
             android:textSize="13sp"
-            android:textColor="@color/color_on_surface"
+            android:textColor="@color/color_on_primary"
             android:background="@drawable/btn_primary"
             android:minWidth="0dp"
             android:minHeight="0dp"/>

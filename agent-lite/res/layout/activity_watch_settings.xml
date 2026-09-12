@@ -190,7 +190,7 @@
                 android:layout_height="42dp"
                 android:text="保存配置"
                 android:textSize="12sp"
-                android:textColor="#FFFFFF"
+                android:textColor="@color/color_on_primary"
                 android:background="@drawable/btn_primary"
                 android:minWidth="0dp"
                 android:minHeight="0dp"/>
@@ -383,6 +383,46 @@
             android:minWidth="0dp"
             android:minHeight="0dp"/>
 
+        </LinearLayout>
+
+                <LinearLayout
+            android:orientation="vertical"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:padding="10dp"
+            android:background="@drawable/bg_card">
+        <!-- ===== 账号与额度（账号体系）=====
+             手表端只做入口：登录/注册、额度与兑换码、设备列表都在 LoginActivity 与
+             SettingsActivity 里；本页仅显示当前登录状态并提供跳转。 -->
+        <TextView
+            android:text="账号"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:textColor="@color/color_on_surface_variant"
+            android:textSize="11sp"/>
+
+        <TextView
+            android:id="@+id/tvWatchAccount"
+            android:text="未登录"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:textSize="10sp"
+            android:textColor="@color/color_on_surface_variant"/>
+
+        <Button
+            android:id="@+id/btnAccount"
+            android:layout_width="match_parent"
+            android:layout_height="42dp"
+            android:layout_marginTop="4dp"
+            android:text="登录 / 额度与兑换"
+            android:textSize="12sp"
+            android:textColor="@color/color_on_surface"
+            android:background="@drawable/btn_ghost"
+            android:minWidth="0dp"
+            android:minHeight="0dp"/>
         </LinearLayout>
 
                 <LinearLayout
