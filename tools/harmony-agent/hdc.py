@@ -118,6 +118,10 @@ def walk_nodes(node, out, depth=0, max_depth=60, max_nodes=400):
                 "type": str(ctype)[:24],
                 "clickable": bool(clickable),
                 "scrollable": bool(scrollable),
+                # 开关状态（Toggle/Switch/Checkbox/Radio 的选中态）——实机踩坑：
+                # 不输出状态时，模型切换开关后无法判断是否成功 → 反复点同一节点直至步数耗尽
+                "checked": _bool(attrs.get("checked")),
+                "selected": _bool(attrs.get("selected")),
                 "cx": (x1 + x2) // 2,
                 "cy": (y1 + y2) // 2,
             })

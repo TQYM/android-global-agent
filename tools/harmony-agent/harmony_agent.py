@@ -44,7 +44,11 @@ SCHEMA = (
     "5) 注意「当前页面」字段：若不在目标应用内，先用 home 回桌面或 back 退出当前页，再重新进入；"
     "6) 同一页面上找不到目标时，不要反复滑动，改用返回上级/回桌面换入口；"
     "7) 页面可能停在中间位置：目标是常见项却看不到时，先**向下回滚**（py1 < py2）检查页面上方，"
-    "不要一味向上滑（那样只会越滑越远）。\n"
+    "不要一味向上滑（那样只会越滑越远）；"
+    "8) **切换开关/勾选项**（type 为 Toggle/Switch/Checkbox，通常在行的右侧）必须点**开关本体节点**，"
+    "点整行容器在部分设备上不生效（实机验证）；"
+    "9) **改状态类操作完成后必须复核**：再次观察确认状态真的变了（如 Toggle 变选中、文字变更），"
+    "确认后才可 done；状态没变就换点开关本体或换坐标重试，不要直接报完成。\n"
 )
 
 
@@ -76,11 +80,29 @@ def to_prompt(nodes, screen_w, screen_h, max_nodes=40):
                       + (f" / {win.get('ability')}" if win.get("ability") else ""))
     if not nodes:
         return "\n".join(prefix + ["（当前控件树为空，页面可能加载中，请 wait）"])
-    lines = prefix + [f"屏幕 {screen_w}x{screen_h}。节点表（共 {len(nodes)}，显示前 {max_nodes}）："]
+    lines = prefix + [
+        f"屏幕 {screen_w}x{screen_h}。节点表（共 {len(nodes)}，显示前 {max_nodes}）：",
+        "格式 #编号|文本|标记|(中心坐标)。**只有标【可点】的节点能被 tap**；标【文本】的只是标签，点它无效。",
+    ]
     for n in nodes[:max_nodes]:
-        flag = ("可点" if n["clickable"] else "") + ("|可滚" if n["scrollable"] else "")
+        if n["clickable"]:
+            flag = "可点" + ("|可滚" if n["scrollable"] else "")
+        elif n["scrollable"]:
+            flag = "可滚"
+        else:
+            flag = "文本"
+        # 开关/选中状态直接进 prompt（模型据此判断"是否已切换成功"）
+        state = ""
+        if n.get("checked"):
+            state = "已选中"
+        elif n.get("selected"):
+            state = "已选中"
+        elif n["type"] in ("Toggle", "Switch", "Checkbox"):
+            state = "未选中"
         t = (n["text"] or n["desc"] or "").replace("\n", " ")
-        lines.append(f"#{n['index']}|{t[:40]}|{flag}|({n['cx']},{n['cy']})")
+        typ = n["type"] if n["type"] in ("Toggle", "Switch", "Checkbox", "Radio") else ""
+        lines.append(f"#{n['index']}|{t[:40]}|【{flag}{('·' + typ) if typ else ''}"
+                     f"{('·' + state) if state else ''}】|({n['cx']},{n['cy']})")
     return "\n".join(lines)
 
 
@@ -146,6 +168,13 @@ def run(task, serial, base_url, api_key, model, max_steps=30, verbose=True, sett
                     n = next((x for x in nodes if x["index"] == a["index"]), None)
                     if n is None:
                         raise ValueError(f"节点 {a['index']} 不在表中（每步重新编号）")
+                    if not n["clickable"]:
+                        # 本地拦截：纯文本标签点不动（实机踩坑：模型反复点标题导致空转）
+                        log(f"   ↳ 拦截：#{a['index']} 是文本标签（不可点）")
+                        messages.append({"role": "user", "content":
+                            f"节点 #{a['index']}（{n['text'][:24] or n['type']}）是【文本】标签，不可点击，"
+                            "本次未执行。请从标记为【可点】的节点里选，或改用坐标点击/滑动。"})
+                        continue
                     hdc.click(serial, n["cx"], n["cy"])
                     label = f"tap#{a['index']}"
                 else:
