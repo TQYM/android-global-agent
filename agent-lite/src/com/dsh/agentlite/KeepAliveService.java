@@ -123,6 +123,12 @@ public class KeepAliveService extends Service {
         startForeground(NOTIF_ID, buildNotif(lastRunning, lastTaskTitle, lastStepText, lastStepCur, lastStepMax));
         // 无障碍守护：进程随 START_STICKY 重启后自动恢复监听与周期自检（李跳跳式保活）
         A11yGuard.install(this);
+        // 系统级兜底：ColorOS 等 ROM 不会重启被杀的前台服务，靠 JobScheduler 到点拉起
+        A11yJobService.schedule(this);
+        // 进程外兜底（root 设备）：开机自启的 shell 看门狗，独立于 App 进程，ROM 策略压不到它
+        if (A11yRootWatchdog.rootAvailable(this) && !A11yRootWatchdog.isInstalled(this)) {
+            A11yRootWatchdog.install(this);
+        }
     }
 
     @Override
