@@ -235,10 +235,18 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
             return;
         }
 
+        // 设置改为**二级菜单**：进入时隐藏主视图（四大模块 + 任务下达），按钮文字变「返回」
         find(R.id.btnConfig).setOnClickListener(v -> {
-            boolean show = llConfig.getVisibility() == View.GONE;
-            llConfig.setVisibility(show ? View.VISIBLE : View.GONE);
-            if (show) refreshTokens();
+            boolean toSettings = llConfig.getVisibility() == View.GONE;
+            llConfig.setVisibility(toSettings ? View.VISIBLE : View.GONE);
+            find(R.id.mainContent).setVisibility(toSettings ? View.GONE : View.VISIBLE);
+            ((android.widget.Button) find(R.id.btnConfig)).setText(toSettings ? "返回" : "设置");
+            if (toSettings) {
+                refreshTokens();
+                refreshKeepAlive();
+                refreshDisplay();
+                find(R.id.rootLayout).scrollTo(0, 0);   // 二级菜单从顶部开始
+            }
         });
 
         if (btnResetTokens != null) {
