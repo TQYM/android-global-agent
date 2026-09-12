@@ -1,6 +1,6 @@
 #!/bin/sh
 # 实验：手工构建引入 Material 3（AAR 依赖）——验证无 Gradle 环境下能否使用 M3 组件库
-# 用法: sh build-with-m3.sh [/path/to/aar-dir]   默认 /tmp/m3lib/final
+# 注意：该脚本的能力已合并进 build-mac.sh（默认构建即支持 M3），此处保留作为实验记录。
 set -e
 cd "$(dirname "$0")"
 

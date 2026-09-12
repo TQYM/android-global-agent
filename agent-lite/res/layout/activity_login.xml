@@ -1,0 +1,240 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!--
+  账号登录 / 注册页（LoginActivity）
+  设计要点：
+  - 手机与手表共用同一布局：手表下由代码把水平内边距换成 @dimen/watch_edge（圆屏内接方形）
+  - 账号名与密钥规则常驻展示（注册失败前就让用户知道规则，而不是提交后才报错）
+  - 登录成功后自动绑定本机设备（/api/v1/device/bind），失败会在消息区给出可读中文提示
+-->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/rootLogin"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/color_surface"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:id="@+id/loginContent"
+        android:orientation="vertical"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingLeft="16dp"
+        android:paddingRight="16dp"
+        android:paddingTop="16dp"
+        android:paddingBottom="16dp">
+
+        <!-- 顶栏 -->
+        <LinearLayout
+            android:orientation="horizontal"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical">
+
+            <LinearLayout
+                android:orientation="vertical"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content">
+                <TextView
+                    android:text="账号登录"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/color_on_surface"
+                    android:textSize="20sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:textStyle="bold"/>
+                <TextView
+                    android:text="登录后任务历史/记忆会同步到你的账号"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/color_on_surface_variant"
+                    android:textSize="11sp"/>
+            </LinearLayout>
+
+            <com.google.android.material.button.MaterialButton
+            style="@style/Widget.Material3.Button.TonalButton"
+                android:id="@+id/btnBack"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:text="返回"
+                android:textSize="13sp"
+                android:textColor="@color/color_on_surface"
+                                android:paddingLeft="14dp"
+                android:paddingRight="14dp"
+                android:minWidth="0dp"
+                android:minHeight="0dp"/>
+        </LinearLayout>
+
+        <!-- 当前登录状态 -->
+        <TextView
+            android:id="@+id/tvCurrent"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:padding="10dp"
+            android:background="@drawable/bg_card"
+            android:textColor="@color/color_on_surface_variant"
+            android:textSize="12sp"
+            android:text="当前未登录"/>
+
+        <!-- 输入卡片 -->
+        <LinearLayout
+            android:orientation="vertical"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:padding="12dp"
+            android:background="@drawable/bg_card">
+
+            <EditText
+                android:id="@+id/etName"
+                android:layout_width="match_parent"
+                android:layout_height="44dp"
+                android:hint="账号名"
+                android:textSize="13sp"
+                android:singleLine="true"
+                android:inputType="text"
+                android:textColor="@color/color_on_surface"
+                android:textColorHint="@color/color_text_hint"
+                android:background="@drawable/bg_input"
+                android:paddingLeft="12dp"
+                android:paddingRight="12dp"/>
+
+            <EditText
+                android:id="@+id/etKey"
+                android:layout_width="match_parent"
+                android:layout_height="44dp"
+                android:layout_marginTop="8dp"
+                android:hint="账号密钥"
+                android:textSize="13sp"
+                android:singleLine="true"
+                android:inputType="textPassword"
+                android:textColor="@color/color_on_surface"
+                android:textColorHint="@color/color_text_hint"
+                android:background="@drawable/bg_input"
+                android:paddingLeft="12dp"
+                android:paddingRight="12dp"/>
+
+            <LinearLayout
+                android:orientation="horizontal"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp">
+                <com.google.android.material.button.MaterialButton
+            style="@style/Widget.Material3.Button"
+                    android:id="@+id/btnLogin"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_height="44dp"
+                    android:text="登录"
+                    android:textSize="14sp"
+                    android:textColor="@color/color_on_primary"
+                                        android:minWidth="0dp"
+                    android:minHeight="0dp"/>
+                <com.google.android.material.button.MaterialButton
+            style="@style/Widget.Material3.Button.TonalButton"
+                    android:id="@+id/btnRegister"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_height="44dp"
+                    android:layout_marginLeft="8dp"
+                    android:text="注册新账号"
+                    android:textSize="14sp"
+                    android:textColor="@color/color_on_surface"
+                                        android:minWidth="0dp"
+                    android:minHeight="0dp"/>
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/tvMsg"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:textSize="12sp"
+                android:textColor="@color/color_on_surface_variant"
+                android:visibility="gone"/>
+
+            <com.google.android.material.button.MaterialButton
+            style="@style/Widget.Material3.Button.TonalButton"
+                android:id="@+id/btnSkip"
+                android:layout_width="match_parent"
+                android:layout_height="38dp"
+                android:layout_marginTop="8dp"
+                android:text="稍后再说"
+                android:textSize="12sp"
+                android:textColor="@color/color_on_surface_variant"
+                                android:minWidth="0dp"
+                android:minHeight="0dp"/>
+        </LinearLayout>
+
+        <!-- 规则说明：注册前就能看到账号名与密钥要求 -->
+        <LinearLayout
+            android:orientation="vertical"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:padding="12dp"
+            android:background="@drawable/bg_card">
+
+            <TextView
+                android:text="账号规则"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:textColor="@color/color_on_surface"/>
+
+            <TextView
+                android:id="@+id/tvRuleName"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:textSize="12sp"
+                android:textColor="@color/color_on_surface_variant"
+                android:text="· 账号名 3-32 位，仅小写字母、数字、下划线 _、连字符 -"/>
+
+            <TextView
+                android:id="@+id/tvRuleKey"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:textSize="12sp"
+                android:textColor="@color/color_on_surface_variant"
+                android:text="· 账号密钥至少 8 位（最多 256 位）"/>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:textSize="12sp"
+                android:textColor="@color/color_on_surface_variant"
+                android:text="· 新账号注册即赠送 500 units（1 unit = 1000 tokens）"/>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:textSize="12sp"
+                android:textColor="@color/color_on_surface_variant"
+                android:text="· 每次登录都会轮换账号令牌，其他设备上的旧令牌会立即失效"/>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:textSize="12sp"
+                android:textColor="@color/color_on_surface_variant"
+                android:text="· 密钥只在本机保存并用于换取令牌，服务端只存不可逆哈希"/>
+
+            <TextView
+                android:id="@+id/tvSyncTarget"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:textSize="11sp"
+                android:textColor="@color/color_text_hint"/>
+        </LinearLayout>
+    </LinearLayout>
+</ScrollView>

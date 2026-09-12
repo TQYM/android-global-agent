@@ -9,6 +9,7 @@
    - 触控目标 ≥ 42dp，字号按手表可读性收敛（标题 15sp / 正文 10sp）
 -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/rootLayout"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -53,15 +54,15 @@
                 android:textSize="9sp"/>
         </LinearLayout>
 
-        <Button
+        <com.google.android.material.button.MaterialButton
+            style="@style/Widget.Material3.Button.TonalButton"
             android:id="@+id/btnConfig"
             android:layout_width="wrap_content"
             android:layout_height="40dp"
             android:text="设置"
             android:textSize="11sp"
             android:textColor="@color/color_on_surface"
-            android:background="@drawable/btn_ghost"
-            android:paddingLeft="14dp"
+                        android:paddingLeft="14dp"
             android:paddingRight="14dp"
             android:minWidth="0dp"
             android:minHeight="0dp"/>
@@ -112,7 +113,8 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="6dp">
-            <Button
+            <com.google.android.material.button.MaterialButton
+            style="@style/Widget.Material3.Button"
                 android:id="@+id/btnA11yBanner"
                 android:layout_width="0dp"
                 android:layout_weight="1"
@@ -120,10 +122,10 @@
                 android:text="一键开启"
                 android:textSize="12sp"
                 android:textColor="@color/color_on_primary"
-                android:background="@drawable/btn_primary"
-                android:minWidth="0dp"
+                                android:minWidth="0dp"
                 android:minHeight="0dp"/>
-            <Button
+            <com.google.android.material.button.MaterialButton
+            style="@style/Widget.Material3.Button.TonalButton"
                 android:id="@+id/btnA11y"
                 android:layout_width="0dp"
                 android:layout_weight="1"
@@ -132,8 +134,7 @@
                 android:text="系统无障碍"
                 android:textSize="12sp"
                 android:textColor="@color/color_on_surface"
-                android:background="@drawable/btn_ghost"
-                android:minWidth="0dp"
+                                android:minWidth="0dp"
                 android:minHeight="0dp"/>
         </LinearLayout>
     </LinearLayout>
@@ -163,7 +164,8 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="6dp"
         android:layout_marginBottom="4dp">
-        <Button
+        <com.google.android.material.button.MaterialButton
+            style="@style/Widget.Material3.Button.TonalButton"
             android:id="@+id/btnMic"
             android:layout_width="0dp"
             android:layout_weight="1"
@@ -171,10 +173,10 @@
             android:text="语音"
             android:textSize="13sp"
             android:textColor="@color/color_on_surface"
-            android:background="@drawable/btn_ghost"
-            android:minWidth="0dp"
+                        android:minWidth="0dp"
             android:minHeight="0dp"/>
-        <Button
+        <com.google.android.material.button.MaterialButton
+            style="@style/Widget.Material3.Button"
             android:id="@+id/btnRun"
             android:layout_width="0dp"
             android:layout_weight="1"
@@ -183,8 +185,7 @@
             android:text="运行"
             android:textSize="13sp"
             android:textColor="@color/color_on_primary"
-            android:background="@drawable/btn_primary"
-            android:minWidth="0dp"
+                        android:minWidth="0dp"
             android:minHeight="0dp"/>
     </LinearLayout>
 </LinearLayout>

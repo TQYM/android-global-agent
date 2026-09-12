@@ -6,6 +6,7 @@
   圆形/方形两档边距由 values-round / values 的 dimens 控制。
 -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/rootSettings"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -47,15 +48,15 @@
                     android:textColor="@color/color_on_surface_variant"
                     android:textSize="9sp"/>
             </LinearLayout>
-            <Button
+            <com.google.android.material.button.MaterialButton
+            style="@style/Widget.Material3.Button.TonalButton"
                 android:id="@+id/btnBack"
                 android:text="返回"
                 android:layout_width="wrap_content"
                 android:layout_height="40dp"
                 android:textSize="11sp"
                 android:textColor="@color/color_on_surface"
-                android:background="@drawable/btn_ghost"
-                android:paddingLeft="14dp"
+                                android:paddingLeft="14dp"
                 android:paddingRight="14dp"
                 android:minWidth="0dp"
                 android:minHeight="0dp"/>
@@ -168,7 +169,7 @@
                 android:textColorHint="@color/color_text_hint"
                 android:background="@drawable/bg_input"
                 android:padding="8dp"/>
-            <Switch
+            <com.google.android.material.materialswitch.MaterialSwitch
                 android:id="@+id/swVision"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
@@ -183,7 +184,8 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="6dp">
-            <Button
+            <com.google.android.material.button.MaterialButton
+            style="@style/Widget.Material3.Button"
                 android:id="@+id/btnSave"
                 android:layout_width="0dp"
                 android:layout_weight="1"
@@ -191,10 +193,10 @@
                 android:text="保存配置"
                 android:textSize="12sp"
                 android:textColor="@color/color_on_primary"
-                android:background="@drawable/btn_primary"
-                android:minWidth="0dp"
+                                android:minWidth="0dp"
                 android:minHeight="0dp"/>
-            <Button
+            <com.google.android.material.button.MaterialButton
+            style="@style/Widget.Material3.Button.TonalButton"
                 android:id="@+id/btnResetTokens"
                 android:layout_width="0dp"
                 android:layout_weight="1"
@@ -203,8 +205,7 @@
                 android:text="清零 Token"
                 android:textSize="11sp"
                 android:textColor="@color/color_on_surface"
-                android:background="@drawable/btn_ghost"
-                android:minWidth="0dp"
+                                android:minWidth="0dp"
                 android:minHeight="0dp"/>
         </LinearLayout>
 
@@ -235,7 +236,8 @@
             android:textColor="@color/color_on_surface_variant"
             android:textSize="11sp"/>
 
-        <Button
+        <com.google.android.material.button.MaterialButton
+            style="@style/Widget.Material3.Button.TonalButton"
             android:id="@+id/btnHistory"
             android:layout_width="match_parent"
             android:layout_height="42dp"
@@ -243,11 +245,11 @@
             android:text="历史记录"
             android:textSize="12sp"
             android:textColor="@color/color_on_surface"
-            android:background="@drawable/btn_ghost"
-            android:minWidth="0dp"
+                        android:minWidth="0dp"
             android:minHeight="0dp"/>
 
-        <Button
+        <com.google.android.material.button.MaterialButton
+            style="@style/Widget.Material3.Button.TonalButton"
             android:id="@+id/btnMemory"
             android:layout_width="match_parent"
             android:layout_height="42dp"
@@ -255,11 +257,11 @@
             android:text="全局记忆"
             android:textSize="12sp"
             android:textColor="@color/color_on_surface"
-            android:background="@drawable/btn_ghost"
-            android:minWidth="0dp"
+                        android:minWidth="0dp"
             android:minHeight="0dp"/>
 
-        <Button
+        <com.google.android.material.button.MaterialButton
+            style="@style/Widget.Material3.Button.TonalButton"
             android:id="@+id/btnEco"
             android:layout_width="match_parent"
             android:layout_height="42dp"
@@ -267,11 +269,11 @@
             android:text="省电策略"
             android:textSize="12sp"
             android:textColor="@color/color_on_surface"
-            android:background="@drawable/btn_ghost"
-            android:minWidth="0dp"
+                        android:minWidth="0dp"
             android:minHeight="0dp"/>
 
-        <Button
+        <com.google.android.material.button.MaterialButton
+            style="@style/Widget.Material3.Button.TonalButton"
             android:id="@+id/btnAuth"
             android:layout_width="match_parent"
             android:layout_height="42dp"
@@ -279,8 +281,7 @@
             android:text="预授权管理"
             android:textSize="12sp"
             android:textColor="@color/color_on_surface"
-            android:background="@drawable/btn_ghost"
-            android:minWidth="0dp"
+                        android:minWidth="0dp"
             android:minHeight="0dp"/>
 
         </LinearLayout>
@@ -301,7 +302,8 @@
             android:textColor="@color/color_on_surface_variant"
             android:textSize="11sp"/>
 
-        <Button
+        <com.google.android.material.button.MaterialButton
+            style="@style/Widget.Material3.Button.TonalButton"
             android:id="@+id/btnA11y"
             android:layout_width="match_parent"
             android:layout_height="42dp"
@@ -309,8 +311,7 @@
             android:text="无障碍服务"
             android:textSize="12sp"
             android:textColor="@color/color_on_surface"
-            android:background="@drawable/btn_ghost"
-            android:minWidth="0dp"
+                        android:minWidth="0dp"
             android:minHeight="0dp"/>
 
         <LinearLayout
@@ -345,7 +346,8 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="6dp">
-                <Button
+                <com.google.android.material.button.MaterialButton
+            style="@style/Widget.Material3.Button.TonalButton"
                     android:id="@+id/btnAutoStart"
                     android:text="自启动设置"
                     android:layout_width="0dp"
@@ -353,10 +355,10 @@
                     android:layout_height="34dp"
                     android:textSize="10sp"
                     android:textColor="@color/color_on_surface"
-                    android:background="@drawable/btn_ghost"
-                    android:minWidth="0dp"
+                                        android:minWidth="0dp"
                     android:minHeight="0dp"/>
-                <Button
+                <com.google.android.material.button.MaterialButton
+            style="@style/Widget.Material3.Button.TonalButton"
                     android:id="@+id/btnBatteryIgnore"
                     android:text="电池无限制"
                     android:layout_width="0dp"
@@ -365,13 +367,13 @@
                     android:layout_marginLeft="6dp"
                     android:textSize="10sp"
                     android:textColor="@color/color_on_surface"
-                    android:background="@drawable/btn_ghost"
-                    android:minWidth="0dp"
+                                        android:minWidth="0dp"
                     android:minHeight="0dp"/>
             </LinearLayout>
         </LinearLayout>
 
-            <Button
+            <com.google.android.material.button.MaterialButton
+            style="@style/Widget.Material3.Button.TonalButton"
             android:id="@+id/btnBatteryIgnore"
             android:layout_width="match_parent"
             android:layout_height="42dp"
@@ -379,8 +381,7 @@
             android:text="电池优化白名单"
             android:textSize="12sp"
             android:textColor="@color/color_on_surface"
-            android:background="@drawable/btn_ghost"
-            android:minWidth="0dp"
+                        android:minWidth="0dp"
             android:minHeight="0dp"/>
 
         </LinearLayout>
@@ -412,7 +413,8 @@
             android:textSize="10sp"
             android:textColor="@color/color_on_surface_variant"/>
 
-        <Button
+        <com.google.android.material.button.MaterialButton
+            style="@style/Widget.Material3.Button.TonalButton"
             android:id="@+id/btnAccount"
             android:layout_width="match_parent"
             android:layout_height="42dp"
@@ -420,8 +422,7 @@
             android:text="登录 / 额度与兑换"
             android:textSize="12sp"
             android:textColor="@color/color_on_surface"
-            android:background="@drawable/btn_ghost"
-            android:minWidth="0dp"
+                        android:minWidth="0dp"
             android:minHeight="0dp"/>
         </LinearLayout>
 
@@ -458,7 +459,8 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="6dp"
             android:layout_marginBottom="4dp">
-            <Button
+            <com.google.android.material.button.MaterialButton
+            style="@style/Widget.Material3.Button.TonalButton"
                 android:id="@+id/btnDisplayRefresh"
                 android:layout_width="0dp"
                 android:layout_weight="1"
@@ -466,10 +468,10 @@
                 android:text="刷新形态"
                 android:textSize="11sp"
                 android:textColor="@color/color_on_surface"
-                android:background="@drawable/btn_ghost"
-                android:minWidth="0dp"
+                                android:minWidth="0dp"
                 android:minHeight="0dp"/>
-            <Button
+            <com.google.android.material.button.MaterialButton
+            style="@style/Widget.Material3.Button.TonalButton"
                 android:id="@+id/btnDisplayCalib"
                 android:layout_width="0dp"
                 android:layout_weight="1"
@@ -478,8 +480,7 @@
                 android:text="坐标校准"
                 android:textSize="11sp"
                 android:textColor="@color/color_on_surface"
-                android:background="@drawable/btn_ghost"
-                android:minWidth="0dp"
+                                android:minWidth="0dp"
                 android:minHeight="0dp"/>
         </LinearLayout>
         </LinearLayout>

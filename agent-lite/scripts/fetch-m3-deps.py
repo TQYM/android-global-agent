@@ -12,7 +12,7 @@ import xml.etree.ElementTree as ET
 
 BASE = "https://maven.aliyun.com/repository/google"
 MAVEN_CENTRAL = "https://maven.aliyun.com/repository/public"
-OUT = "/tmp/m3lib/deps"
+OUT = os.environ.get("M3_DEPS_OUT", os.path.expanduser("~/.agent-lite-m3-deps"))
 NS = "{http://maven.apache.org/POM/4.0.0}"
 
 seen = set()

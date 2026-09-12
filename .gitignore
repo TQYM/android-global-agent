@@ -40,3 +40,4 @@ agentd-go/build/
 agent-client/assets/vd_daemon.jar
 tests/results-*.jsonl
 
+.m3-deps/
