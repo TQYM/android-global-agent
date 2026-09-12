@@ -619,6 +619,8 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
     @Override
     protected void onResume() {
         super.onResume();
+        // 前台自检：回前台时纠正"设置里已开启但服务未连接"的静默掉线（李跳跳式保活的一环）
+        A11yGuard.check(this, "前台自检");
         refreshA11y();
         refreshTokens();
         refreshDisplay();
@@ -664,6 +666,12 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
         // 复用已在前台的实例（singleTask）时不会走 onResume：这里补一次状态刷新，
         // 否则从系统无障碍页返回 / adb 唤起的场景会显示过期的服务状态（横幅滞留）。
         refreshA11y();
+        if (it.getBooleanExtra("a11y_repair", false)) {
+            // 来自掉线通知：先尝试自动修复；仍不健康则直达无障碍设置页由用户一键恢复
+            if (!A11yGuard.check(this, "通知修复")) {
+                ui.postDelayed(() -> A11yLauncher.open(this), 600);
+            }
+        }
         String task = it.getStringExtra("task");
         if (task != null && !task.trim().isEmpty()) {
             etTask.setText(task.trim());

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 package com.dsh.agentlite;
 
 import android.accessibilityservice.AccessibilityService;
@@ -84,6 +86,7 @@ public class AgentA11yService extends AccessibilityService {
     public void onDestroy() {
         if (overlay != null) { overlay.hideAll(); overlay = null; }
         sInstance = null;
+        A11yGuard.onServiceLost(this);   // 掉线守护：宽限后复查并在需要时回写设置
         super.onDestroy();
     }
 
@@ -91,6 +94,7 @@ public class AgentA11yService extends AccessibilityService {
     public boolean onUnbind(android.content.Intent intent) {
         if (overlay != null) { overlay.hideAll(); overlay = null; }
         sInstance = null;
+        A11yGuard.onServiceLost(this);
         return super.onUnbind(intent);
     }
 

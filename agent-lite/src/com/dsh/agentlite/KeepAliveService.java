@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 package com.dsh.agentlite;
 
 import android.app.Notification;
@@ -119,6 +121,8 @@ public class KeepAliveService extends Service {
             nm.createNotificationChannel(ch);
         }
         startForeground(NOTIF_ID, buildNotif(lastRunning, lastTaskTitle, lastStepText, lastStepCur, lastStepMax));
+        // 无障碍守护：进程随 START_STICKY 重启后自动恢复监听与周期自检（李跳跳式保活）
+        A11yGuard.install(this);
     }
 
     @Override
@@ -135,6 +139,38 @@ public class KeepAliveService extends Service {
             nm.notify(NOTIF_ID, buildNotif(lastRunning, lastTaskTitle, lastStepText, lastStepCur, lastStepMax));
         }
         return START_STICKY;
+    }
+
+    private static final int NOTIF_A11Y_ID = 1002;
+
+    /** 无障碍掉线兜底提醒（A11yGuard L3）：高优先级、点击直达无障碍设置页。 */
+    public static void notifyA11yLost(Context ctx) {
+        try {
+            NotificationManager nm = (NotificationManager) ctx.getSystemService(NOTIFICATION_SERVICE);
+            if (nm == null) return;
+            NotificationChannel ch = new NotificationChannel(
+                    CHANNEL, "Agent 系统灵动岛", NotificationManager.IMPORTANCE_HIGH);
+            nm.createNotificationChannel(ch);
+            Intent i = new Intent(ctx, MainActivity.class)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    .putExtra("a11y_repair", true);
+            PendingIntent pi = PendingIntent.getActivity(ctx, 1, i,
+                    PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+            Notification n = new Notification.Builder(ctx, CHANNEL)
+                    .setContentTitle("无障碍服务已掉线")
+                    .setContentText("点此一键恢复（否则 Agent 无法操作手机）")
+                    .setSmallIcon(R.drawable.ic_dot_red)
+                    .setColor(MonetColors.primary(ctx))
+                    .setAutoCancel(true)
+                    .setOngoing(true)
+                    .setVisibility(Notification.VISIBILITY_PUBLIC)
+                    .setCategory(Notification.CATEGORY_ERROR)
+                    .setContentIntent(pi)
+                    .build();
+            nm.notify(NOTIF_A11Y_ID, n);
+        } catch (Throwable t) {
+            android.util.Log.w("KeepAlive", "notifyA11yLost: " + t);
+        }
     }
 
     private Notification buildNotif(boolean running, String task, String step, int curStep, int maxSteps) {
