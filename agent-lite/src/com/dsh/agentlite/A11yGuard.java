@@ -19,12 +19,13 @@ import android.provider.Settings;
  *   3) 周期自检（KeepAliveService 内每 30s）→ 覆盖"无人通知的静默掉线"；前台服务被杀后由
  *      START_STICKY 重启，onCreate 再次 install 即恢复守护。
  *
- * 分级恢复（能力递减，实测校准）：
- *   L1 root：settings delete + put 回写。**必须 delete 再 put**——写入相同值时系统不触发重绑
- *           （OWW261 实测：直接 put 同值无效，delete+put 后系统立即重新绑定）；
- *   L2 root 不可用：尝试 ContentResolver 直接写（需 WRITE_SECURE_SETTINGS，普通应用会抛
- *           SecurityException，捕获后降级）；同时拉起主界面，让系统重走一次绑定路径；
- *   L3 兜底：发高优先级通知，点击直达无障碍设置页，由用户一键恢复。
+ * 分级恢复（**全程零 root**，能力递减，实测校准）：
+ *   L1 直接写 Settings.Secure（需 WRITE_SECURE_SETTINGS；agent-lite 已声明，删除后重写以触发变化），
+ *      写入后读回校验；
+ *   L2 拉起主界面：实测证实——只要 enabled_accessibility_services 里仍有本服务，**App 进程重新
+ *      启动后系统即重新绑定**（一加 13T force-stop 场景实测：am start 后绑定恢复 1），
+ *      故"拉起界面"本身就是有效的零 root 恢复手段；
+ *   L3 通知兜底：高优先级通知，点击直达无障碍设置页，由用户一键恢复。
  *
  * 节流：修复后 8s 内不再重复修复（避免与系统写设置形成回环）；自检 2s 内合并。
  */
@@ -133,41 +134,46 @@ public final class A11yGuard {
     /** 分级修复。listed=true 表示设置列表里仍有本服务（多为 crashed/回收），false 表示被关闭。 */
     private static boolean repair(Context app, boolean listed) {
         String comp = app.getPackageName() + "/" + AgentA11yService.class.getName();
-        // L1: root 回写（delete + put：同值直接 put 不触发系统重绑，实测结论）
-        if (RootShell.available(app)) {
-            RootShell.exec("settings delete secure enabled_accessibility_services");
-            boolean a = RootShell.exec("settings put secure enabled_accessibility_services " + comp);
-            boolean b = RootShell.exec("settings put secure accessibility_enabled 1");
-            log("L1 root 回写: " + (a && b ? "已提交 ✓" : "命令失败 ✗"));
-            if (a || b) return true;
-        }
-        // L2: 无 root → 尝试直接写设置（需 WRITE_SECURE_SETTINGS；普通应用会抛 SecurityException）
+        // L1: 直接写 Settings.Secure（需 WRITE_SECURE_SETTINGS，非 root 手段；
+        //     agent-lite 已声明该权限，adb 授权/系统应用场景可用，普通安装会抛 SecurityException 走后续降级）
         try {
-            Settings.Secure.putString(app.getContentResolver(),
-                    Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, comp);
-            Settings.Secure.putInt(app.getContentResolver(),
-                    Settings.Secure.ACCESSIBILITY_ENABLED, 1);
-            // 读回校验：无 WRITE_SECURE_SETTINGS 时写入可能静默失败
-            boolean okList = A11yLauncher.isEnabledInSettings(app);
-            boolean okFlag = isEnabledFlag(app);
-            log("L2 直接写设置: 列表=" + okList + " 开关=" + okFlag + (okList && okFlag ? " ✓" : " ✗（无写权限）"));
-            if (okList && okFlag) return true;
+            // **抖动写入**（实测关键）：ColorOS 上"写入相同值"或"仅置开关"都**不会**触发系统重绑
+            // （一加 13T 实测：settings put accessibility_enabled 1 后绑定仍为 0；
+            //   而 delete+put 后系统立即重新绑定）。故先清空、短暂等待、再写回。
+            ContentResolver cr = app.getContentResolver();
+            Settings.Secure.putString(cr, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, "");
+            Settings.Secure.putInt(cr, Settings.Secure.ACCESSIBILITY_ENABLED, 0);
+            log("L1 抖动阶段1：已清空设置（等待系统感知）");
+            if (sHandler == null) sHandler = new Handler(Looper.getMainLooper());
+            sHandler.postDelayed(() -> {
+                try {
+                    Settings.Secure.putString(cr, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, comp);
+                    Settings.Secure.putInt(cr, Settings.Secure.ACCESSIBILITY_ENABLED, 1);
+                    boolean okList = A11yLauncher.isEnabledInSettings(app);
+                    boolean okFlag = isEnabledFlag(app);
+                    log("L1 抖动阶段2：列表=" + okList + " 开关=" + okFlag
+                            + (okList && okFlag ? " ✓" : " ✗（无写权限）"));
+                } catch (Throwable t) {
+                    log("L1 阶段2 失败: " + t.getClass().getSimpleName());
+                }
+            }, 500);
+            return true;
         } catch (Throwable t) {
-            log("L2 直接写设置不可用（正常，非系统应用）: " + t.getClass().getSimpleName());
+            log("L1 写设置不可用（普通安装的正常现象，无需 root）: " + t.getClass().getSimpleName());
         }
-        // L2b: 拉起主界面——"列表中但未连接"时，App 进程重新启动常能触发系统重走绑定路径
+        // L2: 拉起主界面——"列表中但未连接"时，App 进程重新启动常能触发系统重走绑定路径
         if (listed) {
             try {
                 android.content.Intent i = new android.content.Intent(app, MainActivity.class)
                         .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
                 app.startActivity(i);
-                log("L2b 已拉起主界面，等待系统重绑");
+                log("L2 已拉起主界面，等待系统重绑");
                 return true;
             } catch (Throwable t) {
-                log("L2b 拉起主界面失败: " + t);
+                log("L2 拉起主界面失败: " + t);
             }
         }
-        // L3: 通知兜底（点击直达无障碍设置页）
+        // L3: 通知兜底（零 root 的最终手段）（点击直达无障碍设置页）
         try {
             KeepAliveService.notifyA11yLost(app);
             log("L3 已发恢复提醒通知");

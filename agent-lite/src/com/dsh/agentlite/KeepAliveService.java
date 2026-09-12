@@ -120,15 +120,23 @@ public class KeepAliveService extends Service {
             ch.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
             nm.createNotificationChannel(ch);
         }
-        startForeground(NOTIF_ID, buildNotif(lastRunning, lastTaskTitle, lastStepText, lastStepCur, lastStepMax));
-        // 无障碍守护：进程随 START_STICKY 重启后自动恢复监听与周期自检（李跳跳式保活）
-        A11yGuard.install(this);
-        // 系统级兜底：ColorOS 等 ROM 不会重启被杀的前台服务，靠 JobScheduler 到点拉起
-        A11yJobService.schedule(this);
-        // 进程外兜底（root 设备）：开机自启的 shell 看门狗，独立于 App 进程，ROM 策略压不到它
-        if (A11yRootWatchdog.rootAvailable(this) && !A11yRootWatchdog.isInstalled(this)) {
-            A11yRootWatchdog.install(this);
+        // 守护逻辑必须"无论如何都执行"：进程被后台拉起时（bindService/JobScheduler），
+        // Android 12+ 可能抛 BackgroundServiceStartNotAllowedException 阻止 startForeground，
+        // 若把它放在前面会连带跳过守护安装（真机踩坑：进程起来了但无障碍未恢复）
+        try {
+            startForeground(NOTIF_ID, buildNotif(lastRunning, lastTaskTitle, lastStepText, lastStepCur, lastStepMax));
+        } catch (Throwable t) {
+            android.util.Log.w("KeepAlive", "startForeground 被限制（进程仍继续守护）: " + t);
         }
+        // 无障碍守护：进程随 START_STICKY 重启后自动恢复监听与周期自检（李跳跳式保活）
+        try { A11yGuard.install(this); } catch (Throwable t) {
+            android.util.Log.w("KeepAlive", "A11yGuard: " + t);
+        }
+        // 系统级兜底：ColorOS 等 ROM 不会重启被杀的前台服务，靠 JobScheduler 到点拉起
+        try { A11yJobService.schedule(this); } catch (Throwable ignored) { }
+        // 零 root 双进程互拉：独立 :guard 进程监控主进程存活并在死亡时拉起（不依赖任何特权）
+        try { GuardService.start(this); } catch (Throwable ignored) { }
+
     }
 
     @Override
