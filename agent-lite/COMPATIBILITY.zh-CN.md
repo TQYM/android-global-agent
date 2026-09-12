@@ -150,37 +150,45 @@ root 不能解决的：应用级无障碍节点屏蔽（如微信）只能视觉
 - Android 10 及以下（a11y 截图 API 不存在；如需支持可关视觉模式，minSdk 可降至 26，代价是失去视觉感知）
 - Google Play 分发：QUERY_ALL_PACKAGES 与无障碍自动化属受限权限，本项目定位侧载/自用
 
-## 无障碍保活（掉线自愈，2026-09-12 新增）
+## 无障碍保活（掉线自愈，2026-09-12）——**全程零 root**
 
 **问题**：无障碍服务经常掉授权——系统设置里仍显示已开启，但服务实际未连接（进程被回收/强杀后
 残留 crashed 标记），或开关被省电策略改回。此时 App 全部能力失效。
 
-**四层防护体系**（由内到外）：
+### 四层防护（零 root）
 
-| 层 | 机制 | 生效条件 | 实测效果 |
+| 层 | 机制 | 生效条件 | 实测效果（一加 13T / ColorOS 16） |
 |---|---|---|---|
-| L1 | `A11yGuard`：ContentObserver 监听设置变更 + 5s 周期自检 + 服务掉线回调 | App 进程存活 | 总开关被关 → **5s 内**回写；列表被清空 → **20s 内**回写 |
-| L2 | `KeepAliveService` 前台服务（START_STICKY） | 系统按 AOSP 语义重启服务 | 模拟器上 kill -9 后 **3s 自启** |
-| L3 | `A11yJobService`（JobScheduler，15 分钟系统托管，persisted） | ROM 保留系统级调度 | 模拟器有效；**ColorOS 16 实测被压制**（注册成功但到点不拉起） |
-| L4 | `A11yRootWatchdog`（root）：`/data/adb/service.d/` 开机自启 shell，30-60s 检查绑定 | 设备已 root（KernelSU/Magisk） | 一加 13T：强杀后 **30s 内**救活（进程重建 + 绑定恢复） |
-| 兜底 | 高优先级通知（点击直达无障碍设置页） | 未 root 且自动恢复失败 | 引导用户一键恢复 |
+| L1 | `A11yGuard`：ContentObserver + 5s 周期自检 + 服务掉线回调（onUnbind/onDestroy） | App 进程存活 | 总开关被关/列表被清 → 5–20s 内恢复 |
+| L2 | `GuardService`（独立 `:guard` 进程）：跨进程 bind 主服务，死亡通知即互拉 | 守护进程存活 | 强杀主进程后 **10s 内**全链恢复 |
+| L3 | `A11yJobService`：JobScheduler persisted 周期任务 | ROM 保留系统级调度 | 注册成功；ColorOS 实测被压制（不拉起） |
+| L4 | 高优先级通知（点击直达无障碍设置页） | 以上失败时 | 引导用户一键恢复 |
 
-**分级恢复策略**（A11yGuard.repair）：
-1. **root**：`settings delete` + `put`（**必须 delete 再 put**——写入相同值系统不触发重绑，OWW261 实测）；
-2. **直接写 Settings.Secure**：需 `WRITE_SECURE_SETTINGS`（agent-lite 已声明；模拟器/一加实测 granted），写入后读回校验防静默失败；
-3. **拉起主界面**："列表中但未连接"时让系统重走绑定路径；
-4. **通知兜底**：以上都失败时提示用户。
+### 三个关键实现细节（均为实机踩坑得出）
 
-**关键修正**：健康判定不能只看"服务已连接"——总开关被关时服务可能**仍短暂绑定**（系统异步解绑），
-故改为 `bound && accessibility_enabled==1 && 列表含本服务` 三者齐备才算健康。
+1. **抖动写入（最关键）**：ColorOS 上「写入相同值」或「只把 `accessibility_enabled` 置 1」
+   **都不会**触发系统重新绑定（实测：`settings put` 后绑定仍为 0）。
+   必须**清空 → 等 500ms → 写回**（对照实验：`delete`+`put` 有效，单纯 `put` 无效）。
+   实现上用 Handler 分两阶段，避免主线程 sleep 触发 ANR。
+2. **守护逻辑与前台服务解耦**：Android 12+ 限制后台启动前台服务，
+   `startForeground` 可能抛异常；若守护安装在它之后会被连带跳过
+   （真机踩坑：进程被拉起但无障碍始终不恢复）。现在守护安装独立 try 执行。
+3. **后台拉起界面用全屏意图**：Android 10+ 禁止后台 `startActivity`；
+   用 `USE_FULL_SCREEN_INTENT`（已声明且 granted）的 `setFullScreenIntent` 是合法通道——
+   界面显示是无障碍重新绑定的关键路径。
 
-**国产 ROM 注意事项**（一加 13T / ColorOS 16 实测结论）：
-- 进程被信号杀死（`ApplicationExitInfo reason=2 SIGNALED`）后，ColorOS **不重启**前台服务，
-  且 JobScheduler 到点也不拉起 → **必须依赖 L4 root 看门狗**，或让用户把 App 加入系统
-  「自启动 / 后台运行」白名单（设置 → 应用管理 → 允许自启动、电池无限制）。
-- 打开系统无障碍设置页**不能**触发重绑（实测绑定仍为 0），不要把它当作恢复手段。
-- App 内的 L4 自动部署需要 KernelSU 给 agent-lite 授予 root；未授权时可手动部署：
-  `adb shell "su -c 'cp /sdcard/guard.sh /data/adb/service.d/agentlite_a11y_guard.sh; chmod 755 ...'"`
+### 客观极限（实测）
 
-**诊断**：掉线次数 / 修复成败 / 最近事件写入 engine.log（`A11yGuard: ...`）；看门狗日志在
-`/data/local/tmp/agentlite_guard.log`。
+| 场景 | 结果 |
+|---|---|
+| 总开关被关 / 列表被清空 | ✅ 5–20s 内自动恢复 |
+| 单次强杀主进程（kill -9） | ✅ **10s 内**全链恢复（进程重建 + 开关 + 绑定） |
+| **连续强杀** | ❌ 两进程被 ColorOS 一并清理（ROM 策略升级）——零 root 客观极限 |
+| force-stop（用户强停） | ⚠️ 进程不自启（系统限制）；再次打开 App 立即恢复 |
+| am kill（后台回收） | ✅ 前台服务受保护 |
+
+**建议用户配置**（与李跳跳等所有零 root 工具一致）：ColorOS/小米/华为等 ROM 中把 App 加入
+「自启动 + 后台运行」白名单、电池改为「无限制」，可显著降低被清理概率。
+
+**诊断**：`A11yGuard`/`GuardService`/`A11yJob` 日志写入 engine.log（注意：ColorOS 会抑制
+后台应用的 logcat 输出，排查时以 engine.log 与 `dumpsys` 状态为准）。
