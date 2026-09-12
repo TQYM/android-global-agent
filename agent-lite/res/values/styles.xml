@@ -6,6 +6,12 @@
       · 形状规范：按钮 stadium(100dp)、卡片 12dp、输入框 filled 上圆角 4dp
       · 字阶采用 M3 type scale（下列 TextAppearance 供布局按需引用）
     -->
+    <!--
+      说明：项目已可引入 Material 3 组件库（见 build-with-m3.sh，无需 Gradle）。
+      若要让全应用使用 M3 官方主题（含 Material 组件默认样式），把下行 parent 改为：
+        parent="Theme.Material3.DayNight.NoActionBar"
+      即可（实测已通过：构建 + 真机零崩溃）。当前保留平台主题，避免既有界面观感变化。
+    -->
     <style name="Theme.AgentLite" parent="@android:style/Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/color_surface</item>
         <item name="android:colorBackground">@color/color_surface</item>
