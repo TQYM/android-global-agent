@@ -97,7 +97,7 @@ public class AssistActivity extends Activity {
                 LlmClient c = new LlmClient(prefs.baseUrl(), prefs.apiKey(), prefs.model());
                 String text = c.transcribe(wav, prefs.asrModel());
                 ui.post(() -> {
-                    btnMic.setText("按住/点按说话");
+                    btnMic.setText("按住说话");
                     if (text == null || text.trim().isEmpty()) {
                         tvHint.setText("未识别到清晰语音，请重新录制或打字输入");
                     } else {
@@ -109,7 +109,7 @@ public class AssistActivity extends Activity {
                 });
             } catch (Exception e) {
                 ui.post(() -> {
-                    btnMic.setText("按住/点按说话");
+                    btnMic.setText("按住说话");
                     tvHint.setText("识别失败: " + e.getMessage());
                 });
             }

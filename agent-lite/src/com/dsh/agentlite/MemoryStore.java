@@ -38,6 +38,7 @@ public final class MemoryStore {
         it.text = text;
         all.add(it);
         save(ctx, all);
+        SyncClient.onMemoryAdded(ctx);   // 变更即触发增量上行（内部异步，不阻塞调用方）
     }
 
     public static synchronized List<Item> list(Context ctx) {

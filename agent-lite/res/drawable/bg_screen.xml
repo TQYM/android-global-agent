@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Material 3 · 最低层表面（surface-container-lowest），用于屏幕回显等内嵌区域 -->
-<shape xmlns:android="http://schemas.android.com/apk/res/android"
-    android:shape="rectangle">
-    <solid android:color="@color/color_surface_container_lowest"/>
-    <corners android:radius="12dp"/>
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="#05070B"/>
+    <stroke android:width="1dp" android:color="#232B3A"/>
+    <corners android:radius="14dp"/>
 </shape>

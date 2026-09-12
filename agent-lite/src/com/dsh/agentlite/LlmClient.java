@@ -8,6 +8,8 @@ import org.json.JSONObject;
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.InputStream;
+import android.content.Context;
+
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
@@ -18,9 +20,27 @@ import java.nio.charset.StandardCharsets;
  */
 public class LlmClient {
 
+    private static final String TAG = "LlmClient";
+
     private final String baseUrl;
     private final String apiKey;
     private final String model;
+
+    /** 备用配置（用户自填的直连地址）。网关异常时回退到它；402 不回退。 */
+    private String fbBaseUrl;
+    private String fbApiKey;
+    private boolean onFallback;
+
+    /**
+     * 额度耗尽（网关返回 402）。
+     *
+     * 单独成类而不是普通 Exception，是为了让调用方能把「没额度了」与
+     * 「网络/配置出错」区分开——前者要引导去充值，后者要提示检查网络。
+     * 也用于在 chat() 里跳过 429 退避重试（对 402 重试毫无意义，只会白等 2 分钟）。
+     */
+    public static class QuotaExhaustedException extends Exception {
+        public QuotaExhaustedException(String msg) { super(msg); }
+    }
     private String visionModel;   // 含图消息时切换（纯文本模型配视觉搭档）
     private TokenUsageListener tokenListener;
 
@@ -33,6 +53,40 @@ public class LlmClient {
         this.apiKey = apiKey;
         this.model = model;
     }
+
+    /**
+     * 按当前配置构造客户端。
+     *
+     * 已登录且未显式关闭网关时，base_url 指向同步服务的 OpenAI 兼容端点、
+     * api_key 用账号令牌——这样模型调用受**账号额度**约束，服务端按下游
+     * 返回的 usage 精确扣减（1 unit = 1000 tokens）。
+     * 未登录时沿用用户自填的 DashScope 配置直连，功能不退化。
+     */
+    public static LlmClient forPrefs(Context ctx, Prefs p, String model) {
+        if (p.loggedIn() && p.sp.getBoolean("use_gateway", true)) {
+            String base = SyncClient.serverBase(ctx);
+            String token = p.accountToken();
+            if (!base.isEmpty() && !token.isEmpty()) {
+                // 备用是用户自填的直连配置：网关 5xx / 网络异常 / 上游鉴权失败时回退，
+                // 但 **402 额度耗尽绝不回退**——否则额度形同虚设。
+                return new LlmClient(base + "/v1", token, model)
+                        .fallback(p.baseUrl(), p.apiKey());
+            }
+        }
+        return new LlmClient(p.baseUrl(), p.apiKey(), model);
+    }
+
+    /** 设置备用直连配置：网关不可用时回退（402 额度耗尽不适用，见 post）。 */
+    public LlmClient fallback(String baseUrl, String apiKey) {
+        if (baseUrl != null && !baseUrl.isEmpty()) {
+            this.fbBaseUrl = baseUrl.replaceAll("/+$", "");
+            this.fbApiKey = apiKey;
+        }
+        return this;
+    }
+
+    /** 本轮是否已回退到备用直连（供诊断与测试断言）。 */
+    public boolean onFallback() { return onFallback; }
 
     public LlmClient visionModel(String vm) { visionModel = vm; return this; }
     public LlmClient tokenListener(TokenUsageListener tl) { tokenListener = tl; return this; }
@@ -66,6 +120,8 @@ public class LlmClient {
         for (int attempt = 0; attempt < 4; attempt++) {
             try {
                 return chatOnce(messages);
+            } catch (QuotaExhaustedException q) {
+                throw q;   // 额度耗尽：立即上抛，不做 429 那套退避重试（白等 2 分钟且不会成功）
             } catch (Exception e) {
                 last = e;
                 String msg = String.valueOf(e.getMessage());
@@ -164,19 +220,66 @@ public class LlmClient {
         return resp.optString("text", "").trim();
     }
 
+    /**
+     * 发一次请求，带**网关异常回退**。
+     *
+     * 分类处理：
+     *  - {@link QuotaExhaustedException}（402）：直接上抛，**不回退**——回退到用户自己的
+     *    Key 就等于绕过了额度，网关就白设了；
+     *  - 其它异常（超时/连接失败/5xx/上游鉴权失败）：若有备用直连配置则回退重试一次，
+     *    并记住已回退状态，避免后续每次请求都先失败一遍再重试。
+     *
+     * 回退状态只在这个 LlmClient 实例内有效（AgentEngine 每次任务新建实例），
+     * 因此下一个任务会重新尝试网关——网关恢复了就自动回到网关。
+     */
     private JSONObject post(String path, byte[] payload, String contentType) throws Exception {
-        HttpURLConnection conn = (HttpURLConnection) new URL(baseUrl + path).openConnection();
+        // 已回退过：**直接走备用**，不要再撞一次已知不通的网关。
+        //
+        // 早期版本漏了这一句，只在 catch 里判断 onFallback，结果是：回退成功一次之后，
+        // 后续每次请求仍然先试主配置、失败、然后因为 onFallback 已置位而直接抛错——
+        // 表现为「第一步能跑，第二步就挂」。实测在模拟器上复现过。
+        if (onFallback) {
+            return postOnce(fbBaseUrl, fbApiKey, path, payload, contentType);
+        }
+        try {
+            return postOnce(baseUrl, apiKey, path, payload, contentType);
+        } catch (QuotaExhaustedException q) {
+            throw q;
+        } catch (Exception e) {
+            if (fbBaseUrl == null || fbBaseUrl.isEmpty()) throw e;
+            android.util.Log.i(TAG, "额度网关不可用，回退直连（原因：" + e.getMessage() + "）");
+            onFallback = true;
+            return postOnce(fbBaseUrl, fbApiKey, path, payload, contentType);
+        }
+    }
+
+    private JSONObject postOnce(String base, String key, String path, byte[] payload,
+                                String contentType) throws Exception {
+        HttpURLConnection conn = (HttpURLConnection) new URL(base + path).openConnection();
+        // 额度网关是自签证书，系统 CA 库不认；命中内置证书的主机时套用 pin。
+        // 直连 DashScope 时 covers() 为 false，行为与从前完全一致。
+        TlsPin.apply(conn);
         conn.setRequestMethod("POST");
         conn.setConnectTimeout(15000);
         conn.setReadTimeout(120000);
         conn.setDoOutput(true);
-        conn.setRequestProperty("Authorization", "Bearer " + apiKey);
+        conn.setRequestProperty("Authorization", "Bearer " + key);
         conn.setRequestProperty("Content-Type", contentType);
         conn.getOutputStream().write(payload);
         int code = conn.getResponseCode();
         InputStream is = code >= 400 ? conn.getErrorStream() : conn.getInputStream();
         String text = readAll(is);
         conn.disconnect();
+        if (code == 402) {
+            // 服务端会在 message 里给中文原因；「quota」字样刻意不出现在异常消息里，
+            // 否则 chat() 会把它误判成 429 限流类错误而白退避重试
+            String human = "额度不足，请在应用内使用兑换码充值";
+            try {
+                String m = new JSONObject(text).optString("message", "");
+                if (!m.isEmpty()) human = m;
+            } catch (Exception ignored) { }
+            throw new QuotaExhaustedException(human);
+        }
         if (code != 200) {
             throw new Exception("HTTP " + code + ": " +
                     (text.length() > 200 ? text.substring(0, 200) : text));

@@ -16,6 +16,7 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.Switch;
 import android.widget.TextView;
+
 import android.widget.Toast;
 
 import java.util.List;
@@ -76,6 +77,14 @@ public class WatchSettingsActivity extends Activity {
 
         ((Button) findViewById(R.id.btnDisplayRefresh)).setOnClickListener(v -> refreshDisplay());
         ((Button) findViewById(R.id.btnDisplayCalib)).setOnClickListener(v -> runCalibrate());
+
+        // 账号入口（账号体系）：手表端不内嵌登录表单，跳 LoginActivity；额度与兑换在手机设置页。
+        // 空安全查找：老布局没有该控件时静默跳过，不影响手表原有功能。
+        View btnAccount = findViewById(R.id.btnAccount);
+        if (btnAccount != null) {
+            btnAccount.setOnClickListener(v ->
+                    startActivity(new Intent(this, LoginActivity.class)));
+        }
     }
 
     @Override
@@ -84,6 +93,23 @@ public class WatchSettingsActivity extends Activity {
         refreshDisplay();
         refreshTokens();
         refreshA11yStatus();
+        refreshAccountStatus();
+    }
+
+    /** 手表设置页上的账号状态行（未登录 / 已登录 + 剩余额度 / 令牌失效）。 */
+    private void refreshAccountStatus() {
+        TextView tv = findViewById(R.id.tvWatchAccount);
+        if (tv == null) return;
+        if (!prefs.loggedIn()) {
+            tv.setText("未登录（历史与记忆只存本机）");
+            return;
+        }
+        if (prefs.accountInvalid()) {
+            tv.setText("账号 " + prefs.accountName() + " · ⚠ 登录已失效，点下方重新登录");
+            return;
+        }
+        long left = Math.max(0, prefs.accountQuota() - prefs.accountQuotaUsed());
+        tv.setText("账号 " + prefs.accountName() + " · 剩余 " + left + " units");
     }
 
     /** 无障碍按钮上直接显示服务状态（区分未开启 / 已启用但未连接）。 */

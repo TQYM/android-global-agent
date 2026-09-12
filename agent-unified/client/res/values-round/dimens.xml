@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 圆形表盘（-round 限定符，Configuration.isScreenRound()==true）：
+     四角物理不存在，固定元素（顶栏/按钮）必须收进内接方形。
+     OWW261 466×466：R=233，内接方形半边 = 233/√2 ≈ 164.7px → 水平边距 68px ≈ 21.5dp，取 24dp 留余量。
+     垂直：右上角按钮右缘 x=418 处的安全 y 下限为 91px（几何 |y-233| ≤ √(233²-185²)），
+     故顶部边距取 30dp(96px) 让顶栏按钮完全入圆。 -->
+<resources>
+    <dimen name="watch_edge">24dp</dimen>
+    <dimen name="watch_edge_v">48dp</dimen>
+    <dimen name="watch_preview_h">88dp</dimen>
+    <dimen name="watch_log_h">72dp</dimen>
+    <!-- 设置页垂直内边距（圆屏下顶栏需收进内接方形，同顶部边距策略） -->
+    <dimen name="watch_pad_v">48dp</dimen>
+</resources>

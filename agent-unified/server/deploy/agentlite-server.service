@@ -1,0 +1,44 @@
+[Unit]
+Description=AgentLite Sync Server (账号 / 同步 / 额度)
+Documentation=https://github.com/TQYM/android-global-agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 管理令牌等敏感配置放 0600 的 env 文件，不写进单元（单元默认 0644 全局可读）
+EnvironmentFile=-/etc/agentlite-server/env
+ExecStart=/usr/local/bin/agentlite-server \
+    -addr 0.0.0.0:18443 \
+    -data /var/lib/agentlite-server \
+    -cert /srv/agentlite-server/tls/server.crt \
+    -key /srv/agentlite-server/tls/server.key
+Restart=always
+RestartSec=3
+
+# --- 权限收敛（服务只需读证书、写数据目录）---
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/agentlite-server
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectProc=invisible
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=agentlite-server
+
+[Install]
+WantedBy=multi-user.target

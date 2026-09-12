@@ -248,6 +248,7 @@ sh build-mac.sh
 | `vd-daemon/VdMain.java` | root 守护进程源码 |
 | `build-mac.sh` | 完整构建脚本（aapt2 + javac + d8 + zipalign + apksigner） |
 | `COMPATIBILITY.zh-CN.md` | 各 ROM 兼容性矩阵与权限授予指南 |
+| `docs/DEVELOPMENT_MANUAL.zh-CN.md` | **开发手册**：项目专用服务器（`8.133.225.105`）的连接方式、部署与运维、接口清单 |
 
 ---
 
@@ -256,3 +257,93 @@ sh build-mac.sh
 - `api_key` **永不入 git**，仅存在设备 SharedPreferences
 - 用户活跃使用手机时（聊天、支付、浏览），**禁止任何盲触输入**
 - root 是可选加速器，**永远不是零 root 路径的依赖**
+
+---
+
+## 工作日志
+
+### 2026-09-13 00:54 +08 · 会话 33f50b22 · 新建 project-work-log skill
+- 00:52 考察 skill 机制：~/.dsh/skills 为安装目录、workspace skills/ 为源副本（源:命令:diff/ls）
+- 00:53 编写 skills/project-work-log/SKILL.md 并安装至 ~/.dsh/skills/（源:用户请求）
+- 00:54 目录刷新确认 skill 已上架；为本手册引导「工作日志」节（源:步骤2）
+- 00:54 终态: done
+
+### 2026-09-13 00:58 +08 · 会话 e9db9437 · 修复 Hindsight 与 DSH 卡死
+- 00:58 完成现状诊断：GUI PATH 缺少 uvx/node/cargo，DSH 主渲染进程持续高负载（源:命令:ps/sample）
+- 01:07 定位 Hindsight 根因：GUI PATH 仅 4 个系统目录，launchctl setenv 不送达（源:命令:ps eww/launchctl getenv）
+- 01:08 给 dsh.js 与 daemon-start.js 打 PATH 前置补丁；最小 PATH 下复现→验证通过（源:文件:~/.dsh/local-patches/hindsight-daemon-path.md）
+- 01:16 定位守护进程二次卡死：huggingface.co 超时、hf-mirror 正常，写入 HF_ENDPOINT（源:命令:curl）
+- 01:20 Hindsight 服务就绪：/health=200，DSH 侧工具恢复正常（源:命令:curl /health）
+- 01:16 定位卡死主因：~/Desktop 处于 iCloud 同步下，94,446 文件被持续上传/索引/缩略图（源:命令:defaults read/du）
+- 01:18 用户关闭桌面同步后，把 14 项全部迁回本地 ~/Desktop，94,446 文件对账一致（源:用户请求+命令:mv/find）
+- 01:20 核实 wallpaper-engine 早已 disabled、remote-web-ui 同；DSH 有 render-process-gone 自愈（源:文件:cordis.patch.yml）
+- 01:23 Spotlight：给 16 个可再生构建目录加 .metadata_never_index，覆盖 42,385 文件退出索引（源:命令:find/touch）
+- 01:27 定位 LLM 真因：本机 claude 靠 cc-switch 中转认证，被 Hindsight 的空 CLAUDE_CONFIG_DIR 隔离打断（源:测试:env CLAUDE_CONFIG_DIR 复现）
+- 01:28 改为直连中转（provider=anthropic，令牌运行时读取不落盘），LLM 校验通过（源:文件:coding-agent.log）
+- 01:29 抽取链路实跑成功：retain_extract_facts 对中转 200 OK（源:文件:coding-agent.log）
+- 01:30 补丁与回滚记录在 ~/.dsh/local-patches/hindsight-daemon-path.md（源:文件:同路径）
+- 01:30 终态: done（待办：DSH 本体重启一次以加载插件补丁）
+
+
+### 2026-09-13 01:22 +08 · 会话 local · 收款界面（应用内买单页）
+- 01:22 首次运行检查：读本手册「工作日志」尾 40 行，恢复上下文（源:用户请求）
+- 01:22 确认需求：「首款界面」经确认为「收款界面」（应用内充值/买单页）（源:用户请求）
+
+### 2026-09-13 01:27 +08 · 会话 f8d7e529 · 修设置页震荡+UI去药丸+可读性
+- 01:00 读手册工作日志尾恢复上下文（源:文件:PROJECT_OVERVIEW.zh-CN.md:263）
+- 01:05 排查「文字渲染溢出」：手机 UI 树/像素/静态宽度三路核查，App 自身页面均无越界（源:命令:uiautomator dump + tests/ui_layout_check.py）
+- 01:12 定位真因在语音面板：等分按钮 135dp 装不下 7 字标签「按住/点按说话」（1.15× 字体下 113dp+内边距）→ 标签缩短+单行省略+内边距（源:文件:agent-lite/res/layout/activity_assist.xml:82）
+- 01:16 去药丸风格：新增 Widget.AgentLite.Button{,.Tonal,.Outlined}（cornerRadius 8dp），51 个按钮全部切换（源:文件:agent-lite/res/values/styles.xml）
+- 01:18 字阶再提一档 24/17/15/14/13sp；提示文字色改 on_surface_variant（3.63:1 → 约 7:1）（源:文件:agent-lite/res/values/dimens.xml）
+- 01:20 溢出防护：63 个按钮补 maxLines/ellipsize；主界面 语音/运行 固定宽改 wrap_content+minWidth（源:文件:agent-lite/res/layout/activity_main.xml:266）
+- 01:22 修问题2（setting home 震荡）：移除 home→ACTION_HOME_SETTINGS 映射 + SCHEMA 枚举同步；新增**震荡看门狗**（6 步内屏幕状态≤2 且动作≤2 → fail）（源:文件:agent-lite/src/com/dsh/agentlite/AgentEngine.java:309）
+- 01:24 三处一致：Skill §4 页面枚举去 home + §5 补提示；守则升 1.0.3 登记 §8 震荡看门狗（源:文件:docs/INTERACTION_LOGIC_SPEC.zh-CN.md:171）
+- 01:26 门禁全绿（契约 26/26、文案 7+10、控件 16）+APK 4 条断言；确认 radius_btn=8dp、text_body=15sp 进包（源:命令:build-all.sh）
+- 01:27 装机验证：与源包逐字节一致、无障碍授权保留、启动无 FATAL（源:命令:adb install -r）
+- 01:27 终态: done
+- 01:33 服务端 order.go：套餐(packs.json 可覆盖)+订单状态机+兑换码支付；8 项负向用例通过（源:命令:curl）
+- 01:33 客户端 PurchaseActivity + activity_purchase.xml + AccountClient 订单方法（源:文件:agent-lite/src/com/dsh/agentlite/PurchaseActivity.java）
+- 01:33 记账口径验证：小码付大套餐以码为准，不凭空产生额度（源:测试）
+- 01:33 构建+守卫通过：ui_text_guard 7/7、ui_widget_guard 16/16（源:命令:bash tests/）
+- 01:33 未完成：模拟器实例已关闭，收款界面的运行时验证未做（源:命令:adb devices）
+- 01:33 终态: done（附未做项）
+
+### 2026-09-13 01:45 +08 · 会话 f8d7e529 · UI 回归第一版 + 删除 M3
+- 01:30 摸清 M3 足迹：3 个提交、6 布局 67 个 Material 组件、9 个 drawable、styles/colors/v31、build-mac.sh +93 行（源:命令:git show --stat）
+- 01:34 恢复第一版资源：9 个 drawable（btn_primary 22dp/ghost 20dp/chip 14dp 圆角）+ 平台主题 Theme.Material.NoActionBar + 27 色板 + v31 动态取色（源:命令:git show 515d5cd）
+- 01:37 转换布局：MaterialButton→Button 64 个（按样式语义映射到 btn_primary/ghost/chip）、MaterialSwitch→Switch 3 个、清除 app 命名空间（源:文件:agent-lite/res/layout/*.xml）
+- 01:39 Java 回归平台控件：SettingsActivity/WatchSettingsActivity 的 MaterialSwitch → android.widget.Switch（源:文件:agent-lite/src/com/dsh/agentlite/SettingsActivity.java:31）
+- 01:41 删除 M3 支持：build-mac.sh 移除 AAR 展开/库资源/extra-packages 与 LIB_JARS；删除 scripts/fetch-m3-deps.py 与 build-with-m3.sh；build-client.sh 去掉依赖准备步骤（源:文件:agent-lite/build-mac.sh）
+- 01:43 构建验证：**APK 5900KB → 183KB（31×）**、dex 6→1、包内无 material 类；门禁全绿（契约 26/26、文案 7、控件 0 转型）（源:命令:build-all.sh）
+- 01:44 装机核验：主题 parent=平台 Theme.Material.NoActionBar、btnMic 顶行填充占比 81.3%→27.6%（回到第一版 20dp 圆角）、渲染正常无崩溃（源:命令:adb install + 像素测量）
+- 01:45 终态: done
+
+### 2026-09-13 02:05 +08 · 会话 f8d7e529 · 主界面指令行合并+磁贴间距
+- 02:00 主界面任务下达区：输入框独立一行、语音/运行在下一行 → 合并为**同一行**（输入框 0dp+weight=1；横向容器里这才是正确写法）（源:文件:agent-lite/res/layout/activity_main.xml:240）
+- 02:02 四大磁贴「历史记录｜授权管理」原本两个 weight=1 按钮无间距顶在一起 → 授权管理/记忆库左侧补 12dp（源:文件:agent-lite/res/layout/activity_main.xml:180）
+- 02:03 全布局扫描相邻 weight=1 无间距的按钮：修复后 0 处（源:命令:python3 扫描脚本）
+- 02:04 装机实测：三者垂直中心差 0.0dp（同一行 ✓）、磁贴间距 12.0dp（✓）；构建与门禁全绿（源:命令:adb install + uiautomator dump）
+- 02:05 终态: done
+
+### 2026-09-13 01:42 +08 · 会话 local · 充值改版决策（跳百炼官方购买）
+- 01:42 确认决策：AK 只存本地 / 不买 TokenPlan 买 token 资源包 / 用户自付自己百炼账号 / 隐藏充值 API / 另加「更改 API」（源:用户请求）
+- 01:42 查实 CreateApiKey 存在且为 ROA 风格 + V3 签名（非经典 RPC HMAC-SHA1）（源:web:help.aliyun.com/model-studio）
+- 01:42 决策与实现清单固化到 docs/PURCHASE_REDIRECT_DESIGN.zh-CN.md，含两点实现前必须先验的事项（源:文件:docs/PURCHASE_REDIRECT_DESIGN.zh-CN.md）
+- 01:42 未开始实现：本会话上下文接近上限，避免写出不完整改动（源:步骤3）
+- 01:42 终态: blocked（等用户提供套餐↔官方档位对应关系；另需先打通 CreateApiKey 的真实请求形状）
+
+### 2026-09-13 02:20 +08 · 会话 f8d7e529 · 删除主页设置条与调试台
+- 02:12 定位两处删除点及其 Java 绑定（btnSettings → openSettings、btnDebug/dbgScroll + 12 个直测按钮 + DbgAction/dbg 助手）（源:文件:agent-lite/src/com/dsh/agentlite/MainActivity.java:284）
+- 02:15 首次用正则按块删除切多了（编译报 237 错）→ 从上一次整合层副本恢复该文件（源:命令:diff 行数 797 vs 879）
+- 02:17 改用**按精确行号剪切 + 边界断言**（删 76 行：284 / 303–309 / 315–377 / 386–390）（源:步骤2）
+- 02:18 构建通过；APK 核验：btnDebug/btnDbgNodes/dbgScroll/llDebug/btnSettings 的 id 已从资源表彻底消失（源:命令:aapt2 dump resources）
+- 02:19 装机实测：主页元素自上而下为 顶栏(设置) → 状态 → 账号 → 四磁贴 → 下达指令/语音/运行；启动 568ms、FATAL 0（源:命令:adb install + uiautomator dump）
+- 02:20 终态: done
+
+### 2026-09-13 · 会话交接 · 充值改版交接清单落盘
+- 交接清单写入 docs/HANDOFF_2026-09-13.zh-CN.md：两个卡点 + 卡点未解时**可先做的活**（AliyunV3Signer：纯标准库、零 android 依赖、可桌面单测）（源:用户请求）
+- 复核设计文档 vs 仓库：AliyunV3Signer/BailianClient/AkStore 三文件在 agent-lite 与 agent-unified 均不存在 → 确认「实现未开始」、文档无漂移（源:命令:glob+ls）
+- 读出设计 4 处缺口（返回检测机制 / 回滚语义 / AK 录入路径 / use_gateway 口径）+ agent-unified 平行副本归属未定，已记入交接 §4（源:文件:docs/PURCHASE_REDIRECT_DESIGN.zh-CN.md）
+- 提醒：本日志节非严格时间序（01:42 blocked 夹在 02:20 done 之前），判状态请按时间戳（源:本文件）
+- 遗留：手机无障碍绑定很可能被装机清掉需重开；DashScope Key 需轮换后更新 agent-lite/dev.local（源:用户请求）
+- 终态: blocked（同 01:42：等套餐↔官方档位对应关系 + 需先 curl 打通 CreateApiKey）

@@ -1,0 +1,21 @@
+# ---- 敏感：API Key / 账号密钥 / 管理令牌（构建期注入，永不入 git）----
+local.env
+client/dev.local
+
+# ---- 构建产物与发布件（可再生）----
+dist/
+client/build/
+client/build-m3/
+client/.m3-deps/
+server/agentlite-server
+
+# ---- 本地端到端临时目录（证书、数据目录、临时 class）----
+.e2e/
+
+# ---- 本机工具链（如本地 Go）----
+.toolchain/
+
+.DS_Store
+
+# 说明：仓库根 .gitignore 已覆盖 *.apk / *.keystore / dev.local / *.log，
+# 这里再写一遍是为了让 agent-unified/ 单独打包或迁移时依然不泄密。

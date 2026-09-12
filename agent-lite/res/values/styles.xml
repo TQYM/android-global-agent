@@ -1,57 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!--
-      Material 3 官方主题（Material Components 库，见 build-with-m3.sh）
-      · 父主题 Theme.Material3.DayNight.NoActionBar：所有 Material 组件获得 M3 默认样式
-      · 下方把 M3 色板 token 指向本项目色板（values/colors.xml + values-v31 动态色）
-        → Material 组件自动跟随 M3 颜色与 Material You 动态取色
-    -->
-    <style name="Theme.AgentLite" parent="Theme.Material3.DayNight.NoActionBar">
-        <!-- ===== M3 颜色 token ===== -->
-        <item name="colorPrimary">@color/color_primary</item>
-        <item name="colorOnPrimary">@color/color_on_primary</item>
-        <item name="colorPrimaryContainer">@color/color_primary_container</item>
-        <item name="colorOnPrimaryContainer">@color/color_on_primary_container</item>
-        <item name="colorSecondary">@color/color_secondary</item>
-        <item name="colorOnSecondary">@color/color_on_secondary</item>
-        <item name="colorSecondaryContainer">@color/color_secondary_container</item>
-        <item name="colorOnSecondaryContainer">@color/color_on_secondary_container</item>
-        <item name="colorTertiary">@color/color_tertiary</item>
-        <item name="colorOnTertiary">@color/color_on_tertiary</item>
-        <item name="colorTertiaryContainer">@color/color_tertiary_container</item>
-        <item name="colorOnTertiaryContainer">@color/color_on_tertiary_container</item>
-        <item name="colorError">@color/color_error</item>
-        <item name="colorOnError">@color/color_on_error</item>
-        <item name="colorErrorContainer">@color/color_error_container</item>
-        <item name="colorOnErrorContainer">@color/color_on_error_container</item>
-        <item name="android:colorBackground">@color/color_surface</item>
-        <item name="colorOnBackground">@color/color_on_surface</item>
-        <item name="colorSurface">@color/color_surface</item>
-        <item name="colorOnSurface">@color/color_on_surface</item>
-        <item name="colorSurfaceVariant">@color/color_surface_variant</item>
-        <item name="colorOnSurfaceVariant">@color/color_on_surface_variant</item>
-        <item name="colorSurfaceContainerLowest">@color/color_surface_container_lowest</item>
-        <item name="colorSurfaceContainerLow">@color/color_surface_container_low</item>
-        <item name="colorSurfaceContainer">@color/color_surface_container</item>
-        <item name="colorSurfaceContainerHigh">@color/color_surface_container_high</item>
-        <item name="colorSurfaceContainerHighest">@color/color_surface_container_highest</item>
-        <item name="colorOutline">@color/color_outline</item>
-        <item name="colorOutlineVariant">@color/color_outline_variant</item>
-        <item name="colorControlHighlight">@color/color_primary</item>
-
-        <!-- ===== 沉浸式 Edge-to-Edge ===== -->
+    <!-- 全局统一原生 Android 主题：透明沉浸式状态栏与导航栏、Material 3 容器底色 -->
+    <style name="Theme.AgentLite" parent="@android:style/Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/color_surface</item>
+        <item name="android:colorBackground">@color/color_surface</item>
+        <item name="android:colorPrimary">@color/color_primary</item>
+        <item name="android:colorPrimaryDark">@color/color_surface</item>
+        <item name="android:colorAccent">@color/color_primary</item>
+
+        <!-- 彻底消除状态栏与底栏黑块闪烁，全面开启沉浸式 Edge-to-Edge -->
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowDrawsSystemBarBackgrounds">true</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
+
         <item name="android:textColorPrimary">@color/color_on_surface</item>
         <item name="android:textColorSecondary">@color/color_on_surface_variant</item>
         <item name="android:textColorHint">@color/color_text_hint</item>
     </style>
 
-    <!-- 悬浮/协助界面：沿用 M3 主题 + 透明窗口 -->
     <style name="Theme.AgentLite.Translucent" parent="Theme.AgentLite">
         <item name="android:windowIsTranslucent">true</item>
         <item name="android:windowBackground">@android:color/transparent</item>

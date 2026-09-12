@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 接管/授权/终态卡片容器：白底圆角（语义色：白 = 人工介入容器） -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="#FAFFFFFF"/>
+    <corners android:radius="20dp"/>
+</shape>

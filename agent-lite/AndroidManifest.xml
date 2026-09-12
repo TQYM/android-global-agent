@@ -38,6 +38,25 @@
             </intent-filter>
         </activity>
 
+        <!-- 二级设置页（手机）：API 配置 / Token 统计 / 设备形态 / 保活 / 账号额度与兑换码 -->
+        <activity
+            android:name=".PurchaseActivity"
+            android:exported="false"
+            android:label="额度充值" />
+
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="false"
+            android:label="设置"
+            android:launchMode="singleTop"/>
+
+        <!-- 账号登录 / 注册页：成功后自动绑定本机设备（/api/v1/device/bind） -->
+        <activity
+            android:name=".LoginActivity"
+            android:exported="false"
+            android:label="账号登录"
+            android:launchMode="singleTop"/>
+
         <!-- 手表设置页：历史/记忆/省电/授权/模型配置/设备形态（日志与截图不在手表端提供） -->
         <activity
             android:name=".WatchSettingsActivity"

@@ -1,37 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Material 3 · Filled Text Field：上圆角 4dp + surface-container-highest 填充；
-     聚焦时底部 2dp primary 指示线（M3 规范） -->
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:state_focused="true">
-        <layer-list>
-            <item>
-                <shape android:shape="rectangle">
-                    <solid android:color="@color/color_surface_container_highest"/>
-                    <corners android:topLeftRadius="4dp" android:topRightRadius="4dp"
-                        android:bottomLeftRadius="0dp" android:bottomRightRadius="0dp"/>
-                </shape>
-            </item>
-            <item android:gravity="bottom" android:height="2dp">
-                <shape android:shape="rectangle">
-                    <solid android:color="@color/color_primary"/>
-                </shape>
-            </item>
-        </layer-list>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/color_surface_variant"/>
+            <stroke android:width="1.5dp" android:color="@color/color_primary"/>
+            <corners android:radius="14dp"/>
+        </shape>
     </item>
     <item>
-        <layer-list>
-            <item>
-                <shape android:shape="rectangle">
-                    <solid android:color="@color/color_surface_container_highest"/>
-                    <corners android:topLeftRadius="4dp" android:topRightRadius="4dp"
-                        android:bottomLeftRadius="0dp" android:bottomRightRadius="0dp"/>
-                </shape>
-            </item>
-            <item android:gravity="bottom" android:height="1dp">
-                <shape android:shape="rectangle">
-                    <solid android:color="@color/color_outline"/>
-                </shape>
-            </item>
-        </layer-list>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/color_surface_container_high"/>
+            <stroke android:width="1dp" android:color="@color/color_outline"/>
+            <corners android:radius="14dp"/>
+        </shape>
     </item>
 </selector>

@@ -1,0 +1,334 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Agent Lite 主界面
+  常驻：顶栏（设置）+ 状态行 + 账号状态行
+  主视图 mainContent：四大模块（放大）+ 任务下达 + 调试台
+  API 配置（Base URL / API Key / 模型 / 步数 / 纯视觉）连同 Token 统计、设备与显示、
+  保活与后台、数据与调试设置项已全部搬到独立二级页面 SettingsActivity
+  （res/layout/activity_settings.xml，控件 id 原样保留，Prefs 读写逻辑不变）。
+  截屏回显与日志按前一版需求保留隐藏（控件保留，供内部逻辑使用）。
+-->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/rootLayout"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/color_surface"
+    android:fillViewport="true">
+
+<LinearLayout
+    android:orientation="vertical"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:paddingLeft="@dimen/space_l"
+    android:paddingRight="@dimen/space_l">
+
+    <!-- 顶栏：标题 + 设置 -->
+    <LinearLayout
+        android:orientation="horizontal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/space_s"
+        android:gravity="center_vertical">
+
+        <LinearLayout
+            android:orientation="vertical"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="wrap_content">
+            <TextView
+                android:text="Agent Lite"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="@color/color_on_surface"
+                android:textSize="@dimen/text_title"
+                android:fontFamily="sans-serif-medium"
+                android:textStyle="bold"/>
+            <TextView
+                android:text="原生智能体 · 灵动交互"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="@color/color_on_surface_variant"
+                android:textSize="@dimen/text_label"/>
+        </LinearLayout>
+
+        <Button
+            android:background="@drawable/btn_ghost"
+            android:id="@+id/btnConfig"
+            android:layout_width="wrap_content"
+            android:layout_height="@dimen/btn_h"
+            android:text="设置"
+            android:textSize="@dimen/text_body"
+            android:textColor="@color/color_on_surface"
+                        android:paddingLeft="@dimen/space_l"
+            android:paddingRight="@dimen/space_l"
+            android:minWidth="0dp"
+            android:minHeight="0dp"
+                android:maxLines="1"
+                android:ellipsize="end"/>
+    </LinearLayout>
+
+    <!-- 状态行 -->
+    <LinearLayout
+        android:orientation="horizontal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/space_s"
+        android:gravity="center_vertical">
+        <TextView
+            android:id="@+id/tvStatus"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="空闲"
+            android:textColor="@color/color_on_surface_variant"
+            android:textSize="@dimen/text_body"
+            android:background="@drawable/pill_gray"
+            android:paddingLeft="@dimen/space_m"
+            android:paddingRight="@dimen/space_m"
+            android:paddingTop="@dimen/space_xs"
+            android:paddingBottom="@dimen/space_xs"/>
+        <TextView
+            android:id="@+id/tvA11y"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginLeft="@dimen/space_s"
+            android:textSize="@dimen/text_body"
+            android:text="无障碍"
+            android:background="@drawable/pill_gray"
+            android:paddingLeft="@dimen/space_m"
+            android:paddingRight="@dimen/space_m"
+            android:paddingTop="@dimen/space_xs"
+            android:paddingBottom="@dimen/space_xs"/>
+    </LinearLayout>
+
+    <!-- 账号状态行：未登录 / 令牌失效时点这里直接进登录页 -->
+    <TextView
+        android:id="@+id/tvAccount"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/space_s"
+        android:textSize="@dimen/text_body"
+        android:paddingLeft="@dimen/space_m"
+        android:paddingRight="@dimen/space_m"
+        android:paddingTop="@dimen/space_s"
+        android:paddingBottom="@dimen/space_s"
+        android:background="@drawable/pill_gray"
+        android:textColor="@color/color_on_surface_variant"
+        android:text="账号：检测中…"/>
+
+    <!-- ===================== 主视图 ===================== -->
+    <LinearLayout
+        android:id="@+id/mainContent"
+        android:orientation="vertical"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+
+        <LinearLayout
+            android:id="@+id/a11yBanner"
+            android:orientation="horizontal"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/space_m"
+            android:background="@drawable/bg_card"
+            android:padding="@dimen/space_m"
+            android:gravity="center_vertical"
+            android:visibility="gone">
+            <TextView
+                android:text="提示：需要开启无障碍服务，Agent 才能看屏与模拟操作"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:textColor="@color/color_warning_text"
+                android:textSize="@dimen/text_body"/>
+            <Button
+            android:background="@drawable/btn_primary"
+                android:id="@+id/btnA11yBanner"
+                android:text="一键开启"
+                android:layout_width="wrap_content"
+                android:layout_height="@dimen/btn_h"
+                android:textSize="@dimen/text_body"
+                android:textColor="@color/color_on_primary"
+                                android:paddingLeft="@dimen/space_l"
+                android:paddingRight="@dimen/space_l"
+                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:maxLines="1"
+                android:ellipsize="end"/>
+        </LinearLayout>
+
+        <!-- 四大模块（放大） -->
+        <LinearLayout
+            android:orientation="horizontal"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/space_l">
+            <Button
+            android:background="@drawable/btn_ghost"
+                android:id="@+id/btnHistory"
+                android:text="历史记录"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="96dp"
+                android:textSize="@dimen/text_section"
+                android:textColor="@color/color_on_surface"
+                                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:maxLines="1"
+                android:ellipsize="end"/>
+            <Button
+            android:background="@drawable/btn_ghost"
+                android:id="@+id/btnAuth"
+                android:layout_marginLeft="@dimen/space_m"
+                android:text="授权管理"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="96dp"
+                android:textSize="@dimen/text_section"
+                android:textColor="@color/color_on_surface"
+                                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:maxLines="1"
+                android:ellipsize="end"/>
+        </LinearLayout>
+
+        <LinearLayout
+            android:orientation="horizontal"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/space_m">
+            <Button
+            android:background="@drawable/btn_ghost"
+                android:id="@+id/btnEco"
+                android:text="省电策略"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="96dp"
+                android:textSize="@dimen/text_section"
+                android:textColor="@color/color_on_surface"
+                                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:maxLines="1"
+                android:ellipsize="end"/>
+            <Button
+            android:background="@drawable/btn_ghost"
+                android:id="@+id/btnMemory"
+                android:layout_marginLeft="@dimen/space_m"
+                android:text="记忆库"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="96dp"
+                android:textSize="@dimen/text_section"
+                android:textColor="@color/color_on_surface"
+                                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:maxLines="1"
+                android:ellipsize="end"/>
+        </LinearLayout>
+
+                android:ellipsize="end"/>
+
+        <!-- 任务下达：输入框 + 语音 + 运行 **同一行**。
+             注意：这里输入框用 0dp + weight=1 是正确写法（横向容器里由 weight 分宽）；
+             早先的 0dp+weight 事故是写在**纵向**容器里，那种情况下宽度会被算成 0。 -->
+        <LinearLayout
+            android:orientation="horizontal"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/space_l"
+            android:layout_marginBottom="@dimen/space_s"
+            android:gravity="center_vertical">
+            <EditText
+                android:id="@+id/etTask"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:hint="下达指令…"
+                android:textSize="@dimen/text_body"
+                android:minLines="1"
+                android:maxLines="3"
+                android:textColor="@color/color_on_surface"
+                android:textColorHint="@color/color_text_hint"
+                android:background="@drawable/bg_input"
+                android:paddingLeft="@dimen/space_l"
+                android:paddingRight="@dimen/space_l"
+                android:paddingTop="@dimen/space_m"
+                android:paddingBottom="@dimen/space_m"/>
+            <Button
+            android:background="@drawable/btn_ghost"
+                android:id="@+id/btnMic"
+                android:text="语音"
+                android:layout_width="wrap_content"
+                android:minWidth="56dp"
+                android:layout_height="@dimen/btn_h_primary"
+                android:layout_marginLeft="@dimen/space_s"
+                android:textSize="@dimen/text_body"
+                android:textColor="@color/color_on_surface"
+                android:minHeight="0dp"
+                android:maxLines="1"
+                android:ellipsize="end"/>
+            <Button
+            android:background="@drawable/btn_primary"
+                android:id="@+id/btnRun"
+                android:text="运行"
+                android:layout_width="wrap_content"
+                android:minWidth="84dp"
+                android:layout_height="@dimen/btn_h_primary"
+                android:layout_marginLeft="@dimen/space_s"
+                android:textSize="@dimen/text_section"
+                android:fontFamily="sans-serif-medium"
+                android:textStyle="bold"
+                android:textColor="@color/color_on_primary"
+                android:minHeight="0dp"
+                android:maxLines="1"
+                android:ellipsize="end"/>
+        </LinearLayout>
+
+        <!-- 已按要求移除呈现：截屏回显与日志（控件保留隐藏，供内部逻辑继续使用） -->
+        <FrameLayout
+            android:visibility="gone"
+            android:layout_width="1dp"
+            android:layout_height="1dp">
+            <FrameLayout
+                android:id="@+id/flScreen"
+                android:layout_width="match_parent"
+                android:layout_height="190dp"
+                android:layout_marginTop="@dimen/space_s"
+                android:background="@drawable/bg_card">
+                <ImageView
+                    android:id="@+id/ivScreen"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:scaleType="fitCenter"
+                    android:contentDescription="实时屏幕回显"/>
+                <View
+                    android:id="@+id/vTap"
+                    android:layout_width="26dp"
+                    android:layout_height="@dimen/btn_h"
+                    android:background="@drawable/tap_dot"
+                    android:visibility="gone"/>
+            </FrameLayout>
+        </FrameLayout>
+        <FrameLayout
+            android:visibility="gone"
+            android:layout_width="1dp"
+            android:layout_height="1dp">
+            <ScrollView
+                android:id="@+id/svLog"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:layout_marginTop="@dimen/space_xs"
+                android:background="@drawable/bg_card"
+                android:padding="@dimen/space_m">
+                <TextView
+                    android:id="@+id/tvLog"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:textSize="@dimen/text_label"
+                    android:textColor="@color/color_on_surface_variant"
+                    android:fontFamily="monospace"
+                    android:lineSpacingMultiplier="1.2"/>
+            </ScrollView>
+        </FrameLayout>
+    </LinearLayout>
+</LinearLayout>
+</ScrollView>

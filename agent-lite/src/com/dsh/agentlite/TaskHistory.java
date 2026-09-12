@@ -46,7 +46,29 @@ public final class TaskHistory {
             FileWriter w = new FileWriter(file(ctx), true);
             w.write(o.toString() + "\n");
             w.close();
+            SyncClient.onTaskFinished(ctx);   // 终态落档即触发增量上行（内部异步，不阻塞）
         } catch (Exception ignored) { }
+    }
+
+    /**
+     * 按**写入顺序**返回原始 JSON 行（与 list() 的倒序相反）。
+     * 同步模块依赖顺序做游标增量上传，故单独提供，不复用 list()。
+     */
+    public static synchronized List<String> rawLines(Context ctx) {
+        List<String> out = new ArrayList<>();
+        try {
+            File f = file(ctx);
+            if (!f.exists()) return out;
+            java.io.BufferedReader r = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(new java.io.FileInputStream(f), "UTF-8"));
+            String ln;
+            while ((ln = r.readLine()) != null) {
+                ln = ln.trim();
+                if (!ln.isEmpty()) out.add(ln);
+            }
+            r.close();
+        } catch (Exception ignored) { }
+        return out;
     }
 
     /** 全量记录，最新在前。 */

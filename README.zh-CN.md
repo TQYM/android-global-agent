@@ -2,78 +2,109 @@
 
 > 面向 Android 11+ 的视觉与语义驱动手机自动化 Agent。项目以无障碍服务为通用执行底座，并可在已授权的 Root 设备上启用更快的截图、输入和隔离虚拟屏能力。
 
-[项目全景](PROJECT_OVERVIEW.md) · [兼容性说明](agent-lite/COMPATIBILITY.zh-CN.md) · [安全审查](SECURITY_REVIEW_2026-09-05.zh-CN.md) · [Apache-2.0 许可证](LICENSE)
+[项目全景](PROJECT_OVERVIEW.zh-CN.md) · [兼容性说明](agent-lite/COMPATIBILITY.zh-CN.md) · [安全审查](SECURITY_REVIEW_2026-09-05.zh-CN.md) · [Apache-2.0 许可证](LICENSE)
 
 ## 三步上手（Android 11+）
 
-1. **装**：下载 APK（见 [Releases](https://github.com/TQYM/android-global-agent/releases)）用侧载方式安装；
-2. **授权**：在系统设置中开启 **Agent Lite 无障碍服务**，按需允许通知与麦克风；
-3. **填 Key**：应用内设置里填 Base URL / API Key / 模型，然后输入中文任务即可运行。
+1. **装**：从 [Releases](https://github.com/TQYM/android-global-agent/releases) 下载 APK 侧载安装；
+2. **授权**：系统设置中开启 **Agent Lite 无障碍服务**，按需允许通知与麦克风；
+3. **填 Key**：应用内填写 Base URL / API Key / 模型，输入中文任务运行。
 
-> Agent Lite 不需 Root。API Key 只保存在本机，请勿把含密钥的 APK 或配置提交到 Git。
+> Agent Lite 不需 Root。API Key 只保存在本机。
 
 ## 项目定位
 
-Android Global Agent 将自然语言任务转换为可验证的手机操作循环：
+Android Global Agent 尝试把自然语言任务转换为可验证的手机操作循环：
 
 ```text
-用户任务 → 可选语义规划 → 节点/截图感知 → 多模态模型决策
-       → 点击、滑动、输入、启动应用或系统动作 → 页面变化复验
-       → 完成、如实失败，或在敏感场景交由用户接管
+用户任务
+   ↓
+语义规划（可选）
+   ↓
+屏幕节点 + 截图感知
+   ↓
+OpenAI 兼容多模态模型决策
+   ↓
+点击 / 滑动 / 输入 / 启动应用 / 系统动作
+   ↓
+页面变化复验，直到完成、失败或需要用户接管
 ```
 
-当前主推 `agent-lite/`。它不依赖 Root，使用原生 Java 与 Android Framework API 实现感知和操作，并加入任务可见性、授权、敏感场景接管、历史记录与显式记忆等交互能力。
+当前主推 `agent-lite/`：它不依赖 Root，使用原生 Java 与 Android Framework API 实现感知和操作，并加入任务可见性、授权、敏感场景接管、历史记录与显式记忆等交互能力。
 
 ## 当前能力
 
 ### 零 Root 通用能力
 
-- `AccessibilityService` 采集可访问窗口和语义节点；
-- `takeScreenshot()` 获取屏幕图像，节点不可见时切换纯视觉坐标模式；
-- `dispatchGesture()` 完成点击、长按、滑动和边缘返回；
-- `ACTION_SET_TEXT` 输入 Unicode/中文，失败时降级到输入法或剪贴板通道；
-- 返回、主页、最近任务、通知栏、快捷设置、锁屏等全局动作；
-- 启动已安装应用、直达常用系统设置、调节亮度和音量；
-- 录音并调用兼容接口完成语音输入；
-- 前台服务提高国产 ROM 上的后台存活能力。
+- 通过 `AccessibilityService` 采集可访问窗口和语义节点；
+- 通过 `takeScreenshot()` 获取屏幕图像，节点不可见时可切换纯视觉坐标模式；
+- 通过 `dispatchGesture()` 完成点击、长按、滑动和边缘返回；
+- 通过 `ACTION_SET_TEXT` 输入 Unicode/中文，失败时可降级到输入法或剪贴板通道；
+- 支持返回、主页、最近任务、通知栏、快捷设置、锁屏等全局动作；
+- 支持启动已安装应用、直达常用系统设置、调节亮度和音量；
+- 支持录音并调用兼容接口完成语音输入；
+- 使用前台服务提高国产 ROM 上的后台存活能力。
 
 ### Agent Lite 交互与安全能力
 
-- 代理状态可见：胶囊、边缘光晕、授权卡片、接管卡片和任务终态卡片；
-- 按“操作类型 × 应用”支持单次允许、始终允许或拒绝；
-- 运行时可停止任务或补充要求；
-- 结果写入本地历史记录，可管理授权、生态策略与记忆；
-- 遇到支付、验证码、协议确认、系统权限等场景暂停自动操作；
-- 对特定应用限制自动操作，或在授权后仅使用视觉模式尝试；
-- 可用独立模型将口语任务整理为目标、步骤、完成判据和风险提示。
+- **代理状态可见**：胶囊、边缘光晕、授权卡片、接管卡片和任务终态卡片；
+- **事前授权**：按“操作类型 × 应用”支持单次允许、始终允许或拒绝；
+- **事中控制**：任务运行时可停止或补充要求；
+- **事后追溯**：任务结果写入本地历史记录，可管理授权、生态策略与记忆；
+- **敏感场景接管**：遇到支付、验证码、协议确认、系统权限等场景暂停自动操作；
+- **生态策略**：可对特定应用限制自动操作，或在授权后仅使用视觉模式尝试；
+- **规划前置**：可用独立模型把口语任务整理为目标、步骤、完成判据和风险提示。
+
+### 远程账号与多设备同步
+
+`agent-lite` 可登录自建账号（账号名 + 账号密钥，**不需要手机号与短信**），登录后：
+
+- **同账号多设备共享**：任务历史与记忆按**账号**归档（而非按设备），任一设备产生的记录，
+  同账号其他设备都能拉到；每条记录保留来源 `device_id`，转发场景也不会串成"最后经手的设备"；
+- **局域网优先**：同账号设备处于同一内网时自动 P2P 直连，数据不经云端。对称密钥由账号密钥
+  在两端各自派生，报文用 AES-256-GCM 封装，**服务器不经手密钥、也解不开**；
+- **额度与充值**：服务端可选启用 OpenAI 兼容额度网关，模型请求经它转发到 DashScope
+  并按响应 `usage` 扣减账号额度；额度耗尽返回 402，应用内用兑换码充值；
+- 服务端实现见 `agentlite-server/`（Go 纯标准库、单二进制、自签 TLS + 客户端证书 pin）。
+
+> 局域网密钥派生用的是 **PBKDF2 而非 HKDF**：Java 标准库没有 HKDF，而 HKDF 面向高熵输入、
+> 不做抗暴力拉伸，这里输入却是用户自选的账号密钥。派生参数由服务端 `/api/v1/lan/rendezvous`
+> 的 `lan_key_params` 统一公布，避免两端漂移。
 
 ### 可选 Root 增强
 
-完整版 `agent-client/` 在获得明确授权后可使用 Root 作为加速器：
+完整版 `agent-client/` 在获得用户明确授权后可使用 Root 作为加速器：
 
 - `screencap` 提高截图频率与稳定性；
 - `input tap/swipe/keyevent` 提供同步输入通道；
 - Root 守护进程创建可信虚拟显示，将目标应用迁入隔离屏幕运行；
 - 沙盒失效时停止操作并尝试恢复，禁止降级到真实屏幕盲触。
 
-Root 不是 `agent-lite` 的运行前提。隔离虚拟屏仅适用于由用户控制的测试设备。
+Root 不是 `agent-lite` 的运行前提。隔离虚拟屏仅适用于已解锁且由用户控制的测试设备。
 
-## 子项目
+## 子项目说明
 
-| 目录 | 定位 |
-|---|---|
-| `agent-lite/` | **推荐**：零 Root 原生客户端，当前主要开发方向，包名 `com.dsh.agentlite` |
-| `agent-client/` | 可选完整客户端，包名 `com.dsh.agent`，包含 Root 加速和虚拟屏沙盒 |
-| `agentd-go/` + `agentd-apk/` | 实验性 Root 常驻 Go 守护进程、WebUI 与无障碍桥接 |
-| `tests/`、`tools/`、`docs/` | 设备测试计划、测试 harness、UI 采集工具与项目文档 |
+| 目录 | 状态 | 用途 |
+|---|---|---|
+| `agent-lite/` | **推荐** | 零 Root 原生客户端，当前主要开发方向，包名 `com.dsh.agentlite` |
+| `agent-client/` | 可选 | 完整客户端，包名 `com.dsh.agent`，包含可选 Root 加速和虚拟屏沙盒 |
+| `agentlite-server/` | **服务端** | 账号 / 设备绑定 / 账号级同步 / 局域网会合 / 额度网关（Go，零第三方依赖） |
+| `agent-unified/` | **整合作品** | 把 `agent-lite` 与 `agentlite-server` 整合成一套可一键构建 / 契约校验 / 端到端验证 / 发布部署的系统；两端为逐字节副本，功能与逻辑零改动（见 [整合说明](agent-unified/README.md)） |
+| `agentd-go/` + `agentd-apk/` | 实验性 | Root 常驻 Go 守护进程、WebUI 与无障碍桥接方案 |
+| `tests/`、`tools/` | 工具 | 设备测试计划、测试 harness 与 UI 采集工具 |
+| `docs/` | 文档 | 架构、安全、兼容性、操作记录和专项设计说明 |
 
 ## 环境要求
 
-- macOS（客户端构建脚本按 macOS Android SDK 默认目录编写）；
-- JDK 11+、Android SDK Platform、Build Tools 和 ADB；
+### 构建 Agent Lite / Agent Client
+
+- macOS（仓库提供的脚本按 macOS Android SDK 默认目录编写）；
+- JDK 11 或更高版本；
+- Android SDK Platform 与 Build Tools；
+- ADB（安装和调试时需要）；
 - Android 11+ 设备（`minSdk 30`）。
 
-客户端使用纯命令行工具链，无 Gradle、无 Kotlin、无第三方运行时依赖：
+客户端采用纯命令行工具链，无 Gradle、无 Kotlin、无第三方运行时依赖：
 
 ```text
 aapt2 → javac --release 11 → d8 → zipalign → apksigner
@@ -81,28 +112,45 @@ aapt2 → javac --release 11 → d8 → zipalign → apksigner
 
 ## 快速开始：Agent Lite
 
+### 1. 构建
+
 ```bash
 git clone https://github.com/TQYM/android-global-agent.git
 cd android-global-agent/agent-lite
 sh build-mac.sh
+```
+
+产物：
+
+```text
+agent-lite/build/agent-lite.apk
+```
+
+如果 Android SDK 不在默认位置，请先设置：
+
+```bash
+export ANDROID_HOME=/path/to/Android/sdk
+```
+
+### 2. 安装
+
+```bash
 adb install -r build/agent-lite.apk
 ```
 
-如果 SDK 不在默认位置，先设置 `ANDROID_HOME`。安装后：
+### 3. 完成设备设置
 
 1. 打开应用；
 2. 在系统设置中启用 **Agent Lite 无障碍服务**；
 3. 按需授予通知、麦克风和忽略电池优化权限；
-4. 在设置中填写 Base URL、API Key、主模型和可选规划模型；
+4. 在应用设置中填写兼容接口的 Base URL、API Key、主模型和可选规划模型；
 5. 输入自然语言任务并运行。
-
-产物：`agent-lite/build/agent-lite.apk`。
 
 > API Key 只应保存在本机配置中。不要把真实密钥提交到 Git，也不要把包含密钥的 APK 公开发布。
 
-### 本地开发配置
+### 4. 可选开发配置
 
-`agent-lite/build-mac.sh` 支持读取未跟踪的 `agent-lite/dev.local`：
+`agent-lite/build-mac.sh` 支持读取未跟踪的 `agent-lite/dev.local`，仅供本地测试构建：
 
 ```bash
 API_KEY="your-local-key"
@@ -110,11 +158,11 @@ BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1"
 MODEL="qwen3.5-omni-plus"
 ```
 
-该文件已被 `.gitignore` 忽略。公开构建前请删除它，确认 APK 不包含开发密钥。
+该文件已被 `.gitignore` 忽略。公开构建前应删除它，确保 APK 不包含开发密钥。
 
 ## 模型接口
 
-客户端使用 OpenAI 风格的兼容 HTTP 接口，默认配置面向 DashScope：
+客户端使用 OpenAI 风格的兼容 HTTP 接口，当前默认配置面向 DashScope：
 
 | 配置项 | 默认值或说明 |
 |---|---|
@@ -122,7 +170,7 @@ MODEL="qwen3.5-omni-plus"
 | 主模型 | `qwen3.5-omni-plus` |
 | 规划模型 | `qwen3.5-flash`，可关闭 |
 | 视觉 | 主模型支持图像输入时可启用 |
-| 语音 | 使用模型原生音频输入或兼容转写接口，取决于服务商 |
+| 语音 | 支持模型原生音频输入或兼容转写接口，取决于服务商 |
 
 不同服务商对消息结构、图片、音频和推理参数的支持并不完全一致，切换模型后请先用简单任务验证。
 
@@ -136,7 +184,7 @@ sh build-mac.sh
 adb install -r build/agent-client.apk
 ```
 
-Root 与沙盒模式需要设备端 Root 管理器明确授权。
+产物为 `agent-client/build/agent-client.apk`。Root 与沙盒模式需设备端 Root 管理器明确授权。
 
 ### Go 守护进程（实验性）
 
@@ -155,7 +203,7 @@ GOOS=android GOARCH=arm64 CGO_ENABLED=0 \
 - Android 16 / ColorOS 16 / OnePlus 13T：零 Root 链路及 Root 沙盒链路；
 - Android 17 / MagicOS / 荣耀平板：节点采集、截图、手势和中文输入的零 Root 链路。
 
-这些结果不代表所有厂商 ROM 均已兼容。部分 MagicOS 设备在覆盖安装或强制停止后会清除无障碍服务绑定，需要用户重新启用。
+这些结果不代表所有厂商 ROM 均已兼容。覆盖安装或强制停止后，部分 MagicOS 设备会清除无障碍服务绑定，需要用户重新启用。
 
 ## 已知限制
 
@@ -168,27 +216,31 @@ GOOS=android GOARCH=arm64 CGO_ENABLED=0 \
 
 ## 安全与隐私
 
-本项目只能用于自有设备或已获得明确授权的设备：
+本项目只能用于自有设备或已获得明确授权的设备。请遵守以下边界：
 
 - 不捕获或绕过 `FLAG_SECURE`、DRM、硬件密钥存储、应用沙箱及系统安全机制；
 - 不尝试绕过受限设置、Play Protect、权限确认或第三方反篡改；
 - 不允许 Agent 在支付、转账、验证码、隐私协议等高风险步骤中自行确认；
-- 截图、屏幕文本、任务内容和录音可能被发送到配置的模型服务，请自行评估服务商隐私政策；
-- API Key、签名文件、测试 APK、ZIP、日志、截图和设备标识不得提交到公共仓库；
+- 截图、屏幕文本、任务内容和录音可能被发送到用户配置的模型服务，请自行评估服务商隐私政策；
+- API Key、签名文件、测试 APK、日志、截图和设备标识不得提交到公共仓库；
 - Root 组件只应在隔离测试设备上使用，并坚持最小权限和本机访问原则。
 
-当前项目仍处于开发与研究阶段，不建议用于无人值守的生产环境或任何高风险业务。历史安全审查见 [`SECURITY_REVIEW_2026-09-05.zh-CN.md`](SECURITY_REVIEW_2026-09-05.zh-CN.md)。
+历史安全审查见 [`SECURITY_REVIEW_2026-09-05.zh-CN.md`](SECURITY_REVIEW_2026-09-05.zh-CN.md)。当前项目仍处于开发与研究阶段，不建议用于无人值守的生产环境或任何高风险业务。
 
 ## 文档导航
 
-- [`PROJECT_OVERVIEW.md`](PROJECT_OVERVIEW.md)：架构、技术决策和当前状态；
+- [`docs/DEVELOPMENT_MANUAL.zh-CN.md`](docs/DEVELOPMENT_MANUAL.zh-CN.md)：**开发手册——项目专用服务器连接方式**（SSH 别名 `aliyun-ecs`、服务端点、部署与运维、接口清单），接手开发先读这份；
+- [`PROJECT_OVERVIEW.zh-CN.md`](PROJECT_OVERVIEW.zh-CN.md)：项目架构、技术决策和当前状态；
 - [`agent-lite/COMPATIBILITY.zh-CN.md`](agent-lite/COMPATIBILITY.zh-CN.md)：Android 11+ 兼容性和装机说明；
-- [`docs/DOUBAO_SPEC_ADAPTATION.zh-CN.md`](docs/DOUBAO_SPEC_ADAPTATION.zh-CN.md)：Agent Lite 交互规格；
+- [`docs/DOUBAO_SPEC_ADAPTATION.zh-CN.md`](docs/DOUBAO_SPEC_ADAPTATION.zh-CN.md)：Agent Lite 交互规格实现；
+- [`docs/INTERACTION_LOGIC_SPEC.zh-CN.md`](docs/INTERACTION_LOGIC_SPEC.zh-CN.md)：软件交互逻辑规范守则（SPEC-INTERACT-001，配套 Skill 见 `skills/software-interaction-logic/`）；
 - [`docs/PROGRESS_2026-09-06.zh-CN.md`](docs/PROGRESS_2026-09-06.zh-CN.md)：最近一次真机实测与待办；
-- [`docs/AGENT_FRAMEWORKS.md`](docs/AGENT_FRAMEWORKS.md)：第三方 Agent 框架选型与 DSH 直驱手册；
+- [`docs/AGENT_FRAMEWORKS.zh-CN.md`](docs/AGENT_FRAMEWORKS.zh-CN.md)：第三方 Agent 框架选型与 DSH 直驱手册；
 - [`SECURITY_REVIEW_2026-09-05.zh-CN.md`](SECURITY_REVIEW_2026-09-05.zh-CN.md)：安全审查报告。
 
-## 开发检查
+## 开发建议
+
+提交代码前至少执行与改动范围对应的检查：
 
 ```bash
 # Agent Lite 构建

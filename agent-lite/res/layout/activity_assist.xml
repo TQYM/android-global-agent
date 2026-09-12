@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/assistRoot"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -12,9 +11,9 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom"
-        android:layout_margin="16dp"
+        android:layout_margin="@dimen/space_l"
         android:background="@drawable/bg_card"
-        android:padding="20dp">
+        android:padding="@dimen/page_margin">
 
         <LinearLayout
             android:orientation="horizontal"
@@ -25,48 +24,50 @@
             <TextView
                 android:id="@+id/tvAssistTitle"
                 android:text="Agent 语音助手"
-                android:textSize="16sp"
+                android:textSize="@dimen/text_section"
                 android:textStyle="bold"
                 android:textColor="@color/color_on_surface"
                 android:layout_width="0dp"
                 android:layout_weight="1"
                 android:layout_height="wrap_content"/>
 
-            <com.google.android.material.button.MaterialButton
-            style="@style/Widget.Material3.Button.OutlinedButton"
+            <Button
+            android:background="@drawable/btn_chip"
                 android:id="@+id/btnAssistClose"
                 android:text="关闭"
-                android:textSize="12sp"
+                android:textSize="@dimen/text_body"
                 android:textColor="@color/color_on_surface_variant"
                                 android:layout_width="wrap_content"
-                android:layout_height="32dp"
+                android:layout_height="@dimen/btn_h"
                 android:minWidth="0dp"
                 android:minHeight="0dp"
-                android:paddingLeft="12dp"
-                android:paddingRight="12dp"/>
+                android:paddingLeft="@dimen/space_m"
+                android:paddingRight="@dimen/space_m"
+                android:maxLines="1"
+                android:ellipsize="end"/>
         </LinearLayout>
 
         <TextView
             android:id="@+id/tvAssistHint"
             android:text="请说话，下达任何自动化指令…"
-            android:textSize="14sp"
+            android:textSize="@dimen/text_body"
             android:textColor="@color/color_on_surface_variant"
-            android:layout_marginTop="14dp"
+            android:layout_marginTop="@dimen/space_l"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"/>
 
         <EditText
             android:id="@+id/etAssistInput"
             android:hint="或在此直接输入指令并运行"
-            android:textSize="13sp"
+            android:textSize="@dimen/text_body"
             android:textColor="@color/color_on_surface"
             android:textColorHint="@color/color_text_hint"
             android:background="@drawable/bg_input"
-            android:paddingLeft="12dp"
-            android:paddingRight="12dp"
-            android:paddingTop="10dp"
-            android:paddingBottom="10dp"
-            android:layout_marginTop="12dp"
+            android:paddingLeft="@dimen/space_m"
+            android:paddingRight="@dimen/space_m"
+            android:paddingTop="@dimen/space_m"
+            android:paddingBottom="@dimen/space_m"
+            android:layout_marginTop="@dimen/space_m"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:maxLines="3"/>
@@ -75,30 +76,34 @@
             android:orientation="horizontal"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="16dp">
+            android:layout_marginTop="@dimen/space_l">
 
-            <com.google.android.material.button.MaterialButton
-            style="@style/Widget.Material3.Button.TonalButton"
+            <Button
+            android:background="@drawable/btn_ghost"
                 android:id="@+id/btnAssistMic"
                 android:text="按住/点按说话"
-                android:textSize="13sp"
+                android:textSize="@dimen/text_body"
                 android:textColor="@color/color_on_surface"
                                 android:layout_width="0dp"
                 android:layout_weight="1"
-                android:layout_height="44dp"
-                android:minHeight="0dp"/>
+                android:layout_height="@dimen/btn_h"
+                android:minHeight="0dp"
+                android:maxLines="1"
+                android:ellipsize="end"/>
 
-            <com.google.android.material.button.MaterialButton
-            style="@style/Widget.Material3.Button"
+            <Button
+            android:background="@drawable/btn_primary"
                 android:id="@+id/btnAssistRun"
                 android:text="立即执行"
-                android:textSize="13sp"
+                android:textSize="@dimen/text_body"
                 android:textColor="@color/color_on_primary"
                                 android:layout_width="0dp"
                 android:layout_weight="1"
-                android:layout_height="44dp"
-                android:layout_marginLeft="10dp"
-                android:minHeight="0dp"/>
+                android:layout_height="@dimen/btn_h"
+                android:layout_marginLeft="@dimen/space_m"
+                android:minHeight="0dp"
+                android:maxLines="1"
+                android:ellipsize="end"/>
         </LinearLayout>
     </LinearLayout>
 </FrameLayout>

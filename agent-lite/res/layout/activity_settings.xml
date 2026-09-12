@@ -8,7 +8,6 @@
   控件 id 与原 activity_main.xml 完全一致，Prefs 读写逻辑原样保留。
 -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/rootSettings"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -20,10 +19,10 @@
         android:orientation="vertical"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:paddingLeft="16dp"
-        android:paddingRight="16dp"
-        android:paddingTop="16dp"
-        android:paddingBottom="16dp">
+        android:paddingLeft="@dimen/space_l"
+        android:paddingRight="@dimen/space_l"
+        android:paddingTop="@dimen/space_l"
+        android:paddingBottom="@dimen/space_l">
 
         <!-- 顶栏 -->
         <LinearLayout
@@ -41,7 +40,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:textColor="@color/color_on_surface"
-                    android:textSize="20sp"
+                    android:textSize="@dimen/text_title"
                     android:fontFamily="sans-serif-medium"
                     android:textStyle="bold"/>
                 <TextView
@@ -49,20 +48,22 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:textColor="@color/color_on_surface_variant"
-                    android:textSize="11sp"/>
+                    android:textSize="@dimen/text_label"/>
             </LinearLayout>
-            <com.google.android.material.button.MaterialButton
-            style="@style/Widget.Material3.Button.TonalButton"
+            <Button
+            android:background="@drawable/btn_ghost"
                 android:id="@+id/btnBack"
                 android:layout_width="wrap_content"
-                android:layout_height="36dp"
+                android:layout_height="@dimen/btn_h"
                 android:text="返回"
-                android:textSize="13sp"
+                android:textSize="@dimen/text_body"
                 android:textColor="@color/color_on_surface"
-                                android:paddingLeft="14dp"
-                android:paddingRight="14dp"
+                                android:paddingLeft="@dimen/space_l"
+                android:paddingRight="@dimen/space_l"
                 android:minWidth="0dp"
-                android:minHeight="0dp"/>
+                android:minHeight="0dp"
+                android:maxLines="1"
+                android:ellipsize="end"/>
         </LinearLayout>
 
         <!-- ===== 一、账号与额度 ===== -->
@@ -70,15 +71,15 @@
             android:orientation="vertical"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
-            android:padding="12dp"
+            android:layout_marginTop="@dimen/space_m"
+            android:padding="@dimen/space_m"
             android:background="@drawable/bg_card">
 
             <TextView
                 android:text="账号与额度"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:textSize="13sp"
+                android:textSize="@dimen/text_body"
                 android:textStyle="bold"
                 android:textColor="@color/color_on_surface"/>
 
@@ -86,8 +87,8 @@
                 android:id="@+id/tvAccount"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
-                android:textSize="12sp"
+                android:layout_marginTop="@dimen/space_s"
+                android:textSize="@dimen/text_body"
                 android:textColor="@color/color_on_surface_variant"
                 android:text="当前未登录"/>
 
@@ -95,8 +96,8 @@
                 android:id="@+id/tvQuota"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:textSize="12sp"
+                android:layout_marginTop="@dimen/space_xs"
+                android:textSize="@dimen/text_body"
                 android:textColor="@color/color_on_surface"
                 android:text="额度：-- units"/>
 
@@ -104,42 +105,48 @@
                 android:orientation="horizontal"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp">
-                <com.google.android.material.button.MaterialButton
-            style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_marginTop="@dimen/space_s">
+                <Button
+            android:background="@drawable/btn_chip"
                     android:id="@+id/btnRefreshQuota"
                     android:layout_width="0dp"
                     android:layout_weight="1"
-                    android:layout_height="36dp"
+                    android:layout_height="@dimen/btn_h"
                     android:text="刷新额度"
-                    android:textSize="12sp"
+                    android:textSize="@dimen/text_body"
                     android:textColor="@color/color_primary"
                                         android:minWidth="0dp"
-                    android:minHeight="0dp"/>
-                <com.google.android.material.button.MaterialButton
-            style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:minHeight="0dp"
+                android:maxLines="1"
+                android:ellipsize="end"/>
+                <Button
+            android:background="@drawable/btn_chip"
                     android:id="@+id/btnAccountAction"
                     android:layout_width="0dp"
                     android:layout_weight="1"
-                    android:layout_height="36dp"
-                    android:layout_marginLeft="6dp"
+                    android:layout_height="@dimen/btn_h"
+                    android:layout_marginLeft="@dimen/space_s"
                     android:text="登录 / 切换账号"
-                    android:textSize="12sp"
+                    android:textSize="@dimen/text_body"
                     android:textColor="@color/color_primary"
                                         android:minWidth="0dp"
-                    android:minHeight="0dp"/>
-                <com.google.android.material.button.MaterialButton
-            style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:minHeight="0dp"
+                android:maxLines="1"
+                android:ellipsize="end"/>
+                <Button
+            android:background="@drawable/btn_chip"
                     android:id="@+id/btnLogout"
                     android:layout_width="0dp"
                     android:layout_weight="1"
-                    android:layout_height="36dp"
-                    android:layout_marginLeft="6dp"
+                    android:layout_height="@dimen/btn_h"
+                    android:layout_marginLeft="@dimen/space_s"
                     android:text="退出登录"
-                    android:textSize="12sp"
+                    android:textSize="@dimen/text_body"
                     android:textColor="@color/color_on_surface_variant"
                                         android:minWidth="0dp"
-                    android:minHeight="0dp"/>
+                    android:minHeight="0dp"
+                android:maxLines="1"
+                android:ellipsize="end"/>
             </LinearLayout>
 
             <!-- 兑换码 -->
@@ -147,35 +154,47 @@
                 android:orientation="horizontal"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
+                android:layout_marginTop="@dimen/space_s"
                 android:gravity="center_vertical">
                 <EditText
                     android:id="@+id/etRedeem"
                     android:layout_width="0dp"
                     android:layout_weight="1"
-                    android:layout_height="40dp"
+                    android:layout_height="@dimen/input_h"
                     android:hint="兑换码"
-                    android:textSize="13sp"
+                    android:textSize="@dimen/text_body"
                     android:singleLine="true"
                     android:inputType="textVisiblePassword"
                     android:textColor="@color/color_on_surface"
                     android:textColorHint="@color/color_text_hint"
                     android:background="@drawable/bg_input"
-                    android:paddingLeft="12dp"
-                    android:paddingRight="12dp"/>
-                <com.google.android.material.button.MaterialButton
-            style="@style/Widget.Material3.Button"
+                    android:paddingLeft="@dimen/space_m"
+                    android:paddingRight="@dimen/space_m"/>
+                <Button
+                    android:background="@drawable/btn_primary"
+                    android:id="@+id/btnBuy"
+                    android:layout_width="wrap_content"
+                    android:layout_height="@dimen/btn_h"
+                    android:layout_marginLeft="@dimen/space_s"
+                    android:text="充值"
+                    android:textSize="@dimen/text_body"
+                    android:textColor="@color/color_on_primary" />
+
+                <Button
+            android:background="@drawable/btn_primary"
                     android:id="@+id/btnRedeem"
                     android:layout_width="wrap_content"
-                    android:layout_height="40dp"
-                    android:layout_marginLeft="6dp"
+                    android:layout_height="@dimen/btn_h"
+                    android:layout_marginLeft="@dimen/space_s"
                     android:text="兑换"
-                    android:textSize="13sp"
+                    android:textSize="@dimen/text_body"
                     android:textColor="@color/color_on_primary"
-                                        android:paddingLeft="16dp"
-                    android:paddingRight="16dp"
+                                        android:paddingLeft="@dimen/space_l"
+                    android:paddingRight="@dimen/space_l"
                     android:minWidth="0dp"
-                    android:minHeight="0dp"/>
+                    android:minHeight="0dp"
+                android:maxLines="1"
+                android:ellipsize="end"/>
             </LinearLayout>
 
             <!-- 同账号设备列表 -->
@@ -183,8 +202,8 @@
                 android:text="本账号设备（同一账号可多台设备共用额度）"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:textSize="12sp"
+                android:layout_marginTop="@dimen/space_m"
+                android:textSize="@dimen/text_body"
                 android:textStyle="bold"
                 android:textColor="@color/color_on_surface"/>
 
@@ -192,8 +211,8 @@
                 android:id="@+id/tvDevices"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:textSize="12sp"
+                android:layout_marginTop="@dimen/space_xs"
+                android:textSize="@dimen/text_body"
                 android:lineSpacingMultiplier="1.2"
                 android:textColor="@color/color_on_surface_variant"
                 android:text="登录后点击「刷新额度」查看"/>
@@ -204,15 +223,15 @@
             android:orientation="vertical"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
-            android:padding="12dp"
+            android:layout_marginTop="@dimen/space_m"
+            android:padding="@dimen/space_m"
             android:background="@drawable/bg_card">
 
             <TextView
                 android:text="模型与 API 配置"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:textSize="13sp"
+                android:textSize="@dimen/text_body"
                 android:textStyle="bold"
                 android:textColor="@color/color_on_surface"/>
 
@@ -220,101 +239,103 @@
                 android:id="@+id/etBase"
                 android:hint="Base URL"
                 android:layout_width="match_parent"
-                android:layout_height="44dp"
-                android:layout_marginTop="8dp"
-                android:textSize="13sp"
+                android:layout_height="@dimen/input_h"
+                android:layout_marginTop="@dimen/space_s"
+                android:textSize="@dimen/text_body"
                 android:singleLine="true"
                 android:textColor="@color/color_on_surface"
                 android:textColorHint="@color/color_text_hint"
                 android:background="@drawable/bg_input"
-                android:paddingLeft="12dp"
-                android:paddingRight="12dp"/>
+                android:paddingLeft="@dimen/space_m"
+                android:paddingRight="@dimen/space_m"/>
             <EditText
                 android:id="@+id/etKey"
                 android:inputType="textPassword"
                 android:hint="API Key"
                 android:layout_width="match_parent"
-                android:layout_height="44dp"
-                android:layout_marginTop="8dp"
-                android:textSize="13sp"
+                android:layout_height="@dimen/input_h"
+                android:layout_marginTop="@dimen/space_s"
+                android:textSize="@dimen/text_body"
                 android:singleLine="true"
                 android:textColor="@color/color_on_surface"
                 android:textColorHint="@color/color_text_hint"
                 android:background="@drawable/bg_input"
-                android:paddingLeft="12dp"
-                android:paddingRight="12dp"/>
+                android:paddingLeft="@dimen/space_m"
+                android:paddingRight="@dimen/space_m"/>
             <EditText
                 android:id="@+id/etModel"
                 android:hint="视觉主模型（默认 qwen3.5-omni-plus）"
                 android:layout_width="match_parent"
-                android:layout_height="44dp"
-                android:layout_marginTop="8dp"
-                android:textSize="13sp"
+                android:layout_height="@dimen/input_h"
+                android:layout_marginTop="@dimen/space_s"
+                android:textSize="@dimen/text_body"
                 android:singleLine="true"
                 android:textColor="@color/color_on_surface"
                 android:textColorHint="@color/color_text_hint"
                 android:background="@drawable/bg_input"
-                android:paddingLeft="12dp"
-                android:paddingRight="12dp"/>
+                android:paddingLeft="@dimen/space_m"
+                android:paddingRight="@dimen/space_m"/>
             <EditText
                 android:id="@+id/etAsr"
                 android:hint="语音模型（留空=主模型原生音频）"
                 android:layout_width="match_parent"
-                android:layout_height="44dp"
-                android:layout_marginTop="8dp"
-                android:textSize="13sp"
+                android:layout_height="@dimen/input_h"
+                android:layout_marginTop="@dimen/space_s"
+                android:textSize="@dimen/text_body"
                 android:singleLine="true"
                 android:textColor="@color/color_on_surface"
                 android:textColorHint="@color/color_text_hint"
                 android:background="@drawable/bg_input"
-                android:paddingLeft="12dp"
-                android:paddingRight="12dp"/>
+                android:paddingLeft="@dimen/space_m"
+                android:paddingRight="@dimen/space_m"/>
             <EditText
                 android:id="@+id/etPlanner"
                 android:hint="语义规划模型（默认 qwen3.5-flash，留空=关闭规划）"
                 android:layout_width="match_parent"
-                android:layout_height="44dp"
-                android:layout_marginTop="8dp"
-                android:textSize="13sp"
+                android:layout_height="@dimen/input_h"
+                android:layout_marginTop="@dimen/space_s"
+                android:textSize="@dimen/text_body"
                 android:singleLine="true"
                 android:textColor="@color/color_on_surface"
                 android:textColorHint="@color/color_text_hint"
                 android:background="@drawable/bg_input"
-                android:paddingLeft="12dp"
-                android:paddingRight="12dp"/>
+                android:paddingLeft="@dimen/space_m"
+                android:paddingRight="@dimen/space_m"/>
             <EditText
                 android:id="@+id/etMaxSteps"
                 android:hint="最大步数（默认 50）"
                 android:layout_width="match_parent"
-                android:layout_height="44dp"
-                android:layout_marginTop="8dp"
-                android:textSize="13sp"
+                android:layout_height="@dimen/input_h"
+                android:layout_marginTop="@dimen/space_s"
+                android:textSize="@dimen/text_body"
                 android:singleLine="true"
                 android:inputType="number"
                 android:textColor="@color/color_on_surface"
                 android:textColorHint="@color/color_text_hint"
                 android:background="@drawable/bg_input"
-                android:paddingLeft="12dp"
-                android:paddingRight="12dp"/>
-            <com.google.android.material.materialswitch.MaterialSwitch
+                android:paddingLeft="@dimen/space_m"
+                android:paddingRight="@dimen/space_m"/>
+            <Switch
                 android:id="@+id/swVision"
                 android:text="纯视觉模式（全流程截图感知）"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:textSize="13sp"
+                android:layout_marginTop="@dimen/space_s"
+                android:textSize="@dimen/text_body"
                 android:textColor="@color/color_on_surface"/>
 
-            <com.google.android.material.button.MaterialButton
-            style="@style/Widget.Material3.Button"
+            <Button
+            android:background="@drawable/btn_primary"
                 android:id="@+id/btnSave"
                 android:text="保存配置"
                 android:layout_width="match_parent"
-                android:layout_height="42dp"
-                android:layout_marginTop="10dp"
-                android:textSize="13sp"
+                android:layout_height="@dimen/btn_h"
+                android:layout_marginTop="@dimen/space_m"
+                android:textSize="@dimen/text_body"
                 android:textColor="@color/color_on_primary"
-                                android:minHeight="0dp"/>
+                                android:minHeight="0dp"
+                android:maxLines="1"
+                android:ellipsize="end"/>
         </LinearLayout>
 
         <!-- ===== 三、Token 统计 ===== -->
@@ -322,8 +343,8 @@
             android:orientation="vertical"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
-            android:padding="12dp"
+            android:layout_marginTop="@dimen/space_m"
+            android:padding="@dimen/space_m"
             android:background="@drawable/bg_card">
             <LinearLayout
                 android:orientation="horizontal"
@@ -335,29 +356,31 @@
                     android:layout_width="0dp"
                     android:layout_weight="1"
                     android:layout_height="wrap_content"
-                    android:textSize="13sp"
+                    android:textSize="@dimen/text_body"
                     android:textStyle="bold"
                     android:textColor="@color/color_on_surface"/>
-                <com.google.android.material.button.MaterialButton
-            style="@style/Widget.Material3.Button.OutlinedButton"
+                <Button
+            android:background="@drawable/btn_chip"
                     android:id="@+id/btnResetTokens"
                     android:text="重置"
-                    android:textSize="11sp"
+                    android:textSize="@dimen/text_label"
                     android:layout_width="wrap_content"
-                    android:layout_height="28dp"
+                    android:layout_height="@dimen/btn_h"
                     android:textColor="@color/color_primary"
                                         android:minWidth="0dp"
                     android:minHeight="0dp"
-                    android:paddingLeft="8dp"
-                    android:paddingRight="8dp"/>
+                    android:paddingLeft="@dimen/space_s"
+                    android:paddingRight="@dimen/space_s"
+                android:maxLines="1"
+                android:ellipsize="end"/>
             </LinearLayout>
             <TextView
                 android:id="@+id/tvTokens"
                 android:text="总计: 0 | 输入: 0 | 输出: 0"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:textSize="12sp"
+                android:layout_marginTop="@dimen/space_xs"
+                android:textSize="@dimen/text_body"
                 android:textColor="@color/color_on_surface_variant"/>
         </LinearLayout>
 
@@ -366,8 +389,8 @@
             android:orientation="vertical"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
-            android:padding="12dp"
+            android:layout_marginTop="@dimen/space_m"
+            android:padding="@dimen/space_m"
             android:background="@drawable/bg_card">
             <LinearLayout
                 android:orientation="horizontal"
@@ -379,42 +402,46 @@
                     android:layout_width="0dp"
                     android:layout_weight="1"
                     android:layout_height="wrap_content"
-                    android:textSize="13sp"
+                    android:textSize="@dimen/text_body"
                     android:textStyle="bold"
                     android:textColor="@color/color_on_surface"/>
-                <com.google.android.material.button.MaterialButton
-            style="@style/Widget.Material3.Button.OutlinedButton"
+                <Button
+            android:background="@drawable/btn_chip"
                     android:id="@+id/btnDisplayCalib"
                     android:text="坐标校准"
-                    android:textSize="11sp"
+                    android:textSize="@dimen/text_label"
                     android:layout_width="wrap_content"
-                    android:layout_height="28dp"
-                    android:layout_marginRight="6dp"
+                    android:layout_height="@dimen/btn_h"
+                    android:layout_marginRight="@dimen/space_s"
                     android:textColor="@color/color_primary"
                                         android:minWidth="0dp"
                     android:minHeight="0dp"
-                    android:paddingLeft="8dp"
-                    android:paddingRight="8dp"/>
-                <com.google.android.material.button.MaterialButton
-            style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:paddingLeft="@dimen/space_s"
+                    android:paddingRight="@dimen/space_s"
+                android:maxLines="1"
+                android:ellipsize="end"/>
+                <Button
+            android:background="@drawable/btn_chip"
                     android:id="@+id/btnDisplayRefresh"
                     android:text="重新采集"
-                    android:textSize="11sp"
+                    android:textSize="@dimen/text_label"
                     android:layout_width="wrap_content"
-                    android:layout_height="28dp"
+                    android:layout_height="@dimen/btn_h"
                     android:textColor="@color/color_primary"
                                         android:minWidth="0dp"
                     android:minHeight="0dp"
-                    android:paddingLeft="8dp"
-                    android:paddingRight="8dp"/>
+                    android:paddingLeft="@dimen/space_s"
+                    android:paddingRight="@dimen/space_s"
+                android:maxLines="1"
+                android:ellipsize="end"/>
             </LinearLayout>
             <TextView
                 android:id="@+id/tvDisplay"
                 android:text="无障碍服务未连接，无法采集"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:textSize="11sp"
+                android:layout_marginTop="@dimen/space_xs"
+                android:textSize="@dimen/text_label"
                 android:textColor="@color/color_on_surface_variant"/>
         </LinearLayout>
 
@@ -423,15 +450,15 @@
             android:orientation="vertical"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
-            android:padding="12dp"
+            android:layout_marginTop="@dimen/space_m"
+            android:padding="@dimen/space_m"
             android:background="@drawable/bg_card">
 
             <TextView
                 android:text="保活与后台运行"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:textSize="13sp"
+                android:textSize="@dimen/text_body"
                 android:textStyle="bold"
                 android:textColor="@color/color_on_surface"/>
 
@@ -440,56 +467,62 @@
                 android:text="自检中…"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:textSize="11sp"
+                android:layout_marginTop="@dimen/space_xs"
+                android:textSize="@dimen/text_label"
                 android:textColor="@color/color_on_surface_variant"/>
 
             <LinearLayout
                 android:orientation="horizontal"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="10dp">
-                <com.google.android.material.button.MaterialButton
-            style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_marginTop="@dimen/space_m">
+                <Button
+            android:background="@drawable/btn_chip"
                     android:id="@+id/btnAutoStart"
                     android:text="自启动设置"
                     android:layout_width="0dp"
                     android:layout_weight="1"
-                    android:layout_height="32dp"
-                    android:textSize="11sp"
+                    android:layout_height="@dimen/btn_h"
+                    android:textSize="@dimen/text_label"
                     android:textColor="@color/color_primary"
                                         android:minWidth="0dp"
                     android:minHeight="0dp"
-                    android:paddingLeft="8dp"
-                    android:paddingRight="8dp"/>
-                <com.google.android.material.button.MaterialButton
-            style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:paddingLeft="@dimen/space_s"
+                    android:paddingRight="@dimen/space_s"
+                android:maxLines="1"
+                android:ellipsize="end"/>
+                <Button
+            android:background="@drawable/btn_chip"
                     android:id="@+id/btnBatteryIgnore"
                     android:text="电池无限制"
                     android:layout_width="0dp"
                     android:layout_weight="1"
-                    android:layout_height="32dp"
-                    android:layout_marginLeft="6dp"
-                    android:textSize="11sp"
+                    android:layout_height="@dimen/btn_h"
+                    android:layout_marginLeft="@dimen/space_s"
+                    android:textSize="@dimen/text_label"
                     android:textColor="@color/color_primary"
                                         android:minWidth="0dp"
                     android:minHeight="0dp"
-                    android:paddingLeft="8dp"
-                    android:paddingRight="8dp"/>
-                <com.google.android.material.button.MaterialButton
-            style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:paddingLeft="@dimen/space_s"
+                    android:paddingRight="@dimen/space_s"
+                android:maxLines="1"
+                android:ellipsize="end"/>
+                <Button
+            android:background="@drawable/btn_chip"
                     android:id="@+id/btnA11y"
                     android:text="系统无障碍"
                     android:layout_width="0dp"
                     android:layout_weight="1"
-                    android:layout_height="32dp"
-                    android:layout_marginLeft="6dp"
-                    android:textSize="11sp"
+                    android:layout_height="@dimen/btn_h"
+                    android:layout_marginLeft="@dimen/space_s"
+                    android:textSize="@dimen/text_label"
                     android:textColor="@color/color_primary"
                                         android:minWidth="0dp"
                     android:minHeight="0dp"
-                    android:paddingLeft="8dp"
-                    android:paddingRight="8dp"/>
+                    android:paddingLeft="@dimen/space_s"
+                    android:paddingRight="@dimen/space_s"
+                android:maxLines="1"
+                android:ellipsize="end"/>
             </LinearLayout>
         </LinearLayout>
 
@@ -498,24 +531,61 @@
             android:orientation="vertical"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
-            android:padding="12dp"
+            android:layout_marginTop="@dimen/space_m"
+            android:padding="@dimen/space_m"
             android:background="@drawable/bg_card">
 
             <TextView
                 android:text="信息同步（agentlite-server）"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:textSize="13sp"
+                android:textSize="@dimen/text_body"
                 android:textStyle="bold"
                 android:textColor="@color/color_on_surface"/>
+
+            <!-- 守则 S-4：同步必须默认关闭且显式 opt-in —— 该开关此前只存在于代码里，UI 上无入口 -->
+            <LinearLayout
+                android:orientation="horizontal"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_s"
+                android:gravity="center_vertical">
+
+                <LinearLayout
+                    android:orientation="vertical"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_height="wrap_content">
+
+                    <TextView
+                        android:text="允许上传本机历史与记忆"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textSize="@dimen/text_body"
+                        android:textColor="@color/color_on_surface"/>
+
+                    <TextView
+                        android:id="@+id/tvSyncHint"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/space_xs"
+                        android:textSize="@dimen/text_label"
+                        android:textColor="@color/color_on_surface_variant"
+                        android:text="关闭后只存本机，不上传服务器"/>
+                </LinearLayout>
+
+                <Switch
+                    android:id="@+id/swSync"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"/>
+            </LinearLayout>
 
             <TextView
                 android:id="@+id/tvSyncStatus"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:textSize="12sp"
+                android:layout_marginTop="@dimen/space_xs"
+                android:textSize="@dimen/text_body"
                 android:textColor="@color/color_on_surface_variant"
                 android:text="尚未同步"/>
 
@@ -523,56 +593,62 @@
                 android:id="@+id/etSyncServer"
                 android:hint="同步服务器地址"
                 android:layout_width="match_parent"
-                android:layout_height="44dp"
-                android:layout_marginTop="8dp"
-                android:textSize="13sp"
+                android:layout_height="@dimen/input_h"
+                android:layout_marginTop="@dimen/space_s"
+                android:textSize="@dimen/text_body"
                 android:singleLine="true"
                 android:textColor="@color/color_on_surface"
                 android:textColorHint="@color/color_text_hint"
                 android:background="@drawable/bg_input"
-                android:paddingLeft="12dp"
-                android:paddingRight="12dp"/>
+                android:paddingLeft="@dimen/space_m"
+                android:paddingRight="@dimen/space_m"/>
 
             <LinearLayout
                 android:orientation="horizontal"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp">
-                <com.google.android.material.button.MaterialButton
-            style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_marginTop="@dimen/space_s">
+                <Button
+            android:background="@drawable/btn_chip"
                     android:id="@+id/btnSyncSave"
                     android:text="保存地址"
                     android:layout_width="0dp"
                     android:layout_weight="1"
-                    android:layout_height="36dp"
-                    android:textSize="12sp"
+                    android:layout_height="@dimen/btn_h"
+                    android:textSize="@dimen/text_body"
                     android:textColor="@color/color_primary"
                                         android:minWidth="0dp"
-                    android:minHeight="0dp"/>
-                <com.google.android.material.button.MaterialButton
-            style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:minHeight="0dp"
+                android:maxLines="1"
+                android:ellipsize="end"/>
+                <Button
+            android:background="@drawable/btn_chip"
                     android:id="@+id/btnSyncNow"
                     android:text="立即同步"
                     android:layout_width="0dp"
                     android:layout_weight="1"
-                    android:layout_height="36dp"
-                    android:layout_marginLeft="6dp"
-                    android:textSize="12sp"
+                    android:layout_height="@dimen/btn_h"
+                    android:layout_marginLeft="@dimen/space_s"
+                    android:textSize="@dimen/text_body"
                     android:textColor="@color/color_primary"
                                         android:minWidth="0dp"
-                    android:minHeight="0dp"/>
-                <com.google.android.material.button.MaterialButton
-            style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:minHeight="0dp"
+                android:maxLines="1"
+                android:ellipsize="end"/>
+                <Button
+            android:background="@drawable/btn_chip"
                     android:id="@+id/btnLanRendezvous"
                     android:text="局域网会合"
                     android:layout_width="0dp"
                     android:layout_weight="1"
-                    android:layout_height="36dp"
-                    android:layout_marginLeft="6dp"
-                    android:textSize="12sp"
+                    android:layout_height="@dimen/btn_h"
+                    android:layout_marginLeft="@dimen/space_s"
+                    android:textSize="@dimen/text_body"
                     android:textColor="@color/color_primary"
                                         android:minWidth="0dp"
-                    android:minHeight="0dp"/>
+                    android:minHeight="0dp"
+                android:maxLines="1"
+                android:ellipsize="end"/>
             </LinearLayout>
         </LinearLayout>
     </LinearLayout>

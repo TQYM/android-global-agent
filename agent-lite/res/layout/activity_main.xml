@@ -9,7 +9,6 @@
   截屏回显与日志按前一版需求保留隐藏（控件保留，供内部逻辑使用）。
 -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/rootLayout"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -20,15 +19,15 @@
     android:orientation="vertical"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:paddingLeft="16dp"
-    android:paddingRight="16dp">
+    android:paddingLeft="@dimen/space_l"
+    android:paddingRight="@dimen/space_l">
 
     <!-- 顶栏：标题 + 设置 -->
     <LinearLayout
         android:orientation="horizontal"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="6dp"
+        android:layout_marginTop="@dimen/space_s"
         android:gravity="center_vertical">
 
         <LinearLayout
@@ -41,7 +40,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:textColor="@color/color_on_surface"
-                android:textSize="20sp"
+                android:textSize="@dimen/text_title"
                 android:fontFamily="sans-serif-medium"
                 android:textStyle="bold"/>
             <TextView
@@ -49,21 +48,23 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:textColor="@color/color_on_surface_variant"
-                android:textSize="11sp"/>
+                android:textSize="@dimen/text_label"/>
         </LinearLayout>
 
-        <com.google.android.material.button.MaterialButton
-            style="@style/Widget.Material3.Button.TonalButton"
+        <Button
+            android:background="@drawable/btn_ghost"
             android:id="@+id/btnConfig"
             android:layout_width="wrap_content"
-            android:layout_height="36dp"
+            android:layout_height="@dimen/btn_h"
             android:text="设置"
-            android:textSize="13sp"
+            android:textSize="@dimen/text_body"
             android:textColor="@color/color_on_surface"
-                        android:paddingLeft="14dp"
-            android:paddingRight="14dp"
+                        android:paddingLeft="@dimen/space_l"
+            android:paddingRight="@dimen/space_l"
             android:minWidth="0dp"
-            android:minHeight="0dp"/>
+            android:minHeight="0dp"
+                android:maxLines="1"
+                android:ellipsize="end"/>
     </LinearLayout>
 
     <!-- 状态行 -->
@@ -71,7 +72,7 @@
         android:orientation="horizontal"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="6dp"
+        android:layout_marginTop="@dimen/space_s"
         android:gravity="center_vertical">
         <TextView
             android:id="@+id/tvStatus"
@@ -79,24 +80,24 @@
             android:layout_height="wrap_content"
             android:text="空闲"
             android:textColor="@color/color_on_surface_variant"
-            android:textSize="12sp"
+            android:textSize="@dimen/text_body"
             android:background="@drawable/pill_gray"
-            android:paddingLeft="10dp"
-            android:paddingRight="10dp"
-            android:paddingTop="4dp"
-            android:paddingBottom="4dp"/>
+            android:paddingLeft="@dimen/space_m"
+            android:paddingRight="@dimen/space_m"
+            android:paddingTop="@dimen/space_xs"
+            android:paddingBottom="@dimen/space_xs"/>
         <TextView
             android:id="@+id/tvA11y"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginLeft="6dp"
-            android:textSize="12sp"
+            android:layout_marginLeft="@dimen/space_s"
+            android:textSize="@dimen/text_body"
             android:text="无障碍"
             android:background="@drawable/pill_gray"
-            android:paddingLeft="10dp"
-            android:paddingRight="10dp"
-            android:paddingTop="4dp"
-            android:paddingBottom="4dp"/>
+            android:paddingLeft="@dimen/space_m"
+            android:paddingRight="@dimen/space_m"
+            android:paddingTop="@dimen/space_xs"
+            android:paddingBottom="@dimen/space_xs"/>
     </LinearLayout>
 
     <!-- 账号状态行：未登录 / 令牌失效时点这里直接进登录页 -->
@@ -104,12 +105,12 @@
         android:id="@+id/tvAccount"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:textSize="12sp"
-        android:paddingLeft="10dp"
-        android:paddingRight="10dp"
-        android:paddingTop="6dp"
-        android:paddingBottom="6dp"
+        android:layout_marginTop="@dimen/space_s"
+        android:textSize="@dimen/text_body"
+        android:paddingLeft="@dimen/space_m"
+        android:paddingRight="@dimen/space_m"
+        android:paddingTop="@dimen/space_s"
+        android:paddingBottom="@dimen/space_s"
         android:background="@drawable/pill_gray"
         android:textColor="@color/color_on_surface_variant"
         android:text="账号：检测中…"/>
@@ -126,9 +127,9 @@
             android:orientation="horizontal"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
+            android:layout_marginTop="@dimen/space_m"
             android:background="@drawable/bg_card"
-            android:padding="12dp"
+            android:padding="@dimen/space_m"
             android:gravity="center_vertical"
             android:visibility="gone">
             <TextView
@@ -137,19 +138,21 @@
                 android:layout_weight="1"
                 android:layout_height="wrap_content"
                 android:textColor="@color/color_warning_text"
-                android:textSize="13sp"/>
-            <com.google.android.material.button.MaterialButton
-            style="@style/Widget.Material3.Button"
+                android:textSize="@dimen/text_body"/>
+            <Button
+            android:background="@drawable/btn_primary"
                 android:id="@+id/btnA11yBanner"
                 android:text="一键开启"
                 android:layout_width="wrap_content"
-                android:layout_height="36dp"
-                android:textSize="13sp"
+                android:layout_height="@dimen/btn_h"
+                android:textSize="@dimen/text_body"
                 android:textColor="@color/color_on_primary"
-                                android:paddingLeft="14dp"
-                android:paddingRight="14dp"
+                                android:paddingLeft="@dimen/space_l"
+                android:paddingRight="@dimen/space_l"
                 android:minWidth="0dp"
-                android:minHeight="0dp"/>
+                android:minHeight="0dp"
+                android:maxLines="1"
+                android:ellipsize="end"/>
         </LinearLayout>
 
         <!-- 四大模块（放大） -->
@@ -157,179 +160,127 @@
             android:orientation="horizontal"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="14dp">
-            <com.google.android.material.button.MaterialButton
-            style="@style/Widget.Material3.Button.TonalButton"
+            android:layout_marginTop="@dimen/space_l">
+            <Button
+            android:background="@drawable/btn_ghost"
                 android:id="@+id/btnHistory"
                 android:text="历史记录"
                 android:layout_width="0dp"
                 android:layout_weight="1"
                 android:layout_height="96dp"
-                android:textSize="15sp"
+                android:textSize="@dimen/text_section"
                 android:textColor="@color/color_on_surface"
                                 android:minWidth="0dp"
-                android:minHeight="0dp"/>
-            <com.google.android.material.button.MaterialButton
-            style="@style/Widget.Material3.Button.TonalButton"
+                android:minHeight="0dp"
+                android:maxLines="1"
+                android:ellipsize="end"/>
+            <Button
+            android:background="@drawable/btn_ghost"
                 android:id="@+id/btnAuth"
+                android:layout_marginLeft="@dimen/space_m"
                 android:text="授权管理"
                 android:layout_width="0dp"
                 android:layout_weight="1"
                 android:layout_height="96dp"
-                android:textSize="15sp"
+                android:textSize="@dimen/text_section"
                 android:textColor="@color/color_on_surface"
                                 android:minWidth="0dp"
-                android:minHeight="0dp"/>
+                android:minHeight="0dp"
+                android:maxLines="1"
+                android:ellipsize="end"/>
         </LinearLayout>
 
         <LinearLayout
             android:orientation="horizontal"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="10dp">
-            <com.google.android.material.button.MaterialButton
-            style="@style/Widget.Material3.Button.TonalButton"
+            android:layout_marginTop="@dimen/space_m">
+            <Button
+            android:background="@drawable/btn_ghost"
                 android:id="@+id/btnEco"
                 android:text="省电策略"
                 android:layout_width="0dp"
                 android:layout_weight="1"
                 android:layout_height="96dp"
-                android:textSize="15sp"
+                android:textSize="@dimen/text_section"
                 android:textColor="@color/color_on_surface"
                                 android:minWidth="0dp"
-                android:minHeight="0dp"/>
-            <com.google.android.material.button.MaterialButton
-            style="@style/Widget.Material3.Button.TonalButton"
+                android:minHeight="0dp"
+                android:maxLines="1"
+                android:ellipsize="end"/>
+            <Button
+            android:background="@drawable/btn_ghost"
                 android:id="@+id/btnMemory"
+                android:layout_marginLeft="@dimen/space_m"
                 android:text="记忆库"
                 android:layout_width="0dp"
                 android:layout_weight="1"
                 android:layout_height="96dp"
-                android:textSize="15sp"
+                android:textSize="@dimen/text_section"
                 android:textColor="@color/color_on_surface"
                                 android:minWidth="0dp"
-                android:minHeight="0dp"/>
+                android:minHeight="0dp"
+                android:maxLines="1"
+                android:ellipsize="end"/>
         </LinearLayout>
 
-        <!-- 第五个入口：二级设置页（模型/账号额度/同步/保活） -->
-        <com.google.android.material.button.MaterialButton
-            style="@style/Widget.Material3.Button.TonalButton"
-            android:id="@+id/btnSettings"
-            android:text="设置 · 账号 / 模型 / 同步"
-            android:layout_width="match_parent"
-            android:layout_height="56dp"
-            android:layout_marginTop="10dp"
-            android:textSize="15sp"
-            android:textColor="@color/color_on_surface"
-                        android:minWidth="0dp"
-            android:minHeight="0dp"/>
+                android:ellipsize="end"/>
 
-        <!-- 任务下达 -->
-        <!-- 任务输入框：纵向容器里必须用 match_parent —— 原先误写 0dp+weight，
-             在 vertical LinearLayout 中宽度会被算成 0，输入框实际不可见不可点。 -->
-        <EditText
-            android:id="@+id/etTask"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="14dp"
-            android:hint="下达指令…"
-            android:textSize="14sp"
-            android:minLines="1"
-            android:maxLines="3"
-            android:textColor="@color/color_on_surface"
-            android:textColorHint="@color/color_text_hint"
-            android:background="@drawable/bg_input"
-            android:paddingLeft="14dp"
-            android:paddingRight="14dp"
-            android:paddingTop="12dp"
-            android:paddingBottom="12dp"/>
+        <!-- 任务下达：输入框 + 语音 + 运行 **同一行**。
+             注意：这里输入框用 0dp + weight=1 是正确写法（横向容器里由 weight 分宽）；
+             早先的 0dp+weight 事故是写在**纵向**容器里，那种情况下宽度会被算成 0。 -->
         <LinearLayout
             android:orientation="horizontal"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:layout_marginBottom="6dp"
+            android:layout_marginTop="@dimen/space_l"
+            android:layout_marginBottom="@dimen/space_s"
             android:gravity="center_vertical">
-            <com.google.android.material.button.MaterialButton
-            style="@style/Widget.Material3.Button.TonalButton"
+            <EditText
+                android:id="@+id/etTask"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:hint="下达指令…"
+                android:textSize="@dimen/text_body"
+                android:minLines="1"
+                android:maxLines="3"
+                android:textColor="@color/color_on_surface"
+                android:textColorHint="@color/color_text_hint"
+                android:background="@drawable/bg_input"
+                android:paddingLeft="@dimen/space_l"
+                android:paddingRight="@dimen/space_l"
+                android:paddingTop="@dimen/space_m"
+                android:paddingBottom="@dimen/space_m"/>
+            <Button
+            android:background="@drawable/btn_ghost"
                 android:id="@+id/btnMic"
                 android:text="语音"
-                android:layout_width="52dp"
-                android:layout_height="48dp"
-                android:layout_marginLeft="8dp"
-                android:textSize="13sp"
+                android:layout_width="wrap_content"
+                android:minWidth="56dp"
+                android:layout_height="@dimen/btn_h_primary"
+                android:layout_marginLeft="@dimen/space_s"
+                android:textSize="@dimen/text_body"
                 android:textColor="@color/color_on_surface"
-                                android:minWidth="0dp"
-                android:minHeight="0dp"/>
-            <com.google.android.material.button.MaterialButton
-            style="@style/Widget.Material3.Button"
+                android:minHeight="0dp"
+                android:maxLines="1"
+                android:ellipsize="end"/>
+            <Button
+            android:background="@drawable/btn_primary"
                 android:id="@+id/btnRun"
                 android:text="运行"
-                android:layout_width="80dp"
-                android:layout_height="48dp"
-                android:layout_marginLeft="8dp"
-                android:textSize="15sp"
+                android:layout_width="wrap_content"
+                android:minWidth="84dp"
+                android:layout_height="@dimen/btn_h_primary"
+                android:layout_marginLeft="@dimen/space_s"
+                android:textSize="@dimen/text_section"
                 android:fontFamily="sans-serif-medium"
                 android:textStyle="bold"
                 android:textColor="@color/color_on_primary"
-                                android:minWidth="0dp"
-                android:minHeight="0dp"/>
+                android:minHeight="0dp"
+                android:maxLines="1"
+                android:ellipsize="end"/>
         </LinearLayout>
-
-        <!-- 调试台（动作直测，默认收起） -->
-        <com.google.android.material.button.MaterialButton
-            style="@style/Widget.Material3.Button.TonalButton"
-            android:id="@+id/btnDebug"
-            android:text="调试台"
-            android:layout_width="match_parent"
-            android:layout_height="42dp"
-            android:layout_marginTop="8dp"
-            android:textSize="12sp"
-            android:textColor="@color/color_primary"
-                        android:paddingLeft="10dp"
-            android:paddingRight="10dp"
-            android:minWidth="0dp"
-            android:minHeight="0dp"/>
-        <HorizontalScrollView
-            android:id="@+id/dbgScroll"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:scrollbars="none"
-            android:background="@drawable/bg_card"
-            android:visibility="gone">
-            <LinearLayout
-                android:id="@+id/llDebug"
-                android:orientation="horizontal"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:padding="4dp">
-                <com.google.android.material.button.MaterialButton android:id="@+id/btnDbgNodes" android:text="感知" style="?android:attr/borderlessButtonStyle" android:textSize="12sp" android:textColor="@color/color_primary" android:layout_width="wrap_content" android:minHeight="0dp"
-            android:layout_height="36dp"/>
-                <com.google.android.material.button.MaterialButton android:id="@+id/btnDbgShot" android:text="截图" style="?android:attr/borderlessButtonStyle" android:textSize="12sp" android:textColor="@color/color_primary" android:layout_width="wrap_content" android:minHeight="0dp"
-            android:layout_height="36dp"/>
-                <com.google.android.material.button.MaterialButton android:id="@+id/btnDbgTap" android:text="点中心" style="?android:attr/borderlessButtonStyle" android:textSize="12sp" android:textColor="@color/color_primary" android:layout_width="wrap_content" android:minHeight="0dp"
-            android:layout_height="36dp"/>
-                <com.google.android.material.button.MaterialButton android:id="@+id/btnDbgBack" android:text="返回" style="?android:attr/borderlessButtonStyle" android:textSize="12sp" android:textColor="@color/color_primary" android:layout_width="wrap_content" android:minHeight="0dp"
-            android:layout_height="36dp"/>
-                <com.google.android.material.button.MaterialButton android:id="@+id/btnDbgEdge" android:text="手势返回" style="?android:attr/borderlessButtonStyle" android:textSize="12sp" android:textColor="@color/color_primary" android:layout_width="wrap_content" android:minHeight="0dp"
-            android:layout_height="36dp"/>
-                <com.google.android.material.button.MaterialButton android:id="@+id/btnDbgHome" android:text="主页" style="?android:attr/borderlessButtonStyle" android:textSize="12sp" android:textColor="@color/color_primary" android:layout_width="wrap_content" android:minHeight="0dp"
-            android:layout_height="36dp"/>
-                <com.google.android.material.button.MaterialButton android:id="@+id/btnDbgRecents" android:text="最近" style="?android:attr/borderlessButtonStyle" android:textSize="12sp" android:textColor="@color/color_primary" android:layout_width="wrap_content" android:minHeight="0dp"
-            android:layout_height="36dp"/>
-                <com.google.android.material.button.MaterialButton android:id="@+id/btnDbgNotif" android:text="通知栏" style="?android:attr/borderlessButtonStyle" android:textSize="12sp" android:textColor="@color/color_primary" android:layout_width="wrap_content" android:minHeight="0dp"
-            android:layout_height="36dp"/>
-                <com.google.android.material.button.MaterialButton android:id="@+id/btnDbgWifi" android:text="WiFi面板" style="?android:attr/borderlessButtonStyle" android:textSize="12sp" android:textColor="@color/color_primary" android:layout_width="wrap_content" android:minHeight="0dp"
-            android:layout_height="36dp"/>
-                <com.google.android.material.button.MaterialButton android:id="@+id/btnDbgVol" android:text="音量+" style="?android:attr/borderlessButtonStyle" android:textSize="12sp" android:textColor="@color/color_primary" android:layout_width="wrap_content" android:minHeight="0dp"
-            android:layout_height="36dp"/>
-                <com.google.android.material.button.MaterialButton android:id="@+id/btnDbgText" android:text="输中文" style="?android:attr/borderlessButtonStyle" android:textSize="12sp" android:textColor="@color/color_primary" android:layout_width="wrap_content" android:minHeight="0dp"
-            android:layout_height="36dp"/>
-                <com.google.android.material.button.MaterialButton android:id="@+id/btnDbgIme" android:text="切换键盘" style="?android:attr/borderlessButtonStyle" android:textSize="12sp" android:textColor="@color/color_primary" android:layout_width="wrap_content" android:minHeight="0dp"
-            android:layout_height="36dp"/>
-            </LinearLayout>
-        </HorizontalScrollView>
 
         <!-- 已按要求移除呈现：截屏回显与日志（控件保留隐藏，供内部逻辑继续使用） -->
         <FrameLayout
@@ -340,7 +291,7 @@
                 android:id="@+id/flScreen"
                 android:layout_width="match_parent"
                 android:layout_height="190dp"
-                android:layout_marginTop="8dp"
+                android:layout_marginTop="@dimen/space_s"
                 android:background="@drawable/bg_card">
                 <ImageView
                     android:id="@+id/ivScreen"
@@ -351,7 +302,7 @@
                 <View
                     android:id="@+id/vTap"
                     android:layout_width="26dp"
-                    android:layout_height="26dp"
+                    android:layout_height="@dimen/btn_h"
                     android:background="@drawable/tap_dot"
                     android:visibility="gone"/>
             </FrameLayout>
@@ -365,14 +316,14 @@
                 android:layout_width="match_parent"
                 android:layout_height="0dp"
                 android:layout_weight="1"
-                android:layout_marginTop="4dp"
+                android:layout_marginTop="@dimen/space_xs"
                 android:background="@drawable/bg_card"
-                android:padding="10dp">
+                android:padding="@dimen/space_m">
                 <TextView
                     android:id="@+id/tvLog"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:textSize="11sp"
+                    android:textSize="@dimen/text_label"
                     android:textColor="@color/color_on_surface_variant"
                     android:fontFamily="monospace"
                     android:lineSpacingMultiplier="1.2"/>

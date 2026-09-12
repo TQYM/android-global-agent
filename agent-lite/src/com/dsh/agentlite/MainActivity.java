@@ -17,7 +17,6 @@ import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.ScrollView;
-import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -61,16 +60,18 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
     private VoiceRecorder recorder;
     private Bitmap lastBmp;
 
-    private TextView tvStatus, tvA11y, tvLog, tvTokens;
-    private EditText etTask, etBase, etKey, etModel, etAsr, etMaxSteps, etPlanner;
-    private Switch swVision;
-    private Button btnRun, btnMic, btnResetTokens;
-    private TextView tvDisplay;
-    private Button btnDisplayRefresh, btnDisplayCalib;
-    private View llConfig, vTap;
+    // 主页只保留：任务输入 / 运行 / 语音 / 状态 / 账号状态 / 调试台（日志与截图容器保留隐藏供内部逻辑使用）。
+    // API 配置、Token 统计、设备形态、保活按钮已搬到 SettingsActivity（控件 id 原样保留在那里）。
+    private TextView tvStatus, tvA11y, tvLog, tvAccount;
+    private EditText etTask;
+    private Button btnRun, btnMic;
+    private View vTap;
     private ImageView ivScreen;
     private ScrollView svLog;
     private FrameLayout flScreen;
+
+    /** 登录失效弹窗只提示一次（避免每次回前台都弹）。 */
+    private boolean authPrompted;
 
     private final StringBuilder logBuf = new StringBuilder();
 
@@ -98,9 +99,14 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
         watchUi = isWatchUi();
         setContentView(watchUi ? R.layout.activity_main_watch : R.layout.activity_main);
 
-        // 启动即与同步服务对账一次：首次自动注册，之后增量上行 + 配置下发。
-        // 内部走单线程 executor，不阻塞首帧；服务器不可达时静默失败、下次启动重试。
+        // 启动即与同步服务对账一次：账号令牌鉴权（Bearer + X-Device-Id），增量上行 + 配置下发。
+        // 未登录时直接跳过；内部走单线程 executor，不阻塞首帧；服务器不可达时静默失败、下次启动重试。
         SyncClient.syncNow(this);
+        // 账号令牌失效（401）由同步/账号请求在后台判定，这里接收回调在 UI 上引导重新登录
+        SyncClient.setAuthInvalidListener(() -> {
+            refreshAccount();
+            if (!authPrompted) promptRelogin();
+        });
         View root = find(R.id.rootLayout);
         if (root != null) {
             final boolean isWatch = watchUi;
@@ -149,30 +155,37 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
                     .setPositiveButton("知道了", null)
                     .show();
         }
+
+        // 未登录引导：启动后直接打开登录页（不强制——返回键可回到主页继续本机使用）。
+        // 手表形态同样只做引导，登录页自带圆形屏安全边距。
+        // 已登录：带着有效会话启动局域网直连服务（密钥在登录时已派生并落盘）。
+        if (!prefs.loggedIn()) {
+            ui.postDelayed(() -> {
+                if (!isFinishing() && !prefs.loggedIn()) {
+                    startActivity(new Intent(MainActivity.this, LoginActivity.class));
+                }
+            }, 400);
+        } else {
+            LanSync.start(this);   // 已运行 / 未派生密钥 / 局域网关闭时内部安全跳过，重复调用无副作用
+            RemoteCommand.startPolling(this);   // 跨设备指令轮询（未登录时内部跳过，重复调用无副作用）
+            if (prefs.accountInvalid() && !authPrompted) {
+                ui.postDelayed(this::promptRelogin, 400);
+            }
+        }
     }
 
     private void bind() {
         // 手机/手表共有的核心控件：用 find（缺控件时占位不崩）
-        tvStatus = find(R.id.tvStatus);
-        tvA11y = find(R.id.tvA11y);
-        etTask = find(R.id.etTask);
-        btnRun = find(R.id.btnRun);
-        btnMic = find(R.id.btnMic);
+        tvStatus = findText(R.id.tvStatus);
+        tvA11y = findText(R.id.tvA11y);
+        etTask = findEdit(R.id.etTask);
+        btnRun = findButton(R.id.btnRun);
+        btnMic = findButton(R.id.btnMic);
+        // 手表主页没有这一行（账号状态在 WatchSettingsActivity 里）——
+        // 过去这里用 find() 装 TextView 会 ClassCastException 崩溃
+        tvAccount = findText(R.id.tvAccount);
         // 仅手机布局存在的控件：直接 findViewById（手表极简主页无这些控件，保持 null 并由使用点判空）
         tvLog = findViewById(R.id.tvLog);
-        etBase = findViewById(R.id.etBase);
-        etKey = findViewById(R.id.etKey);
-        etModel = findViewById(R.id.etModel);
-        etAsr = findViewById(R.id.etAsr);
-        etPlanner = findViewById(R.id.etPlanner);
-        etMaxSteps = findViewById(R.id.etMaxSteps);
-        swVision = findViewById(R.id.swVision);
-        tvTokens = findViewById(R.id.tvTokens);
-        btnResetTokens = findViewById(R.id.btnResetTokens);
-        tvDisplay = findViewById(R.id.tvDisplay);
-        btnDisplayRefresh = findViewById(R.id.btnDisplayRefresh);
-        btnDisplayCalib = findViewById(R.id.btnDisplayCalib);
-        llConfig = findViewById(R.id.llConfig);
         vTap = findViewById(R.id.vTap);
         ivScreen = findViewById(R.id.ivScreen);
         svLog = findViewById(R.id.svLog);
@@ -181,43 +194,73 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
 
     /** 空安全的 findViewById：布局形态差异（手机/手表/精简布局）缺控件时返回不可见占位，绝不 NPE。 */
     @SuppressWarnings("unchecked")
+    /**
+     * 空安全的 findViewById：布局形态差异（手机/手表/精简布局）缺控件时返回占位。
+     *
+     * ⚠️ **不要用它给有具体类型的字段赋值**（如 `TextView t = find(...)`）。
+     * 泛型签名 `<T extends View> T` 只是让编译器闭嘴，运行时并不做类型检查；
+     * 缺控件时它返回的是裸 View，调用方那侧编译器插入的强转会抛
+     * ClassCastException —— 手表布局没有 tvAccount，就直接崩在 bind() 里。
+     * 有类型的场景请用 findText / findEdit / findButton（占位与调用方同类型）。
+     */
     private <T extends View> T find(int id) {
         View v = findViewById(id);
         if (v == null) v = new View(this);
         return (T) v;
     }
 
+    /** 缺控件时返回不可见占位 TextView：可安全 setText / setTextColor / setOnClickListener。 */
+    private TextView findText(int id) {
+        View v = findViewById(id);
+        if (v instanceof TextView) return (TextView) v;
+        TextView ph = new TextView(this);
+        ph.setVisibility(View.GONE);
+        return ph;
+    }
+
+    /** 缺控件时返回不可见占位 EditText。 */
+    private EditText findEdit(int id) {
+        View v = findViewById(id);
+        if (v instanceof EditText) return (EditText) v;
+        EditText ph = new EditText(this);
+        ph.setVisibility(View.GONE);
+        return ph;
+    }
+
+    /** 缺控件时返回不可见占位 Button。 */
+    private Button findButton(int id) {
+        View v = findViewById(id);
+        if (v instanceof Button) return (Button) v;
+        Button ph = new Button(this);
+        ph.setVisibility(View.GONE);
+        return ph;
+    }
+
+    /**
+     * 主页不再承载任何配置项：模型/接口参数在 SettingsActivity，
+     * 这里只刷新账号状态行（未登录 / 已登录 / 令牌失效）。
+     */
     private void loadCfg() {
-        if (watchUi) return;   // 手表：模型配置在 WatchSettingsActivity，主页无配置控件
-        etBase.setText(prefs.baseUrl());
-        etKey.setText(prefs.apiKey());
-        etModel.setText(prefs.model());
-        etAsr.setText(prefs.asrModel());
-        etPlanner.setText(prefs.plannerModel());
-        etMaxSteps.setText(String.valueOf(prefs.maxSteps()));
-        swVision.setChecked(prefs.vision());
-        refreshTokens();
+        refreshAccount();
     }
 
-    /** 保活自检卡：显示无障碍/电池/通知/守护进程状态与建议。 */
-    private void refreshKeepAlive() {
-        TextView tv = find(R.id.tvKeepAlive);
-        if (tv == null) return;
-        tv.setText(KeepAliveGuide.summary(this) + "\n" + KeepAliveGuide.advice(this));
-    }
-
-    private void refreshTokens() {
-        if (tvTokens == null) return;
-        long tot = prefs.totalTokens();
-        long p = prefs.promptTokens();
-        long c = prefs.completionTokens();
-        tvTokens.setText("总计: " + tot + " (" + formatK(tot) + ") | 输入: " + p + " | 输出: " + c);
-    }
-
-    private static String formatK(long n) {
-        if (n >= 1_000_000) return String.format("%.2fM", n / 1_000_000.0);
-        if (n >= 1_000) return String.format("%.1fk", n / 1000.0);
-        return String.valueOf(n);
+    /** 账号状态行：未登录或令牌失效时点按进登录页；其余情况点按进设置页看额度。 */
+    private void refreshAccount() {
+        if (tvAccount == null) return;
+        if (!prefs.loggedIn()) {
+            tvAccount.setText("账号：未登录 · 点此登录（未登录时历史与记忆只存本机）");
+            tvAccount.setTextColor(0xFFFCD34D);
+            return;
+        }
+        if (prefs.accountInvalid()) {
+            tvAccount.setText("账号：" + prefs.accountName() + " · ⚠ 登录已失效，点此重新登录");
+            tvAccount.setTextColor(0xFFF87171);
+            authPrompted = false;   // 允许再次提示
+            return;
+        }
+        long left = Math.max(0, prefs.accountQuota() - prefs.accountQuotaUsed());
+        tvAccount.setText("账号：" + prefs.accountName() + " · 剩余 " + left + " units · 点此查看额度与设备");
+        tvAccount.setTextColor(0xFF94A3B8);
     }
 
     private void wire() {
@@ -235,58 +278,20 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
             return;
         }
 
-        // 设置改为**二级菜单**：进入时隐藏主视图（四大模块 + 任务下达），按钮文字变「返回」
-        find(R.id.btnConfig).setOnClickListener(v -> {
-            boolean toSettings = llConfig.getVisibility() == View.GONE;
-            llConfig.setVisibility(toSettings ? View.VISIBLE : View.GONE);
-            find(R.id.mainContent).setVisibility(toSettings ? View.GONE : View.VISIBLE);
-            ((android.widget.Button) find(R.id.btnConfig)).setText(toSettings ? "返回" : "设置");
-            if (toSettings) {
-                refreshTokens();
-                refreshKeepAlive();
-                refreshDisplay();
-                find(R.id.rootLayout).scrollTo(0, 0);   // 二级菜单从顶部开始
+        // 设置改为**独立二级页面**：配置项（模型/接口/保活/设备/Token/账号额度）全部收进
+        // SettingsActivity，主页不再内嵌配置面板，也就没有「返回」态需要维护。
+        find(R.id.btnConfig).setOnClickListener(v -> openSettings());
+
+        // 账号状态行：未登录/失效 → 登录页；已登录 → 设置页（额度与设备）
+        tvAccount.setOnClickListener(v -> {
+            if (!prefs.loggedIn() || prefs.accountInvalid()) {
+                startActivity(new Intent(this, LoginActivity.class));
+            } else {
+                openSettings();
             }
         });
 
-        if (btnResetTokens != null) {
-            btnResetTokens.setOnClickListener(v -> {
-                prefs.resetTokens();
-                refreshTokens();
-                toast("Token 消耗计数已归零");
-            });
-        }
-
-        if (btnDisplayRefresh != null) {
-            btnDisplayRefresh.setOnClickListener(v -> refreshDisplay());
-        }
-        if (btnDisplayCalib != null) {
-            btnDisplayCalib.setOnClickListener(v -> runCalibrate());
-        }
-
-        find(R.id.btnSave).setOnClickListener(v -> {
-            int steps = 50;
-            try { steps = Integer.parseInt(etMaxSteps.getText().toString().trim()); } catch (Exception ignored) { }
-            prefs.save(etBase.getText().toString().trim(), etKey.getText().toString().trim(),
-                    etModel.getText().toString().trim(), etAsr.getText().toString().trim(),
-                    swVision.isChecked(), steps, prefs.systemPrompt());
-            prefs.setPlannerModel(etPlanner.getText().toString().trim());
-            onLog("配置已保存");
-        });
-
-        find(R.id.btnA11y).setOnClickListener(v -> openA11ySettingsDirectly());
         find(R.id.btnA11yBanner).setOnClickListener(v -> openA11ySettingsDirectly());
-
-        // 锁屏保活与电池白名单配置指引
-        View btnBatteryIgnore = find(R.id.btnBatteryIgnore);
-        if (btnBatteryIgnore != null) {
-            btnBatteryIgnore.setOnClickListener(v -> KeepAliveGuide.openBatterySettings(this));
-        }
-        // 保活引导：一键跳厂商「自启动/后台运行」管理页（零 root 保活的关键系统配置）
-        find(R.id.btnAutoStart).setOnClickListener(v -> {
-            KeepAliveGuide.openAutoStartSettings(this);
-            toast(KeepAliveGuide.manualSteps(this));   // 详细操作路径随跳转一并提示
-        });
 
         // 管理入口（豆包规格事后层：可回查、可撤回、可清除）
         find(R.id.btnHistory).setOnClickListener(v -> showHistory());
@@ -294,81 +299,11 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
         find(R.id.btnEco).setOnClickListener(v -> showEco());
         find(R.id.btnMemory).setOnClickListener(v -> showMemory());
 
-        // 调试台折叠开关（默认收起，保持主界面干净）
-        final View dbgScroll = find(R.id.dbgScroll);
-        find(R.id.btnDebug).setOnClickListener(v -> {
-            boolean show = dbgScroll.getVisibility() != View.VISIBLE;
-            dbgScroll.setVisibility(show ? View.VISIBLE : View.GONE);
-            ((android.widget.Button) v).setText(show ? "收起调试" : "调试台");
-        });
 
         btnRun.setOnClickListener(v -> onRunClicked());
 
         btnMic.setOnClickListener(v -> toggleMic());
 
-        // ---- 调试台 ----
-        dbg(R.id.btnDbgNodes, () -> {
-            AgentA11yService s = svc();
-            if (s == null) return;
-            List<NodeInfo> nodes = s.collectNodes();
-            onLog("感知：" + nodes.size() + " 个节点");
-            for (int i = 0; i < Math.min(nodes.size(), 12); i++) {
-                NodeInfo n = nodes.get(i);
-                onLog("  [" + n.index + "] " + n.label() + " @" + n.cx + "," + n.cy);
-            }
-        });
-        dbg(R.id.btnDbgShot, () -> {
-            AgentA11yService s = svc();
-            if (s == null) return;
-            Bitmap bmp = s.screenshot();
-            onLog(bmp != null ? "截图成功 " + bmp.getWidth() + "x" + bmp.getHeight() : "截图失败");
-            if (bmp != null) ui.post(() -> { lastBmp = bmp; ivScreen.setImageBitmap(bmp); });
-        });
-        dbg(R.id.btnDbgTap, () -> {
-            AgentA11yService s = svc();
-            if (s == null) return;
-            int w = getResources().getDisplayMetrics().widthPixels;
-            int h = getResources().getDisplayMetrics().heightPixels;
-            onLog("点中心 " + (s.tap(w / 2, h / 2) ? "[成功]" : "[失败]"));
-        });
-        dbg(R.id.btnDbgBack, () -> { AgentA11yService s = svc(); if (s != null) onLog("返回 " + (s.goBack() ? "[成功]" : "[失败]")); });
-        dbg(R.id.btnDbgEdge, () -> {
-            AgentA11yService s = svc();
-            if (s == null) return;
-            android.graphics.Rect wb = getSystemService(android.view.WindowManager.class)
-                    .getCurrentWindowMetrics().getBounds();
-            int y = (int) (wb.height() * 0.45);
-            onLog("手势返回(左缘内滑) " + (s.swipe(2, y, (int) (wb.width() * 0.35), y, 300) ? "[成功]" : "[失败]"));
-        });
-        dbg(R.id.btnDbgHome, () -> { AgentA11yService s = svc(); if (s != null) onLog("主页 " + (s.goHome() ? "[成功]" : "[失败]")); });
-        dbg(R.id.btnDbgRecents, () -> { AgentA11yService s = svc(); if (s != null) onLog("最近任务 " + (s.goRecents() ? "[成功]" : "[失败]")); });
-        dbg(R.id.btnDbgNotif, () -> { AgentA11yService s = svc(); if (s != null) onLog("通知栏 " + (s.notifications() ? "[成功]" : "[失败]")); });
-        dbg(R.id.btnDbgWifi, () -> {
-            startActivity(new Intent(Settings.Panel.ACTION_WIFI).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-            onLog("WiFi 面板已开启");
-        });
-        dbg(R.id.btnDbgIme, () -> {
-            String def = Settings.Secure.getString(getContentResolver(), Settings.Secure.DEFAULT_INPUT_METHOD);
-            boolean merged = def != null && def.startsWith("dev.patrickgold.florisboard/");
-            onLog(merged ? "缝合键盘(FlorisBoard+注入桥)已是默认" : "默认输入法: " + def + "，弹出切换器…");
-            if (!merged) {
-                android.view.inputmethod.InputMethodManager imm =
-                        (android.view.inputmethod.InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
-                ui.post(imm::showInputMethodPicker);
-            }
-        });
-        dbg(R.id.btnDbgText, () -> {
-            AgentA11yService s = svc();
-            if (s == null) return;
-            String err = s.setText("测试中文输入", false);
-            onLog(err == null ? "输中文成功（焦点编辑框已写入「测试中文输入」）" : "输中文失败：" + err);
-        });
-        dbg(R.id.btnDbgVol, () -> {
-            android.media.AudioManager am = (android.media.AudioManager) getSystemService(AUDIO_SERVICE);
-            am.adjustStreamVolume(android.media.AudioManager.STREAM_MUSIC,
-                    android.media.AudioManager.ADJUST_RAISE, android.media.AudioManager.FLAG_SHOW_UI);
-            onLog("音量调整已触发");
-        });
     }
 
     private AgentA11yService svc() {
@@ -377,11 +312,6 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
         return s;
     }
 
-    private interface DbgAction { void run(); }
-    private void dbg(int btnId, DbgAction action) {
-        findViewById(btnId).setOnClickListener(v ->
-                new Thread(() -> { try { action.run(); } catch (Throwable t) { onLog("✗ " + t); } }, "dbg").start());
-    }
 
     // ---- 语音 ----
 
@@ -645,38 +575,37 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
         super.onResume();
         // 前台自检：回前台时纠正"设置里已开启但服务未连接"的静默掉线（李跳跳式保活的一环）
         A11yGuard.check(this, "前台自检");
-        refreshKeepAlive();
         refreshA11y();
-        refreshTokens();
-        refreshDisplay();
+        refreshAccount();          // 账号状态行（未登录 / 令牌失效 / 剩余额度）
+        // 从登录页返回后可能刚恢复登录：清掉失效标记的提示计时
+        if (!prefs.accountInvalid()) authPrompted = false;
+        if (prefs.loggedIn() && prefs.accountInvalid() && !authPrompted) promptRelogin();
     }
 
-    /** 设备形态卡：读取 DisplaySpec（含挖孔/曲面/系统栏/安全触控区），供真机核对。 */
-    private String lastCalib = "";
-    private void refreshDisplay() {
-        if (tvDisplay == null) return;
-        AgentA11yService.refreshSpec();
-        DisplaySpec s = AgentA11yService.spec();
-        if (s == null) {
-            tvDisplay.setText("设备形态：无障碍服务未连接，无法采集");
-            return;
-        }
-        String txt = "设备形态（异形屏适配）\n" + s;
-        if (!lastCalib.isEmpty()) txt += "\n\n校准结果：\n" + lastCalib;
-        tvDisplay.setText(txt);
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        // 注销同步失效回调，避免持有已销毁界面
+        SyncClient.setAuthInvalidListener(null);
     }
 
-    /** 坐标校准（T3）：根窗口 bounds 与节点越界统计，结果展示在形态卡。 */
-    private void runCalibrate() {
-        AgentA11yService svc = AgentA11yService.get();
-        if (svc == null) {
-            toast("无障碍服务未连接，无法校准");
-            return;
-        }
-        lastCalib = svc.calibrate();
-        refreshDisplay();
-        toast(lastCalib.startsWith("校准失败") || lastCalib.startsWith("校准异常")
-                ? "校准发现问题，详见形态卡" : "校准完成：坐标系统一致");
+    /** 登录令牌失效的统一提示（401 由 SyncClient / AccountClient 判定后置位）。 */
+    private void promptRelogin() {
+        if (isFinishing()) return;
+        authPrompted = true;
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("登录已失效")
+                .setMessage("账号令牌已失效（可能在其他设备重新登录过，旧令牌会立即失效）。\n"
+                        + "重新登录后任务历史与记忆会继续同步。")
+                .setNegativeButton("稍后", null)
+                .setPositiveButton("重新登录", (d, w) ->
+                        startActivity(new Intent(this, LoginActivity.class)))
+                .show();
+    }
+
+    /** 二级设置页（模型 / 接口 / 账号额度 / 同步 / 保活）。 */
+    private void openSettings() {
+        startActivity(new Intent(this, SettingsActivity.class));
     }
 
     @Override

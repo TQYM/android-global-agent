@@ -1,0 +1,201 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  手表专用布局（Wear 类设备：圆形表盘 / 方形表）
+  由 MainActivity 运行时按形态选择（isWatchUi()）：圆形屏 或 边长 < 320dp
+  设计要点：
+   - 全部 id 与 activity_main.xml 一致（代码零改动，findViewById 不落空）
+   - 水平内缩 @dimen/watch_edge：圆形表 24dp（内接方形内），方形表 8dp
+   - 内容垂直堆叠 + ScrollView：466px 圆屏也能滚到每个区块
+   - 触控目标 ≥ 42dp，字号按手表可读性收敛（标题 15sp / 正文 10sp）
+-->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/rootLayout"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/color_surface"
+    android:fillViewport="true"
+    android:scrollbars="none">
+
+<LinearLayout
+    android:orientation="vertical"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:paddingLeft="@dimen/watch_edge"
+    android:paddingRight="@dimen/watch_edge"
+    android:paddingTop="@dimen/watch_edge_v"
+    android:paddingBottom="@dimen/watch_edge_v">
+
+    <!-- 顶栏：标题 + 设置 -->
+    <LinearLayout
+        android:orientation="horizontal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical">
+
+        <LinearLayout
+            android:orientation="vertical"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="wrap_content">
+            <TextView
+                android:text="Agent Lite"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="@color/color_on_surface"
+                android:textSize="@dimen/text_body"
+                android:fontFamily="sans-serif-medium"
+                android:textStyle="bold"/>
+            <TextView
+                android:text="手表版"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="@color/color_on_surface_variant"
+                android:textSize="@dimen/text_watch_label"/>
+        </LinearLayout>
+
+        <Button
+            android:background="@drawable/btn_ghost"
+            android:id="@+id/btnConfig"
+            android:layout_width="wrap_content"
+            android:layout_height="@dimen/btn_h_watch"
+            android:text="设置"
+            android:textSize="@dimen/text_watch_label"
+            android:textColor="@color/color_on_surface"
+                        android:paddingLeft="@dimen/space_l"
+            android:paddingRight="@dimen/space_l"
+            android:minWidth="0dp"
+            android:minHeight="0dp"
+                android:maxLines="1"
+                android:ellipsize="end"/>
+    </LinearLayout>
+
+    <!-- 状态行：无障碍 / 运行状态 -->
+    <LinearLayout
+        android:orientation="horizontal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/space_xs"
+        android:gravity="center_vertical">
+        <TextView
+            android:id="@+id/tvStatus"
+            android:text="就绪"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="@color/color_on_surface_variant"
+            android:textSize="@dimen/text_watch_label"/>
+        <TextView
+            android:id="@+id/tvA11y"
+            android:text="无障碍：检测中"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="wrap_content"
+            android:layout_marginLeft="@dimen/space_s"
+            android:textColor="@color/color_on_surface_variant"
+            android:textSize="@dimen/text_watch_label"/>
+    </LinearLayout>
+
+    <!-- 无障碍未开启横幅（代码按状态显示） -->
+    <LinearLayout
+        android:id="@+id/a11yBanner"
+        android:orientation="vertical"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/space_s"
+        android:padding="@dimen/space_m"
+        android:background="@drawable/bg_card">
+        <TextView
+            android:text="无障碍服务未开启，Agent 无法操作手表"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="@color/color_on_surface"
+            android:textSize="@dimen/text_watch_label"/>
+        <LinearLayout
+            android:orientation="horizontal"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/space_s">
+            <Button
+            android:background="@drawable/btn_primary"
+                android:id="@+id/btnA11yBanner"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="@dimen/btn_h_watch"
+                android:text="一键开启"
+                android:textSize="@dimen/text_watch_body"
+                android:textColor="@color/color_on_primary"
+                                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:maxLines="1"
+                android:ellipsize="end"/>
+            <Button
+            android:background="@drawable/btn_ghost"
+                android:id="@+id/btnA11y"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="@dimen/btn_h_watch"
+                android:layout_marginLeft="@dimen/space_s"
+                android:text="系统无障碍"
+                android:textSize="@dimen/text_watch_body"
+                android:textColor="@color/color_on_surface"
+                                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:maxLines="1"
+                android:ellipsize="end"/>
+        </LinearLayout>
+    </LinearLayout>
+
+        <!-- ===== 极简主页：仅保留 状态/无障碍横幅/任务输入/语音/运行 =====
+             历史、记忆、省电、授权、模型配置、设备形态一律移入设置页（WatchSettingsActivity）；
+             日志与截图手表端不提供。样式沿用原设计语言（btn_ghost/btn_primary/bg_input/bg_card）。 -->
+
+    <!-- 任务下达：输入框全宽 + 语音/运行两个大按钮（圆屏下垂直堆叠不挤出圆外） -->
+    <EditText
+        android:id="@+id/etTask"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/space_s"
+        android:hint="下达指令…"
+        android:textSize="@dimen/text_watch_body"
+        android:minLines="1"
+        android:maxLines="2"
+        android:textColor="@color/color_on_surface"
+        android:textColorHint="@color/color_text_hint"
+        android:background="@drawable/bg_input"
+        android:padding="@dimen/space_m"/>
+
+    <LinearLayout
+        android:orientation="horizontal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/space_s"
+        android:layout_marginBottom="@dimen/space_xs">
+        <Button
+            android:background="@drawable/btn_ghost"
+            android:id="@+id/btnMic"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="@dimen/btn_h"
+            android:text="语音"
+            android:textSize="@dimen/text_watch_body"
+            android:textColor="@color/color_on_surface"
+                        android:minWidth="0dp"
+            android:minHeight="0dp"
+                android:maxLines="1"
+                android:ellipsize="end"/>
+        <Button
+            android:background="@drawable/btn_primary"
+            android:id="@+id/btnRun"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="@dimen/btn_h"
+            android:layout_marginLeft="@dimen/space_s"
+            android:text="运行"
+            android:textSize="@dimen/text_watch_body"
+            android:textColor="@color/color_on_primary"
+                        android:minWidth="0dp"
+            android:minHeight="0dp"
+                android:maxLines="1"
+                android:ellipsize="end"/>
+    </LinearLayout>
+</LinearLayout>
+</ScrollView>

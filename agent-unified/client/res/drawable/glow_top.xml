@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 边缘光晕：顶缘（粉→透明，向下衰减） -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <gradient android:startColor="#CCF4A7C3" android:endColor="#00F4A7C3"
+        android:angle="270"/>
+</shape>

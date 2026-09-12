@@ -18,6 +18,9 @@ agent-lite/dev.local
 *.zip
 agentd-apk/build/
 agent-lite/build/
+# M3 (Gradle) 构建输出：上面只覆盖 build/，build-m3/ 一直没被忽略，
+# 让 Turn Rewind 每轮快照多扫 2600+ 个文件 / 190MB（首轮 token 卡十几秒）
+build-m3/
 
 # Operations snapshots and one-off deployment transport artifacts
 .server-snapshots/
@@ -41,3 +44,8 @@ agent-client/assets/vd_daemon.jar
 tests/results-*.jsonl
 
 .m3-deps/
+
+# 可读性/文案门禁的生成物（classes 由 javac 现场编译）
+tests/ui_text_test/classes/
+tests/ui_widget_guard-cache/
+tests/ui_text_test/javac.log

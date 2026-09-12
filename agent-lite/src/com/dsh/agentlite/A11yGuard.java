@@ -121,8 +121,8 @@ public final class A11yGuard {
         return false;
     }
 
-    /** 无障碍总开关是否开启（Settings.Secure.ACCESSIBILITY_ENABLED）。 */
-    private static boolean isEnabledFlag(Context ctx) {
+    /** 无障碍总开关是否开启（Settings.Secure.ACCESSIBILITY_ENABLED）。供状态上报复用。 */
+    public static boolean isEnabledFlag(Context ctx) {
         try {
             return Settings.Secure.getInt(ctx.getContentResolver(),
                     Settings.Secure.ACCESSIBILITY_ENABLED, 0) == 1;

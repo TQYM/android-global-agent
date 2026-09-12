@@ -1,9 +1,52 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 默认值：方形表（圆角矩形屏）——四角可用，仅留窄边距 -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 <resources>
+    <!-- ===== 手表专用（方形表默认值；圆形表见 values-round/） ===== -->
     <dimen name="watch_edge">8dp</dimen>       <!-- 手表布局水平安全边距 -->
     <dimen name="watch_edge_v">6dp</dimen>     <!-- 手表布局垂直安全边距 -->
     <dimen name="watch_preview_h">110dp</dimen> <!-- 屏幕预览高度上限（手机布局遗留值） -->
     <dimen name="watch_log_h">90dp</dimen>     <!-- 调试日志区高度（手机布局遗留值） -->
     <dimen name="watch_pad_v">10dp</dimen>     <!-- 设置页垂直内边距 -->
+
+    <!--
+      设计令牌（8dp 网格 + M3 字阶 + 触控目标）
+
+      为什么统一到这里：布局里此前是**内联硬写**的字号/高度/间距，全 App 出现 9 种字号、
+      12 种控件高度、9 种间距取值（含 2/6/10/14dp 这类脱离网格的值），同一角色的控件在不同
+      页面尺寸不一致——这是「看着像随手拼的」的主要来源。收敛到令牌后，改一次全局生效。
+    -->
+
+    <!-- ===== 间距（4dp 基础，主力 8/12/16） ===== -->
+    <dimen name="space_xs">4dp</dimen>
+    <dimen name="space_s">8dp</dimen>
+    <dimen name="space_m">12dp</dimen>
+    <dimen name="space_l">16dp</dimen>
+    <dimen name="space_xl">24dp</dimen>
+    <dimen name="page_margin">16dp</dimen>     <!-- 页面左右留白（M3 标准） -->
+    <dimen name="card_padding">16dp</dimen>    <!-- 卡片内边距 -->
+    <dimen name="card_gap">12dp</dimen>        <!-- 卡片之间 -->
+    <dimen name="row_gap">8dp</dimen>          <!-- 行与行之间 -->
+
+    <!-- ===== 触控目标（Android 建议 ≥48dp，最低 44dp） ===== -->
+    <dimen name="touch_min">44dp</dimen>
+    <dimen name="btn_h_chip">40dp</dimen>      <!-- 紧凑标签按钮 -->
+    <dimen name="btn_h">@dimen/touch_min</dimen>  <!-- 常规按钮 -->
+    <dimen name="btn_h_primary">48dp</dimen>   <!-- 主操作 -->
+    <dimen name="input_h">52dp</dimen>         <!-- 输入框 -->
+
+    <!-- 圆角：不用 M3 默认的「药丸」（全圆角），按钮改 8dp，卡片/输入框保持 12dp -->
+    <dimen name="radius_btn">8dp</dimen>
+    <dimen name="radius_chip">6dp</dimen>
+
+    <!-- ===== 字阶（M3：title 22 / section 16 / body 14 / label 13 / caption 12） ===== -->
+    <dimen name="text_title">24sp</dimen>
+    <dimen name="text_section">17sp</dimen>
+    <dimen name="text_body">15sp</dimen>
+    <dimen name="text_label">14sp</dimen>
+    <dimen name="text_caption">13sp</dimen>
+
+    <!-- 手表（466px 圆屏）单独一档：可比手机小，但不低于 12sp -->
+    <dimen name="text_watch_body">13sp</dimen>
+    <dimen name="text_watch_label">12sp</dimen>
+    <dimen name="btn_h_watch">40dp</dimen>
 </resources>
