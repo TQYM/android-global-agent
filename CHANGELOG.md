@@ -5,6 +5,18 @@
 ## [Unreleased]
 
 ### Added
+- **项目全面体检（2026-09-13）**：`docs/PROJECT_REVIEW_2026-09-13.zh-CN.md` ——构建矩阵（三 APK + 两 Go 服务实测）、
+  git 工程卫生、密钥审计（源码扫描 + APK 复扫）、各组件 P0–P3 发现（含 file:line 与最小修复）；改进路线摘录入
+  `PROJECT_OVERVIEW.zh-CN.md` §13；开发手册 §7 补录套餐/订单 5 条路由（本地代码为准，标注待线上确认）、§11 收录体检报告。
+- **agentlite-server 首次入库**：账号（PBKDF2）/信息同步/额度网关（OpenAI 兼容）/兑换码/跨设备指令/套餐订单
+  （`order.go`，2026-09-13 01:23 落盘）——此前生产服务源码仅存本机与线上 `/srv/`，磁盘故障即丢失。
+- **内购三件套与配套测试**：`AkStore`（Keystore AES-256-GCM）/`BailianClient`/`PurchaseFlow` +
+  `tests/AliyunV3SignerTest.java`（47/47）/`tests/PurchaseFlowTest.java`（20/20）/`tests/verify_create_apikey.sh`
+  （AK 仅走环境变量）；`agent-lite/build-mac.sh` 改 fail-closed——dev.local 含非空 API_KEY 即中止构建
+  （修复明文密钥入 APK 的发布面泄露，历史产物已删净并复扫 0 命中；**该 Key 仍需轮换**）。
+- **工程规范文件入库**：`.editorconfig`、`.gitattributes`、`CONTRIBUTING.md`、`SECURITY.md`、`skills/project-work-log/`、
+  交接与设计文档（`docs/HANDOFF_2026-09-13.zh-CN.md`、`docs/PURCHASE_REDIRECT_DESIGN.zh-CN.md`）、测试工具
+  （`tests/android_ui.py`、`tests/lan_peer_sim/`、`tests/verify_lan_p2p.sh`）。
 - 开发手册 `docs/DEVELOPMENT_MANUAL.zh-CN.md`：把**项目专用服务器**（阿里云 ECS `8.133.225.105`）的连接方式与线上事实
   收进一处，供其他对话直接接手功能实现——SSH 别名 `aliyun-ecs` 与主机指纹、服务端点（`https://8.133.225.105:18443`、
   `/health` 免鉴权、局域网 `18444`）、TLS 自签证书与客户端 pin 的联动关系、线上路径表与启动参数、两条部署流程与运维速查、
@@ -78,6 +90,14 @@
   `tests/verify_lan_p2p.sh` + `tests/lan_peer_sim/`（局域网 P2P 的跨实现验证对端）。
 
 ### Fixed
+- **P0-1 root 命令注入（agent-client，2026-09-13 体检）**：模型返回的 package/url/action 原样拼进 `su -c`
+  （`launchApp` 的 `$(cmd package resolve-activity ...)` 未加引号、`findTaskId`/`reclaimTask` 的 grep 模式可被
+  单引号截断）——新增 `ActionValidator` 白名单网关，`AgentEngine` 动作入口与 `SandboxController` root 边界
+  双重强制，非法值直接抛错回灌模型。dex 已验证进包。
+- **P0-2 无障碍列表整体覆盖（agent-client）**：`RootShell.ensureA11y()` 由 `settings put` 覆盖式改为先读后追加，
+  用户已有的 TalkBack/银行类等无障碍服务不再被静默清掉。
+- **P0-4 agentd-go 本机不可构建**：`go.mod` 无谓声明 `go 1.27`（未用任何 1.25+ API），与 `fetch-go.sh` 自备
+  工具链 1.24.6 对齐后编译 + vet 通过。
 > 说明：本轮「UI 回归第一版并删除 M3」后，下列 M3 迁移遗留问题已随库一并消失（平台 `Switch` 已回归），
 > 条目保留作为历史记录。
 - **设置页崩溃（M3 迁移遗留）**：布局已改用 `com.google.android.material.materialswitch.MaterialSwitch`，

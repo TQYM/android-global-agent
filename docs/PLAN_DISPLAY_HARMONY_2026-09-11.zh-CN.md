@@ -1,7 +1,7 @@
 # 异形屏幕适配与鸿蒙设备适配 —— 项目规划书
 
 > 版本：v1.1 ｜ 日期：2026-09-11 ｜ 状态：**已评审（用户确认）**
-> 关联文档：[PROJECT_OVERVIEW.md](../PROJECT_OVERVIEW.md) · [进度汇报 2026-09-06](PROGRESS_2026-09-06.zh-CN.md) · [兼容性说明](../agent-lite/COMPATIBILITY.zh-CN.md) · [豆包规格适配](DOUBAO_SPEC_ADAPTATION.zh-CN.md)
+> 关联文档：[PROJECT_OVERVIEW.zh-CN.md](../PROJECT_OVERVIEW.zh-CN.md) · [进度汇报 2026-09-06](PROGRESS_2026-09-06.zh-CN.md) · [兼容性说明](../agent-lite/COMPATIBILITY.zh-CN.md) · [豆包规格适配](DOUBAO_SPEC_ADAPTATION.zh-CN.md)
 > 主改代码：`agent-lite/`（零 root 主推线）；鸿蒙外挂原型新增 `tools/harmony-agent/`
 
 ---
@@ -308,7 +308,7 @@ PC (Mac/Win) ── hdc (USB/WiFi) ──> 鸿蒙 NEXT 设备
 - **B 鸿蒙兼容层**：M3 出口时，七项清单全部有「支持/不支持+降级」明确结论，兼容性矩阵含实测数据；
 - **C NEXT 外挂**：M4 出口时，HDC 原型完成「打开设置 → 搜索 → 返回」端到端，日志留档；命令集可用性表完整；
 - **D 评估报告**：NEXT 原生路线给出带 2026 年证据链的「做/不做/何时做」结论；
-- **文档**：`COMPATIBILITY.zh-CN.md`、`PROJECT_OVERVIEW.md`、进度文档同步更新。
+- **文档**：`COMPATIBILITY.zh-CN.md`、`PROJECT_OVERVIEW.zh-CN.md`、进度文档同步更新。
 
 ---
 

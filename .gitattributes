@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: Apache-2.0
+* text=auto eol=lf
+
+*.ps1 text eol=crlf
+
+# Binary payloads never get line-ending conversion
+*.png binary
+*.jar binary
+*.apk binary
+*.keystore binary
+*.jks binary
+*.zip binary
+*.tgz binary
