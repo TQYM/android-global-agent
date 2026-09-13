@@ -17,12 +17,18 @@
 ```
 ios/
 ├── Package.swift            # iOS 16+ / macOS 13+；核心库不依赖 UIKit
-├── build-mac.sh             # 构建 + 验证（--e2e 启用端到端）
+├── build-mac.sh             # 构建 + 验证（--e2e 端到端 / --simulator 模拟器）
 ├── Sources/
 │   ├── CAgentLiteShim/      # C shim：把 CommonCrypto 的 PBKDF2 暴露给 Swift
 │   ├── AgentLiteCore/       # 核心库（平台无关，Mac 上可全量验证）
 │   └── AgentLiteCLI/        # 命令行外壳（真机以外验证协议）
-└── Tests/AgentLiteCoreTests/
+├── Tests/AgentLiteCoreTests/    # 42 项：密码学交叉验证 / 协议 / 端到端
+└── App/                     # iOS App（Xcode 工程）
+    ├── generate-project.py  # 生成 .pbxproj（--check 供门禁；不要手改工程文件）
+    ├── scripts/prepare-resources.sh   # 生成/导入联调证书 + 打印 SPKI 指纹
+    ├── AgentLiteIOS/        # SwiftUI 四屏 + 后台刷新 + 本地动作
+    ├── AgentLiteIOSTests/   # 模拟器专属测试（Keychain / ATS / 沙盒 / 端到端）
+    └── Resources/           # server.crt（脚本生成，不入库）
 ```
 
 **为什么核心库刻意不依赖 UIKit**：这样同一份源码既进 iOS App，也能在 macOS 上
@@ -38,7 +44,26 @@ bash build-mac.sh
 
 # 全量验证（需先按手册 §8.1 起本地服务端）
 bash build-mac.sh --e2e          # 追加 10 项真连服务端的端到端用例
+
+# 追加 iOS App：工程一致性校验 + 模拟器构建与测试
+bash build-mac.sh --simulator
 ```
+
+### iOS App（`ios/App/`）
+
+```bash
+bash ios/App/scripts/prepare-resources.sh   # 生成联调证书（证书 pin 的构建输入）
+python3 ios/App/generate-project.py         # 生成 Xcode 工程（勿手改）
+bash ios/build-mac.sh --simulator           # 在模拟器上构建并跑测试
+```
+
+> ⚠️ **模拟器前置条件**：Xcode 的 SDK 版本必须与已安装的模拟器运行时版本匹配。
+> 不匹配时 `xcodebuild` 的 destination 不可用（报 `iOS 26.5 is not installed`），
+> **而 `simctl` 仍能正常 boot 设备** —— 两个工具口径不同，别被 simctl 骗了。
+> 本机实况与修复步骤见实现手册 §8.3。
+
+> ⚠️ **真机**：需要登录 Apple ID（免费账号 7 天有效）或开发者账号。本机当前
+> `security find-identity -p codesigning` 为 **0 个身份**，`devicectl` 无设备。
 
 CLI 手工联调：
 
@@ -62,7 +87,11 @@ swift run agentlite-ios collect          # 本机作为目标设备收件
 | `ProtocolTests` | 19 | 线格式字段名、敏感红线、抗重放、设备指纹稳定性、服务端状态机 |
 | `EndToEndTests` | 10 | **真连服务端**：注册/登录/绑定/下发/领取/回报/同步/局域网互解 |
 
-合计 **42 项全绿**；macOS 与 `arm64-apple-ios16.0` 两个目标均编译通过。
+另有 `ios/App/AgentLiteIOSTests/SimulatorTests.swift`（**模拟器专属**）：
+Keychain 属性、凭据跨重启持久化、iOS 沙盒路径、ATS + 证书 pin 的拒绝路径、端到端。
+
+合计 **42 项全绿**；macOS、`arm64-apple-ios16.0`（真机）与
+`arm64-apple-ios16.0-simulator`（模拟器）三个目标均编译/类型检查通过。
 
 ## 平台事实（写代码前务必知道）
 

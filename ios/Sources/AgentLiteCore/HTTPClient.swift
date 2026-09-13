@@ -173,7 +173,9 @@ public actor HTTPClient {
         }
     }
 
-    static func isLoopback(_ url: URL) -> Bool {
+    /// 是否环回地址。公开出去是因为宿主 App 需要据此决定"用哪个 pin"：
+    /// 环回可免 pin（联调），公网地址必须 pin —— 这个判断只应有一份实现。
+    public static func isLoopback(_ url: URL) -> Bool {
         guard let host = url.host?.lowercased() else { return false }
         return host == "127.0.0.1" || host == "localhost" || host == "::1" || host == "[::1]"
     }

@@ -59,3 +59,7 @@ tests/ui_text_test/javac.log
 # Swift Package Manager 构建产物（ios/ 实测 .build 约数十 MB，必须排除）
 .build/
 ios/.build/
+
+# iOS App 的本地联调证书与构建产物（由 scripts/prepare-resources.sh 现场生成）
+ios/App/Resources/
+ios/App/build/

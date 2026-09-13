@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Scheme LastUpgradeVersion = "2660" version = "1.7">
+   <BuildAction parallelizeBuildables = "YES" buildImplicitDependencies = "YES">
+      <BuildActionEntries>
+         <BuildActionEntry buildForTesting = "YES" buildForRunning = "YES" buildForProfiling = "YES" buildForArchiving = "YES" buildForAnalyzing = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "7DD0A2F01353ED35078A4D5C"
+               BuildableName = "AgentLiteIOS.app"
+               BlueprintName = "AgentLiteIOS"
+               ReferencedContainer = "container:AgentLiteIOS.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
+      </BuildActionEntries>
+   </BuildAction>
+   <TestAction buildConfiguration = "Debug" selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB" shouldUseLaunchSchemeArgsEnv = "YES">
+      <EnvironmentVariables>
+         <!-- 端到端测试的目标服务端。默认指向宿主环回：模拟器与宿主共享网络栈，
+              因此宿主的 127.0.0.1 在模拟器里同样是 127.0.0.1。
+              证书路径用 $(PROJECT_DIR)/../ 相对定位，避免写死绝对路径导致换机失效。 -->
+         <EnvironmentVariable key = "AGENTLITE_E2E_BASE" value = "https://127.0.0.1:18443" isEnabled = "YES"/>
+         <EnvironmentVariable key = "AGENTLITE_E2E_CERT" value = "$(PROJECT_DIR)/Resources/server.crt" isEnabled = "YES"/>
+      </EnvironmentVariables>
+      <Testables>
+         <TestableReference skipped = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "7E4F179E30E26F9F936D5DE4"
+               BuildableName = "AgentLiteIOSTests.xctest"
+               BlueprintName = "AgentLiteIOSTests"
+               ReferencedContainer = "container:AgentLiteIOS.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
+      </Testables>
+   </TestAction>
+   <LaunchAction buildConfiguration = "Debug" selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB" launchStyle = "0" useCustomWorkingDirectory = "NO" ignoresPersistentStateOnLaunch = "NO" debugDocumentVersioning = "YES" debugServiceExtension = "internal" allowLocationSimulation = "YES">
+      <BuildableProductRunnable runnableDebuggingMode = "0">
+         <BuildableReference
+            BuildableIdentifier = "primary"
+            BlueprintIdentifier = "7DD0A2F01353ED35078A4D5C"
+            BuildableName = "AgentLiteIOS.app"
+            BlueprintName = "AgentLiteIOS"
+            ReferencedContainer = "container:AgentLiteIOS.xcodeproj">
+         </BuildableReference>
+      </BuildableProductRunnable>
+   </LaunchAction>
+   <ProfileAction buildConfiguration = "Release" shouldUseLaunchSchemeArgsEnv = "YES" savedToolIdentifier = "" useCustomWorkingDirectory = "NO" debugDocumentVersioning = "YES">
+      <BuildableProductRunnable runnableDebuggingMode = "0">
+         <BuildableReference
+            BuildableIdentifier = "primary"
+            BlueprintIdentifier = "7DD0A2F01353ED35078A4D5C"
+            BuildableName = "AgentLiteIOS.app"
+            BlueprintName = "AgentLiteIOS"
+            ReferencedContainer = "container:AgentLiteIOS.xcodeproj">
+         </BuildableReference>
+      </BuildableProductRunnable>
+   </ProfileAction>
+   <AnalyzeAction buildConfiguration = "Debug"/>
+   <ArchiveAction buildConfiguration = "Release" revealArchiveInOrganizer = "YES"/>
+</Scheme>

@@ -3,6 +3,12 @@
 > 本文档供后续 AI 接手时快速了解项目现状、技术决策与已知边界。
 > 最后更新：2026-09-13（新增 §14 iOS 端「账号+远程控制」与 §13 全面体检结论；正文 §1–§12 仍以 2026-09-06 为基准，刷新列入待办）
 
+> 🧭 **多项目工作区——先认领项目再动手**：本工作区同时存在多个互不相干的子项目
+> （`agent-client` / `agent-lite` / `ios` / `agentlite-server` / `agent-unified` / `agentd` /
+> `harmony-agent` / `repo`，另有仓库外的 `dsh-env`）。
+> **项目清单、目录归属与会话标注约定见 [`docs/PROJECTS.zh-CN.md`](docs/PROJECTS.zh-CN.md)**；
+> 每个会话动手前必须先声明所属项目，并在下方「工作日志」的会话头写 `项目:<id>`。
+
 ---
 
 ## 1. 项目目标
@@ -310,6 +316,7 @@ agent-client P2 批量修复（LlmClient 重试/finally、ActionParser 括号配
 | 项 | 值 |
 |---|---|
 | 实现位置 | `ios/`（Swift Package，核心库不依赖 UIKit → 可在 macOS 上全量验证） |
+| iOS App | `ios/App/`（Xcode 工程，脚本生成 `project.pbxproj`；SwiftUI 四屏 + 后台刷新 + 本地动作 + Keychain + 证书 pin） |
 | 实现手册 | **`docs/IOS_IMPLEMENTATION_MANUAL.zh-CN.md`**（能力边界证据链 / 服务端实测契约 / 后台模型 / 安全红线 / 已知坑） |
 | 验证命令 | `bash ios/build-mac.sh [--e2e]` |
 | 测试基线 | **42 项全绿** = 13 密码学交叉验证（对 Java 逐字节）+ 19 协议/红线 + **10 真连服务端端到端** |
@@ -337,10 +344,28 @@ agent-client P2 批量修复（LlmClient 重试/finally、ActionParser 括号配
   拿不到结果文本。即「iPhone 下发 → Android 执行完 → iPhone 看结果」这条链路**当前是断的**。
   闭环需目标设备在 ack 之外另发一条 `/sync/push` 记录（服务端尚未提供该回执通道，见手册 §9 U3）。
 
-### 14.2 未完成
+### 14.2 iOS 工具链实况（本机 2026-09-13）
 
-真机端到端（无 iPhone 在线）；**线上服务端 `8.133.225.105:18443` 编写时连接被拒**（`curl: (7)`，需确认服务与安全组）；
-服务端 `key_len` 等偏差的文档侧修复；APNs 静默推送通道（iOS 被控端可靠性的关键缺口）；SwiftUI 界面；App Intents 动作集。
+| 项 | 实测 |
+|---|---|
+| Xcode | 26.6（随附 SDK **iOS 26.5**） |
+| 模拟器运行时 | **仅 iOS 26.4** → 低于 SDK，`xcodebuild` 判定设备不合格 |
+| 签名身份 | **0 个**（`security find-identity -p codesigning` 为空） |
+| 真机 | 未连接（`devicectl list devices` 无设备） |
+
+**当前唯一阻塞**：`xcodebuild -showdestinations` 只给 generic device，报 `iOS 26.5 is not installed`；
+CoreSimulator 日志 `Unable to discover any Simulator runtimes`。
+注意 `simctl` 能正常 boot 设备 —— **两个工具口径不同，别被 simctl 骗了**。
+修复：`Xcode → Settings → Components` 装 iOS 26.5 运行时（命令行 `xcodebuild -downloadPlatform iOS`
+在本机跑到 5 分钟仍 0% CPU、无网络、缓存无增长，已中止）。
+App 源码已对 **iOS 模拟器 SDK 类型检查通过**，工程与测试就绪，只差运行时。
+签名的 Apple ID 也需要登录后才能真机部署。
+
+### 14.3 未完成
+
+真机端到端（无签名身份、无真机）；模拟器端到端（等 iOS 26.5 运行时）；
+**线上服务端 `8.133.225.105:18443` 编写时连接被拒**（`curl: (7)`，需确认服务与安全组）；
+服务端 `key_len` 等偏差的文档侧修复；指令结果回执通道（U3）；APNs 静默推送（真机才有意义）。
 
 ---
 
@@ -549,7 +574,7 @@ agent-client P2 批量修复（LlmClient 重试/finally、ActionParser 括号配
 - 11:31 手册 §13 与体检报告 §7.1 标注修复进展；apply.sh/rollback.sh 刻意留盘不入库（源:文件:PROJECT_OVERVIEW.zh-CN.md §13.1）
 - 11:31 终态: done
 
-### 2026-09-13 11:54 +08 · local · 增加 iOS 端（账号+远程控制）
+### 2026-09-13 11:54 +08 · 项目:ios · 会话:local · 增加 iOS 端（账号+远程控制）
 - 11:54 首次运行检查：读工作日志尾恢复上下文；核实无 iPhone 在线、线上服务端 18443 连接被拒（源:用户请求+命令:curl）
 - 11:56 起本地服务端（自签证书 SAN 含 127.0.0.1）作为端到端靶机（源:命令:agentlite-server -addr 127.0.0.1:18443）
 - 11:58 建 ios/ Swift Package：核心库不依赖 UIKit，Mac 上即可全量验证协议（源:文件:ios/Package.swift）
@@ -558,8 +583,21 @@ agent-client P2 批量修复（LlmClient 重试/finally、ActionParser 括号配
 - 12:05 按服务端源码逐条纠正模型与指令状态机；CommandInbox 改为「先执行后 ack 终态」（源:文件:ios/Sources/AgentLiteCore/{Models,CommandInbox}.swift）
 - 12:06 修 pinner 空集合误报：环回联调改为不挂 pinner，端到端测试改走生产同一条 pin 校验路径（源:文件:ios/Sources/AgentLiteCore/HTTPClient.swift）
 - 12:07 测试基线 42 项全绿（13 密码学+19 协议+10 端到端）；macOS 与 iphoneos SDK 双平台编译通过（源:命令:bash ios/build-mac.sh --e2e）
-- 12:07 iOS 实现手册落盘（能力边界/实测契约/后台模型/安全红线/已知坑 13 条），本手册新增 §14（源:文件:docs/IOS_IMPLEMENTATION_MANUAL.zh-CN.md）
+- 12:07 iOS 实现手册落盘（能力边界/实测契约/后台模型/安全红线/已知坑 18 条），本手册新增 §14（源:文件:docs/IOS_IMPLEMENTATION_MANUAL.zh-CN.md）
 - 12:08 sync-sources 同步（含证书 SAN 文档改动），契约门禁恢复 26/26（源:命令:verify-contract.py）
 - 12:10 复跑 CLI 全链路（pin/注册/whoami/devices/send/collect/watch）均实测通过，暴露 U3：下发方无法确认已终态指令（源:命令:swift run agentlite-ios）
 - 12:12 CLI watch 对 404 改为人话解释；手册 §4.3/§8.2/§9 补齐回执通道缺口（源:文件:docs/IOS_IMPLEMENTATION_MANUAL.zh-CN.md）
-- 12:12 终态: done（真机验证与线上连通性列为未完成项，见手册 §9）
+- 12:13 用户指出本机 iOS 开发环境良好 → 复核：Xcode 26.6 + 模拟器运行时 26.4；无签名身份、无真机（源:命令:xcodebuild -version/simctl/security）
+- 12:15 建 Xcode 工程（脚本生成 pbxproj，避免手写 UUID 出错）+ SwiftUI 四屏 + 后台刷新 + 本地动作；App 源码对 iOS 模拟器 SDK 类型检查通过（源:文件:ios/App/）
+- 12:16 类型检查抓出 3 处真实缺陷：ContentUnavailableView 需 iOS 17（改自建 EmptyStateView）、BGTaskScheduler 签名错、HTTPClient.isLoopback 非 public（源:命令:swiftc -typecheck）
+- 12:20 定位模拟器阻塞：SDK 26.5 > 运行时 26.4 → xcodebuild destination 不可用（simctl 仍可 boot，两工具口径不同）；命令行下载运行时 5 分钟无进展已中止（源:文件:docs/IOS_IMPLEMENTATION_MANUAL.zh-CN.md §8.3）
+- 12:22 离线 32 项 + 端到端 10 项复测全绿；模拟器模式如实报阻因（源:命令:bash ios/build-mac.sh --e2e）
+- 12:22 终态: done（阻塞项：iOS 26.5 模拟器运行时需在 Xcode GUI 安装；真机需登录 Apple ID）
+
+### 2026-09-13 12:20 +08 · 项目:repo · 会话:c768e453 · 项目分离与会话项目标注
+- 12:14 首次运行检查：读工作日志尾恢复上下文，确认多个并发会话共用一份日志且会话头无项目字段（源:文件:PROJECT_OVERVIEW.zh-CN.md:565）
+- 12:16 落实项目分离：`docs/PROJECTS.zh-CN.md` 定 9 个规范项目 ID + 目录归属规则 + 「改哪里=属于哪个项目」判定表（源:用户请求）
+- 12:18 扩展 `skills/project-work-log` 至 v1.1.0：会话头新增「项目:<id>」必填字段与 §2.5 项目标识；源副本与 ~/.dsh 安装副本逐字节同步（源:文件:skills/project-work-log/SKILL.md）
+- 12:19 补三处发现入口：PROJECT_OVERVIEW 顶部提示块、DEVELOPMENT_MANUAL 标注所属项目、中英 README 文档导航（源:步骤2）
+- 12:20 并发实证：本次追加前日志尾已被并行会话写到 12:22，而本机时钟为 12:20——同一文件内时间戳非单调（源:命令:date+读尾）
+- 12:20 终态: done

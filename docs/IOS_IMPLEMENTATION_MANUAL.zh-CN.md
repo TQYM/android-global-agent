@@ -377,14 +377,80 @@ swift run agentlite-ios collect           # 本机作为目标设备收件
 #  （见 §4.3 与 U3）。
 ```
 
-### 8.3 真机运行（Xcode 侧）
+### 8.3 iOS App（Xcode 工程 + 模拟器 + 真机）
 
-`ios/` 是 Swift Package，App 外壳需另外建立（见 §9.2）。要点：
-1. Xcode → 新建 iOS App，把 `AgentLiteCore` 作为**本地 Package 依赖**加入；
-2. Bundle ID 用你自己的免费 Apple ID 签名即可（7 天有效，重签即可续）；
-3. `Info.plist` 需加 **`NSLocalNetworkUsageDescription`**（局域网 P2P 要访问本地网络，iOS 14+ 会弹权限）；
-4. 生产 pin：把 `agentlite-server/tls/server.crt` 的 SPKI 固化进 App（或首次启动从内置证书算出）;
-5. 真机端到端目前**未完成**（§9.1）——手机不在线。
+App 外壳在 **`ios/App/`**，已生成完整 Xcode 工程（App target + 单元测试 target，
+并把 `ios/` 这个 Swift Package 作为**本地包依赖**接入）。
+
+```bash
+# 1) 生成联调证书资源（证书是构建输入：证书 pin 的前提是"证书在包里"）
+bash ios/App/scripts/prepare-resources.sh
+#    也可用现成证书：--from agentlite-server/tls/server.crt
+
+# 2) 工程文件是**脚本生成**的，不要手改
+python3 ios/App/generate-project.py           # 重新生成
+python3 ios/App/generate-project.py --check   # 校验是否漂移（门禁用）
+
+# 3) 构建 + 在模拟器上跑测试
+bash ios/build-mac.sh --simulator
+```
+
+**工程文件为什么用脚本生成**：`.pbxproj` 是 Xcode 私有格式，全靠 24 位 UUID 互相引用，
+手写极易产生"少一位"这类肉眼不可见、只在 Xcode 打开时炸的缺陷。用
+`ios/App/generate-project.py` 生成，引用关系由代码保证自洽，改一个设置不必在千行文件里搜；
+`--check` 进构建脚本，防止"Xcode 里手改过、脚本重建后行为不同"的漂移。
+
+**已实现**：SwiftUI 四屏（账号 / 设备 / 远程 / 空状态）、后台刷新（`BGAppRefreshTask`）、
+本地动作提供方（URL Scheme + 快捷指令，能力边界写入 UI）、Keychain 凭据、证书 pin。
+
+#### 模拟器运行的前置条件（★ 本机实测踩到）
+
+> **Xcode 的 SDK 版本必须与已安装的模拟器运行时版本匹配**，否则
+> `xcodebuild` 的 destination 不可用，报错形如：
+> `Ineligible destinations ... error: iOS 26.5 is not installed`，
+> 同时 `xcodebuild` 日志里会出现 `Unable to discover any Simulator runtimes`。
+>
+> 注意 `xcrun simctl list runtimes` **显示正常、设备也能 boot**，但 `xcodebuild` 依然用不了 ——
+> 这两个工具对"可用运行时"的判定口径不同，别被 simctl 的正常输出误导。
+
+排查与修复：
+```bash
+xcodebuild -showsdks | grep -i simulator    # 看 SDK 版本（如 26.5）
+xcrun simctl list runtimes                  # 看运行时版本（如 26.4）—— 两者需匹配
+xcodebuild -downloadPlatform iOS            # 补齐匹配的运行时（约数 GB）
+# 或：Xcode → Settings → Components 里下载
+```
+**本机（2026-09-13）实况 —— 当前就卡在这里**：
+
+| 项 | 实测值 |
+|---|---|
+| Xcode | 26.6（`DTXcode 2660`） |
+| 随附 SDK | iOS **26.5**（`xcodebuild -showsdks`） |
+| 已装模拟器运行时 | iOS **26.4**（`23E254a`），**低于 SDK** |
+| `xcrun simctl list devices booted` | ✅ iPhone 17 Pro 能 boot |
+| `xcodebuild -showdestinations` | ❌ 只有 generic device，报 `iOS 26.5 is not installed` |
+| CoreSimulator 日志 | `Unable to discover any Simulator runtimes` |
+
+即 **运行时版本 < SDK 版本 → xcodebuild 判定设备不合格**，而 simctl 仍能 boot ——
+两个工具口径不同，别被 simctl 的正常输出误导。
+
+**修复动作（需要在 Xcode GUI 里做，命令行下载实测卡死）**：
+`Xcode → Settings → Components` 下载 **iOS 26.5** 模拟器运行时；
+装好后 `bash ios/build-mac.sh --simulator` 即可跑通。
+（`xcodebuild -downloadPlatform iOS` 在本机跑到 5 分钟时仍是 0% CPU、无网络连接、
+缓存目录无增长 —— 已中止：它卡在等待/超时，不是真的在下载。）
+
+#### 真机运行
+
+| 项 | 现状 |
+|---|---|
+| 签名身份 | **0 个**（`security find-identity -v -p codesigning` 为空） |
+| 真机 | 未连接（`xcrun devicectl list devices` 无设备） |
+
+真机部署需要：登录 Apple ID（免费账号 7 天有效，重签即可续）或开发者账号（1 年），
+在 Xcode 里给 `AgentLiteIOS` target 指定 Team 后即可安装。免费账号的限制是
+**无法使用需要 entitlement 的能力**（本项目当前不需要，APNs 推送才需要）。
+另外真机联调要用局域网地址（`prepare-resources.sh` 已把宿主局域网 IP 写进证书 SAN）。
 
 ### 8.4 交叉验证用到的 Java 向量生成器
 
@@ -400,12 +466,13 @@ swift run agentlite-ios collect           # 本机作为目标设备收件
 
 | # | 项 | 状态 | 阻塞原因 |
 |---|---|---|---|
-| U1 | iPhone 真机端到端 | ❌ 未做 | 无 iPhone 设备在线（`adb devices` 只有手表 OVW261，用户明示不装手表） |
+| U1 | iPhone 真机端到端 | ❌ 未做 | 无签名的 Apple ID、无真机连接（`devicectl` 无设备） |
+| U1b | 模拟器端到端 | ⏸ 待运行时 | App 与测试已就绪；Xcode SDK 26.5 与已装运行时 26.4 不匹配，`xcodebuild` destination 不可用（§8.3） |
 | U2 | 线上服务端连通性 | ⚠️ 未验证 | 编写时 `8.133.225.105:18443` **连接被拒**（`curl: (7) Couldn't connect`）。需确认服务是否在跑、安全组是否放行 |
 | U3 | **指令结果回执通道缺失** | ❌ 未做（服务端） | 终态 ack 后服务端即删除指令，下发方查不到结果（§4.3）。需目标设备在 ack 之外另发 `/sync/push` 记录，或服务端保留终态一段时间 |
 | U3b | 服务端 `key_len` / `server_seq` 字段与文档措辞不符 | ⚠️ 已绕过未修复 | iOS 侧按实测字段实现；**文档与 Go 源码的措辞不一致仍存在**，建议在 `docs/DEVELOPMENT_MANUAL.zh-CN.md §7` 补注 |
 | U4 | APNs 静默推送通道 | ❌ 未做 | 服务端无 APNs 集成；这是 iOS 被控端可靠性的关键缺口 |
-| U5 | SwiftUI 界面 | ❌ 未做 | 本次只交付核心库 + CLI（界面依赖真机才有验证价值） |
+| U5 | SwiftUI 界面 | ✅ 已做 | `ios/App/`（账号 / 设备 / 远程 + 空状态），已对模拟器 SDK 通过类型检查 |
 | U6 | App Intents / 快捷指令动作集 | ❌ 未做 | 需要真机确认动作授权流程（`LocalActionProvider` 协议已就位） |
 | U7 | `lan/rendezvous` 调用封装 | ❌ 未做 | 服务端接口已就绪（`api.go:115`），iOS 侧尚未接（`LANPeer` 已能直连，缺"自动发现对端"） |
 
@@ -415,14 +482,15 @@ swift run agentlite-ios collect           # 本机作为目标设备收件
 2. **U3 回执通道**（客户端/服务端最小改动）：目标设备 ack 时顺带 `push` 一条
    `{command_id,status,detail}` 同步记录；下发方从同步流读结果。**不做这条，
    "下发→执行→看结果"的体验就是断的**（iPhone 只能看到指令消失）。
-3. **U5 界面**：SwiftUI 三屏即可 —— 账号页 / 设备列表页 / 指令页（下发 + 收件箱 + 结果）。
+3. **补齐模拟器运行时**（§8.3）：`xcodebuild -downloadPlatform iOS`，之后
+   `bash ios/build-mac.sh --simulator` 即可在 iOS 运行时里跑 Keychain / ATS / 端到端测试。
 4. **U6 动作集**：先落 3–5 个高频本地动作（打开 App、记笔记、查日程），验证 App Intents 授权流程。
 5. **U4 APNs**：服务端加推送通道 + iOS 注册 device token。这是让 iOS 被控端**真正可用**的关键。
 6. **U1 真机验证**：以上完成后一次性验证。
 
 ---
 
-## 10. 已知坑（照抄，避免重踩）
+## 10. 已知坑（照抄，避免重踩；K1–K13 核心库 / K14–K18 iOS App）
 
 | # | 坑 | 现象 | 规避 |
 |---|---|---|---|
@@ -439,6 +507,11 @@ swift run agentlite-ios collect           # 本机作为目标设备收件
 | K11 | 终态 ack 后回头查指令 | 404，看起来像 bug | 服务端已删除该指令（`command.go:195`）；结果取 ack 返回值 |
 | K12 | 用 `cancelled` 作为 ack 状态 | 400 被拒，指令状态不变 | 服务端只有 `running/done/failed`；拒绝也用 `failed`，理由放 `detail` |
 | K13 | 让下发方"回头查"已完成的指令 | 404，像是 bug | 服务端终态即删除；结果取自 ack 返回值，或另建回执通道（U3） |
+| K14 | 用 `ContentUnavailableView` | 报错：仅 iOS 17+ 可用（部署目标是 16） | 用 `EmptyStateView`（`ios/App/AgentLiteIOS/EmptyStateView.swift`）；不要为了少写 30 行把最低版本抬到 17 |
+| K15 | `BGTaskScheduler.register(forTaskID:using:)` | 编译报「extra argument 'forTaskID'」 | 正确签名是 `register(forTaskWithIdentifier:using:launchHandler:)` |
+| K16 | 核心库内部工具函数不给宿主用 | 宿主 App 报「inaccessible due to internal protection level」 | 只应有一份判断的函数（如 `HTTPClient.isLoopback`）要 `public` |
+| K17 | 用裸 `swiftc -typecheck` 验 XCTest 测试文件 | 报 `cannot find 'XCTAssertEqual' in scope`（XCTest 断言是宏） | 测试文件只能由 `xcodebuild test` 编译；裸 swiftc 可验 App 源码，验不了测试 |
+| K18 | 全项目 `swift test` 通过就以为 iOS 也 OK | macOS 上过 ≠ iOS 上过（Keychain 属性、ATS、沙盒路径都不同） | `ios/App/AgentLiteIOSTests/SimulatorTests.swift` 专测这些差异 |
 
 ---
 
@@ -465,10 +538,23 @@ ios/
 │   │   ├── PlatformInfo.swift             # 平台探测（如实上报，不伪装 Android）
 │   │   └── AgentLiteClient.swift          # 顶层门面
 │   └── AgentLiteCLI/main.swift            # 命令行外壳（真机以外验证协议）
-└── Tests/AgentLiteCoreTests/
-    ├── CryptoTests.swift                  # 13 项：与 Java 逐字节交叉验证
-    ├── ProtocolTests.swift                # 19 项：线格式 / 红线 / 抗重放
-    └── EndToEndTests.swift                # 10 项：真连服务端全链路
+├── Tests/AgentLiteCoreTests/
+│   ├── CryptoTests.swift                  # 13 项：与 Java 逐字节交叉验证
+│   ├── ProtocolTests.swift                # 19 项：线格式 / 红线 / 抗重放
+│   └── EndToEndTests.swift                # 10 项：真连服务端全链路
+└── App/                                   # iOS App（Xcode 工程，见 §8.3）
+    ├── generate-project.py                # 生成 .pbxproj + scheme（--check 供门禁）
+    ├── scripts/prepare-resources.sh       # 生成/导入联调证书 + 打印 SPKI 指纹
+    ├── AgentLiteIOS.xcodeproj/            # 生成物
+    ├── AgentLiteIOS/
+    │   ├── AgentLiteIOSApp.swift          # 入口（注册后台任务）
+    │   ├── AppModel.swift                 # SwiftUI ↔ 核心库的桥（@MainActor）
+    │   ├── RootView.swift / AccountView.swift / DevicesView.swift / RemoteView.swift
+    │   ├── EmptyStateView.swift           # iOS 16 兼容空状态（系统 API 是 17+）
+    │   ├── LocalActions.swift             # 本地动作：URL Scheme + 快捷指令（能力边界唯一实现处）
+    │   └── BackgroundRefresh.swift        # BGAppRefreshTask
+    ├── AgentLiteIOSTests/SimulatorTests.swift   # 模拟器专属：Keychain / ATS / 沙盒 / 端到端
+    └── Resources/                         # server.crt（脚本生成，已 gitignore）
 ```
 
 **测试基线（2026-09-13 实测）**：`swift test` → **42 项全绿**（含 10 项端到端）。

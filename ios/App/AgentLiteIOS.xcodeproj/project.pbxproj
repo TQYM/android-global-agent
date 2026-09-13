@@ -1,0 +1,424 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+05B5B79676351D321E5C7B71 /* AccountView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24A0BA8B23A6F4F7CA352124 /* AccountView.swift */; };
+1064DEFAB3936E8F77E80AB2 /* EmptyStateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E0D331BF93428C224B7EA11 /* EmptyStateView.swift */; };
+26EA09AD7590EB8CB8B2DDFF /* DevicesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A05178ECE53EAECF9EEE4DC4 /* DevicesView.swift */; };
+4A6480BF2FD457E5D90E1DFF /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F743304A6A768F0F2E3F1294 /* AppModel.swift */; };
+59C0B1491AAC4FF974405C88 /* server.crt in Resources */ = {isa = PBXBuildFile; fileRef = 7FC809E969B3E1D0B0CF82D1 /* server.crt */; };
+83234862FB81263FCBA27178 /* AgentLiteIOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CCF1D5E3CB31F2C85E56877 /* AgentLiteIOSApp.swift */; };
+87D1C3C33B2F02E5F6795F7B /* BackgroundRefresh.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0226FB575CA904AD2D9D1527 /* BackgroundRefresh.swift */; };
+A2A391BC8C2A0DC4A2FB7FC1 /* LocalActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04073D864CABF672AB0FE8AA /* LocalActions.swift */; };
+B345BAFB6E625DC22CE61FBE /* AgentLiteCore in Frameworks */ = {isa = PBXBuildFile; productRef = 77D08673FB1F9D0A6514F36E /* AgentLiteCore */; };
+C6CAD9E72EA3B048C99C7F9B /* RemoteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E6415BF44E4601EE3B51711 /* RemoteView.swift */; };
+D15F1DD26EF94FC60B4EA05F /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6930281E2E9F63C11F7459B /* RootView.swift */; };
+E50204259E7E8660362FF078 /* SimulatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86A8BEB7F3F77E3F55345583 /* SimulatorTests.swift */; };
+F8F602D3292062D8368FB9D0 /* AgentLiteCore in Frameworks */ = {isa = PBXBuildFile; productRef = 7B3EBF7D5F9E8B3B67A10D86 /* AgentLiteCore */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+0F7FAB0912F87E0A3AAE8A38 /* PBXContainerItemProxy */ = {isa = PBXContainerItemProxy; containerPortal = 244210E48437B6556980A702 /* Project object */; proxyType = 1; remoteGlobalIDString = 7DD0A2F01353ED35078A4D5C; remoteInfo = AgentLiteIOS; };
+67A58A0E88E5C33488035E39 /* PBXTargetDependency */ = {isa = PBXTargetDependency; target = 7DD0A2F01353ED35078A4D5C /* AgentLiteIOS */; targetProxy = 0F7FAB0912F87E0A3AAE8A38 /* PBXContainerItemProxy */; };
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+0226FB575CA904AD2D9D1527 /* BackgroundRefresh.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundRefresh.swift; sourceTree = "<group>"; };
+04073D864CABF672AB0FE8AA /* LocalActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalActions.swift; sourceTree = "<group>"; };
+24A0BA8B23A6F4F7CA352124 /* AccountView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountView.swift; sourceTree = "<group>"; };
+3E6415BF44E4601EE3B51711 /* RemoteView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteView.swift; sourceTree = "<group>"; };
+7CCF1D5E3CB31F2C85E56877 /* AgentLiteIOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentLiteIOSApp.swift; sourceTree = "<group>"; };
+7FC809E969B3E1D0B0CF82D1 /* server.crt */ = {isa = PBXFileReference; lastKnownFileType = text; path = server.crt; sourceTree = "<group>"; };
+86A8BEB7F3F77E3F55345583 /* SimulatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SimulatorTests.swift; sourceTree = "<group>"; };
+8E0D331BF93428C224B7EA11 /* EmptyStateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmptyStateView.swift; sourceTree = "<group>"; };
+A05178ECE53EAECF9EEE4DC4 /* DevicesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DevicesView.swift; sourceTree = "<group>"; };
+BE0685F3A8E76618968A2F78 /* AgentLiteIOSTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AgentLiteIOSTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+D6871E7FE5D3B289C2643DD7 /* AgentLiteIOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AgentLiteIOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
+E6930281E2E9F63C11F7459B /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+F743304A6A768F0F2E3F1294 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+867B3E7849850EB096265A0B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F8F602D3292062D8368FB9D0 /* AgentLiteCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+AB3E8B691655A151F732B6B9 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B345BAFB6E625DC22CE61FBE /* AgentLiteCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+02DB70110004B0132CEE075A /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				7FC809E969B3E1D0B0CF82D1 /* server.crt */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+BA3B2BA1132C7ED2828F32C1 = {
+			isa = PBXGroup;
+			children = (
+				F49A65039C4050C27536EFDD /* AgentLiteIOS */,
+				02DB70110004B0132CEE075A /* Resources */,
+				D6154916E1DD0D0BC7BC4E33 /* AgentLiteIOSTests */,
+				D9F1A7F0A7DEB2975D73D732 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+D6154916E1DD0D0BC7BC4E33 /* AgentLiteIOSTests */ = {
+			isa = PBXGroup;
+			children = (
+				86A8BEB7F3F77E3F55345583 /* SimulatorTests.swift */,
+			);
+			path = AgentLiteIOSTests;
+			sourceTree = "<group>";
+		};
+D9F1A7F0A7DEB2975D73D732 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				D6871E7FE5D3B289C2643DD7 /* AgentLiteIOS.app */,
+				BE0685F3A8E76618968A2F78 /* AgentLiteIOSTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+F49A65039C4050C27536EFDD /* AgentLiteIOS */ = {
+			isa = PBXGroup;
+			children = (
+				7CCF1D5E3CB31F2C85E56877 /* AgentLiteIOSApp.swift */,
+				E6930281E2E9F63C11F7459B /* RootView.swift */,
+				8E0D331BF93428C224B7EA11 /* EmptyStateView.swift */,
+				24A0BA8B23A6F4F7CA352124 /* AccountView.swift */,
+				A05178ECE53EAECF9EEE4DC4 /* DevicesView.swift */,
+				3E6415BF44E4601EE3B51711 /* RemoteView.swift */,
+				F743304A6A768F0F2E3F1294 /* AppModel.swift */,
+				04073D864CABF672AB0FE8AA /* LocalActions.swift */,
+				0226FB575CA904AD2D9D1527 /* BackgroundRefresh.swift */,
+			);
+			path = AgentLiteIOS;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+00019FA13C16DD754F71D8B3 /* Build configuration list for PBXNativeTarget "AgentLiteIOS" */ = {isa = XCConfigurationList; buildConfigurations = (430EBD12C28562D72F80A9D8 /* Debug */, 0A51430C5B642DA370B16F59 /* Release */, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+7DD0A2F01353ED35078A4D5C /* AgentLiteIOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 00019FA13C16DD754F71D8B3 /* Build configuration list for PBXNativeTarget "AgentLiteIOS" */;
+			buildPhases = (
+				F31108F6184E4701BA0E44D5 /* Sources */,
+				867B3E7849850EB096265A0B /* Frameworks */,
+				11B95DFAE8C44B54E5D22CAD /* Resources */,
+			);
+			buildRules = ();
+			dependencies = ();
+			name = AgentLiteIOS;
+			packageProductDependencies = (
+				7B3EBF7D5F9E8B3B67A10D86 /* AgentLiteCore */,
+			);
+			productName = AgentLiteIOS;
+			productReference = D6871E7FE5D3B289C2643DD7 /* AgentLiteIOS.app */;
+			productType = "com.apple.product-type.application";
+		};
+7E4F179E30E26F9F936D5DE4 /* AgentLiteIOSTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 88402117D94947A3E8D33A72 /* Build configuration list for PBXNativeTarget "AgentLiteIOSTests" */;
+			buildPhases = (
+				12A6B79BFF0ED9DA610A64CB /* Sources */,
+				AB3E8B691655A151F732B6B9 /* Frameworks */,
+				5430BA6585B9E3907EB963B1 /* Resources */,
+			);
+			buildRules = ();
+			dependencies = (
+				67A58A0E88E5C33488035E39 /* PBXTargetDependency */,
+			);
+			name = AgentLiteIOSTests;
+			packageProductDependencies = (
+				77D08673FB1F9D0A6514F36E /* AgentLiteCore */,
+			);
+			productName = AgentLiteIOSTests;
+			productReference = BE0685F3A8E76618968A2F78 /* AgentLiteIOSTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+88402117D94947A3E8D33A72 /* Build configuration list for PBXNativeTarget "AgentLiteIOSTests" */ = {isa = XCConfigurationList; buildConfigurations = (8CA76A067D3A88E5A9A9838A /* Debug */, 2AA91BECB8809572F739A518 /* Release */, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+244210E48437B6556980A702 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2660;
+				LastUpgradeCheck = 2660;
+				TargetAttributes = {
+					7DD0A2F01353ED35078A4D5C = {CreatedOnToolsVersion = 26.6; };
+					7E4F179E30E26F9F936D5DE4 = {CreatedOnToolsVersion = 26.6; TestTargetID = 7DD0A2F01353ED35078A4D5C; };
+				};
+			};
+			buildConfigurationList = 948529CF9178540282F0B655 /* Build configuration list for PBXProject */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (en, Base, zh-Hans, );
+			mainGroup = BA3B2BA1132C7ED2828F32C1;
+			packageReferences = (
+				A2F27E880341CBCB153A16E3 /* XCLocalSwiftPackageReference ".." */,
+			);
+			productRefGroup = D9F1A7F0A7DEB2975D73D732 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				7DD0A2F01353ED35078A4D5C /* AgentLiteIOS */,
+				7E4F179E30E26F9F936D5DE4 /* AgentLiteIOSTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+11B95DFAE8C44B54E5D22CAD /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				59C0B1491AAC4FF974405C88 /* server.crt in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+5430BA6585B9E3907EB963B1 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+12A6B79BFF0ED9DA610A64CB /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E50204259E7E8660362FF078 /* SimulatorTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+F31108F6184E4701BA0E44D5 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				83234862FB81263FCBA27178 /* AgentLiteIOSApp.swift in Sources */,
+				D15F1DD26EF94FC60B4EA05F /* RootView.swift in Sources */,
+				1064DEFAB3936E8F77E80AB2 /* EmptyStateView.swift in Sources */,
+				05B5B79676351D321E5C7B71 /* AccountView.swift in Sources */,
+				26EA09AD7590EB8CB8B2DDFF /* DevicesView.swift in Sources */,
+				C6CAD9E72EA3B048C99C7F9B /* RemoteView.swift in Sources */,
+				4A6480BF2FD457E5D90E1DFF /* AppModel.swift in Sources */,
+				A2A391BC8C2A0DC4A2FB7FC1 /* LocalActions.swift in Sources */,
+				87D1C3C33B2F02E5F6795F7B /* BackgroundRefresh.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+67A58A0E88E5C33488035E39 /* PBXTargetDependency */ = {isa = PBXTargetDependency; target = 7DD0A2F01353ED35078A4D5C /* AgentLiteIOS */; targetProxy = 0F7FAB0912F87E0A3AAE8A38 /* PBXContainerItemProxy */; };
+7E4F179E30E26F9F936D5DE4 /* AgentLiteIOSTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 88402117D94947A3E8D33A72 /* Build configuration list for PBXNativeTarget "AgentLiteIOSTests" */;
+			buildPhases = (
+				12A6B79BFF0ED9DA610A64CB /* Sources */,
+				AB3E8B691655A151F732B6B9 /* Frameworks */,
+				5430BA6585B9E3907EB963B1 /* Resources */,
+			);
+			buildRules = ();
+			dependencies = (
+				67A58A0E88E5C33488035E39 /* PBXTargetDependency */,
+			);
+			name = AgentLiteIOSTests;
+			packageProductDependencies = (
+				77D08673FB1F9D0A6514F36E /* AgentLiteCore */,
+			);
+			productName = AgentLiteIOSTests;
+			productReference = BE0685F3A8E76618968A2F78 /* AgentLiteIOSTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+0A51430C5B642DA370B16F59 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = "";
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "";
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "AgentLite";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "用于在同账号设备之间直接同步数据，数据不经过服务器。";
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.dsh.agentlite.ios;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.9;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+2AA91BECB8809572F739A518 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "";
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.dsh.agentlite.ios.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.9;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/AgentLiteIOS.app/AgentLiteIOS";
+			};
+			name = Release;
+		};
+430EBD12C28562D72F80A9D8 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = "";
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "";
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "AgentLite";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "用于在同账号设备之间直接同步数据，数据不经过服务器。";
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.dsh.agentlite.ios;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.9;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+6B2235A6D291B8C751E631E2 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = ("DEBUG=1", "$(inherited)");
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			}; name = Debug; };
+8CA76A067D3A88E5A9A9838A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "";
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.dsh.agentlite.ios.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.9;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/AgentLiteIOS.app/AgentLiteIOS";
+			};
+			name = Debug;
+		};
+DB1D92C50F00FE72DB036EBF /* Release */ = {isa = XCBuildConfiguration; buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				VALIDATE_PRODUCT = YES;
+			}; name = Release; };
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+00019FA13C16DD754F71D8B3 /* Build configuration list for PBXNativeTarget "AgentLiteIOS" */ = {isa = XCConfigurationList; buildConfigurations = (430EBD12C28562D72F80A9D8 /* Debug */, 0A51430C5B642DA370B16F59 /* Release */, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+88402117D94947A3E8D33A72 /* Build configuration list for PBXNativeTarget "AgentLiteIOSTests" */ = {isa = XCConfigurationList; buildConfigurations = (8CA76A067D3A88E5A9A9838A /* Debug */, 2AA91BECB8809572F739A518 /* Release */, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+948529CF9178540282F0B655 /* Build configuration list for PBXProject */ = {isa = XCConfigurationList; buildConfigurations = (6B2235A6D291B8C751E631E2 /* Debug */, DB1D92C50F00FE72DB036EBF /* Release */, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+244210E48437B6556980A702 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2660;
+				LastUpgradeCheck = 2660;
+				TargetAttributes = {
+					7DD0A2F01353ED35078A4D5C = {CreatedOnToolsVersion = 26.6; };
+					7E4F179E30E26F9F936D5DE4 = {CreatedOnToolsVersion = 26.6; TestTargetID = 7DD0A2F01353ED35078A4D5C; };
+				};
+			};
+			buildConfigurationList = 948529CF9178540282F0B655 /* Build configuration list for PBXProject */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (en, Base, zh-Hans, );
+			mainGroup = BA3B2BA1132C7ED2828F32C1;
+			packageReferences = (
+				A2F27E880341CBCB153A16E3 /* XCLocalSwiftPackageReference ".." */,
+			);
+			productRefGroup = D9F1A7F0A7DEB2975D73D732 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				7DD0A2F01353ED35078A4D5C /* AgentLiteIOS */,
+				7E4F179E30E26F9F936D5DE4 /* AgentLiteIOSTests */,
+			);
+		};
+A2F27E880341CBCB153A16E3 /* XCLocalSwiftPackageReference ".." */ = {isa = XCLocalSwiftPackageReference; relativePath = ".."; };
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+77D08673FB1F9D0A6514F36E /* AgentLiteCore */ = {isa = XCSwiftPackageProductDependency; package = A2F27E880341CBCB153A16E3; productName = AgentLiteCore; };
+7B3EBF7D5F9E8B3B67A10D86 /* AgentLiteCore */ = {isa = XCSwiftPackageProductDependency; package = A2F27E880341CBCB153A16E3; productName = AgentLiteCore; };
+/* End XCSwiftPackageProductDependency section */
+
+	};
+	rootObject = 244210E48437B6556980A702 /* Project object */;
+}
