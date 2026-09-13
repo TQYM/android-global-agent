@@ -20,9 +20,7 @@ public final class Prefs {
     }
     public String apiKey()      { return sp.getString("api_key", DevConfig.API_KEY); }
     public String model()       { return sp.getString("model", DevConfig.MODEL); }
-    public String asrModel()    { String v = sp.getString("asr_model", "");
-        if ("glm-asr-2512".equals(v)) v = "";   // 旧默认值已失效，自动迁移为空（=用主模型转写）
-        return v; }
+    // asrModel() 见下方「单模型模式」节（受单模型收敛影响）
     public boolean vision()     { return sp.getBoolean("vision", true); }
     public int maxSteps()       {
         int v = sp.getInt("max_steps", 50);
@@ -91,11 +89,117 @@ public final class Prefs {
 
     /** Root 模式: auto(自动检测) / on(强制启用) / off(强制关闭)。Lite 版无 UI，默认 auto 静默加速。 */
     public String rootMode() { return sp.getString("root_mode", "auto"); }
+
+    // ------------------------------------------------------------------
+    // 单模型模式（充值改版配套，2026-09-13）
+    //
+    // 起因是一条会被用户察觉为「白花钱」的规则：百炼的资源包**按模型名严格匹配、
+    // 跨版本或子型号不通用**（qwen-plus 资源包不抵扣 qwen-max）。App 原本会用到
+    // 主模型 + 规划模型 + 视觉搭档 + 语音模型，买了一个模型的资源包就只能抵扣其中一个，
+    // 其余仍走按量付费；账户余额不足时整条链路直接失败。
+    //
+    // 收敛方式是**运行期覆盖，不改存档值**——用户关掉开关即可回到原配置，
+    // 不必重新填一遍。这是刻意的：静默改写用户的配置比不收敛更糟。
+    // ------------------------------------------------------------------
+
+    /** 是否启用单模型模式。 */
+    public boolean singleModelMode() { return sp.getBoolean("single_model_mode", true); }
+
+    public void setSingleModelMode(boolean on) { sp.edit().putBoolean("single_model_mode", on).apply(); }
+
+    // ------------------------------------------------------------------
+    // 官方购买模式（充值改版配套，2026-09-13）
+    //
+    // 用户走完「跳百炼官方购买 → 自动创建 API Key」后置位。**只在真的拿到并校验过 Key
+    // 之后才置位**——否则会出现"标记为官方购买、但 Key 不可用、网关又已被让路"的
+    // 中间态：那是最糟的结果（既不能走我方额度，也不能直连）。
+    // ------------------------------------------------------------------
+
+    /**
+     * 是否使用**用户自己的**百炼 API Key（官方购买模式）。
+     *
+     * <p>为 true 时 {@link LlmClient#forPrefs} 会**跳过我方额度网关**——
+     * 用户既然自己买了 token 资源包，就应当直接用他的 Key，
+     * 否则网关会一直顶在前面、写的 Key 根本用不上（`PURCHASE_REDIRECT_DESIGN` 决策 4）。
+     */
+    public boolean useOwnKey() { return sp.getBoolean("use_own_key", false); }
+
+    public void setUseOwnKey(boolean on) { sp.edit().putBoolean("use_own_key", on).apply(); }
+
+    /**
+     * 原始规划模型存档值（**不**受单模型模式影响），仅供设置页回填输入框。
+     *
+     * <p>单模型模式下必须用它而不是 {@link #plannerModel()}（后者会返回主模型），
+     * 否则用户一保存就会把主模型名写进 `planner_model`，把原配置永久覆盖掉。
+     */
+    public String plannerModelRaw() { return sp.getString("planner_model", ""); }
+
+    /**
+     * 原始语音模型存档值（**不**受单模型模式影响），仅供设置页回填输入框。
+     *
+     * <p>与 {@link #plannerModelRaw()} 同理：用 {@link #asrModel()} 回填会导致
+     * 「打开设置页 → 点保存」这一步把收敛后的主模型名写进存档。
+     */
+    public String asrModelRaw() {
+        String v = sp.getString("asr_model", "");
+        return "glm-asr-2512".equals(v) ? "" : (v == null ? "" : v);
+    }
+
     /** 视觉搭档模型：空 = 与主模型相同。 */
-    public String visionModel() { return sp.getString("vision_model", ""); }
-    /** 语义规划模型：把口语任务转成结构化简报；空 = 关闭规划前置。（qwen3.8flash 不存在，实测可用默认 qwen3.5-flash） */
-    public String plannerModel() { return sp.getString("planner_model", "qwen3.5-flash"); }
-    public void setPlannerModel(String m) { sp.edit().putString("planner_model", m).apply(); }
+    public String visionModel() { return converge("vision_model"); }
+
+    /**
+     * 语义规划模型：把口语任务转成结构化简报；空 = 关闭规划前置。
+     *
+     * <p>历史默认值是 `qwen3.5-flash`。单模型模式下**返回主模型而不是空**——
+     * 返回空会让 `AgentEngine` 直接跳过规划，等于把功能**静默关掉**，
+     * 用户只会觉得"怎么变笨了"。返回主模型则规划照常工作，只是换了执行者。
+     */
+    public String plannerModel() {
+        if (singleModelMode()) return model();
+        String v = plannerModelRaw();
+        return v.isEmpty() ? "qwen3.5-flash" : v;
+    }
+
+    /** 写入规划模型。单模型模式下**忽略**，避免主模型名覆盖用户原配置。 */
+    public void setPlannerModel(String m) {
+        if (singleModelMode()) return;
+        sp.edit().putString("planner_model", m == null ? "" : m.trim()).apply();
+    }
+
+    /** 跨设备同步下发的规划模型：同样受单模型模式保护。 */
+    public void setPlannerModelFromSync(String m) { setPlannerModel(m); }
+
+    /**
+     * 单模型收敛：启用时**一律返回主模型**，无论用户配了什么。
+     *
+     * <p>两条刻意的取舍：
+     * <ul>
+     *   <li><b>只覆盖返回值，绝不动存档</b>。用户关掉开关，原配置一字不差地回来，
+     *       不必重填。静默改写用户配置比不收敛更糟。</li>
+     *   <li><b>不因"用户配了多模型"而自动退出单模型模式</b>。曾经这么设计过，但那是自相矛盾的——
+     *       该模式的全部意义就是强制单模型；"配了别的就放行"会让功能永远不生效。
+     *       想用多模型就明确关掉开关，选择权留在用户手里，而不是被代码猜。</li>
+     * </ul>
+     */
+    private String converge(String key) {
+        if (singleModelMode()) return model();
+        String v = sp.getString(key, "");
+        return v == null ? "" : v;
+    }
+
+    /**
+     * 语音转写模型：空 = 用主模型 Omni 原生音频输入。
+     *
+     * <p>注意与历史行为的差异：旧实现把失效的 `glm-asr-2512` 迁移为空；
+     * 现在**空值本身也会被收敛成主模型**，但写入时仍存空串（保持存档语义不变）。
+     */
+    public String asrModel() {
+        String v = sp.getString("asr_model", "");
+        if ("glm-asr-2512".equals(v)) v = "";   // 旧默认值已失效，视为未配置
+        if (singleModelMode()) return model();
+        return v == null ? "" : v;
+    }
 
     public void setRootMode(String m) { sp.edit().putString("root_mode", m).apply(); }
 

@@ -583,6 +583,25 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
     }
 
     @Override
+    protected void onStart() {
+        super.onStart();
+        // 订阅无障碍恢复信号：服务重绑是异步的，onResume 那一刻可能还没连上，
+        // 若不重画，横幅会一直停在「未开启」并进入引擎首帧截图（误导模型）。
+        A11yGuard.setObserver(a11yObserver);
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        A11yGuard.setObserver(null);   // 必须注销：静态引用持有 Activity 会泄漏
+    }
+
+    /** 无障碍状态变化回调（主线程）。仅在"已连接"时重画——掉线本身已有 onResume 路径覆盖。 */
+    private final A11yGuard.Observer a11yObserver = (connected) -> {
+        if (connected && !isFinishing()) refreshA11y();
+    };
+
+    @Override
     protected void onDestroy() {
         super.onDestroy();
         // 注销同步失效回调，避免持有已销毁界面
@@ -645,6 +664,19 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
             RootShell.ensureA11y(this);
             a11yOn = AgentA11yService.get() != null;
         }
+        renderA11y(a11yOn, root);
+    }
+
+    /**
+     * 只负责画状态，不触发修复。
+     *
+     * <p>拆出来的原因：服务重绑是**异步**的——`onResume` 里判定时它可能还没连上，
+     * 等连上时横幅早已画完，于是界面会一直挂着「无障碍未开启」，
+     * 而这一帧截图会被引擎当成首帧感知输入、**误导模型以为它看不见屏幕**
+     * （原注释已点明这个风险，但当时没有恢复信号可用）。
+     * 现在由 {@link A11yGuard} 在真实恢复时回调 {@link #onStart} 注册的监听器重画。
+     */
+    private void renderA11y(boolean a11yOn, boolean root) {
         // 状态文案统一由 A11yLauncher 判定：区分「未开启」与「已启用但未连接（被强杀/回收）」
         String hint = a11yOn ? null : A11yLauncher.statusHint(this);
         if (watchUi) {

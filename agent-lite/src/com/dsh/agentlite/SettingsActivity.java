@@ -30,6 +30,8 @@ public class SettingsActivity extends Activity {
     // 布局使用平台 Switch（已回归第一版 UI，不再依赖 Material 组件库）
     private Switch swVision;
     private Switch swSync;
+    private Switch swSingleModel;
+    private TextView tvSingleModelHint;
     private TextView tvSyncHint;
     private TextView tvTokens, tvDisplay, tvKeepAlive, tvAccount, tvQuota, tvDevices, tvSyncStatus;
 
@@ -66,6 +68,8 @@ public class SettingsActivity extends Activity {
         etMaxSteps = findViewById(R.id.etMaxSteps);
         swVision = findViewById(R.id.swVision);
         swSync = findViewById(R.id.swSync);
+        swSingleModel = findViewById(R.id.swSingleModel);
+        tvSingleModelHint = findViewById(R.id.tvSingleModelHint);
         tvSyncHint = findViewById(R.id.tvSyncHint);
         etRedeem = findViewById(R.id.etRedeem);
         etSyncServer = findViewById(R.id.etSyncServer);
@@ -96,6 +100,14 @@ public class SettingsActivity extends Activity {
 
         findViewById(R.id.btnSave).setOnClickListener(v -> saveCfg());
 
+        // 单模型模式即时生效（不必等"保存"）：勾上/取消立刻反映到输入框可用状态，
+        // 并立刻落盘——否则用户以为已生效、返回主界面仍走多模型，属于静默不一致。
+        swSingleModel.setOnCheckedChangeListener((btn, checked) -> {
+            prefs.setSingleModelMode(checked);
+            applySingleModelUi();
+            toast(checked ? "已开启单模型模式" : "已关闭单模型模式");
+        });
+
         findViewById(R.id.btnResetTokens).setOnClickListener(v -> {
             prefs.resetTokens();
             refreshTokens();
@@ -118,7 +130,9 @@ public class SettingsActivity extends Activity {
                 startActivity(new android.content.Intent(this, LoginActivity.class)));
         findViewById(R.id.btnLogout).setOnClickListener(v -> confirmLogout());
         findViewById(R.id.btnRedeem).setOnClickListener(v -> doRedeem());
-        // 收款界面：套餐 → 下单 → 兑换码支付 → 订单记录
+        // 充值改写为「跳官方购买 + 自动创建 API Key」——用户在此配置 AccessKey、
+        // 打开百炼官方页买 token 资源包，返回后自动创建并启用 DashScope Key。
+        // （兑换码/下单/订单那套 UI 已按决策从该页面移除；服务端代码保留，另一条模式仍可用。）
         findViewById(R.id.btnBuy).setOnClickListener(v ->
                 startActivity(new android.content.Intent(this, PurchaseActivity.class)));
 
@@ -158,11 +172,37 @@ public class SettingsActivity extends Activity {
         etBase.setText(prefs.baseUrl());
         etKey.setText(prefs.apiKey());
         etModel.setText(prefs.model());
-        etAsr.setText(prefs.asrModel());
-        etPlanner.setText(prefs.plannerModel());
+        // ⚠️ 必须用 raw 值：单模型模式下 asrModel()/plannerModel() 返回的是主模型名，
+        // 直接回填会让用户一保存就把主模型名写进这两个字段，永久覆盖原配置。
+        etAsr.setText(prefs.asrModelRaw());
+        etPlanner.setText(prefs.plannerModelRaw());
         etMaxSteps.setText(String.valueOf(prefs.maxSteps()));
         swVision.setChecked(prefs.vision());
+        swSingleModel.setChecked(prefs.singleModelMode());
         etSyncServer.setText(prefs.syncServer());
+        applySingleModelUi();
+    }
+
+    /**
+     * 单模型模式下把"额外模型"输入框置灰并说明原因。
+     *
+     * <p>置灰而非隐藏：用户需要看到「这些值还在、只是没生效」，否则会以为配置丢了。
+     */
+    private void applySingleModelUi() {
+        boolean on = swSingleModel.isChecked();
+        for (EditText et : new EditText[]{etAsr, etPlanner}) {
+            et.setEnabled(!on);
+            et.setAlpha(on ? 0.5f : 1.0f);
+        }
+        if (on) {
+            String main = etModel.getText().toString().trim();
+            tvSingleModelHint.setText("已开启：语音与规划都走主模型「" + main
+                    + "」。百炼资源包按模型名严格匹配，买一个包只能抵扣一个模型，"
+                    + "多模型时其余调用会走按量付费。要用别的模型请关闭本开关。");
+        } else {
+            tvSingleModelHint.setText("已关闭：允许语音/规划使用不同模型。"
+                    + "注意资源包只抵扣与之同名的模型，其余按量付费。");
+        }
     }
 
     private void saveCfg() {

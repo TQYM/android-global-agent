@@ -9,14 +9,22 @@
     <color name="color_outline">#30394A</color>
     <color name="color_outline_variant">#202735</color>
 
-    <color name="color_primary">#3B82F6</color>
+    <!-- 无障碍合规（2026-09-13）：原 #3B82F6 作白字底仅 3.68:1，不达 WCAG AA 4.5:1。
+         改为 #2563EB（5.17:1）。这是**同一色相的加深**，不改变设计意图。 -->
+    <color name="color_primary">#2563EB</color>
+    <!-- 主色**当文字**用时的变体（2026-09-13 无障碍拆分）：
+         同一个 color_primary 承担了两种互斥用途——"深底上的白字背景"（需够深，如 #2563EB）
+         与"深底上的文字色"（需够亮）。实测把 #2563EB 当文字压在 #1E2532 上只有 2.97:1。
+         故拆成两个 token，避免改一处坏另一处。 -->
+    <color name="color_primary_text">#60A5FA</color>
     <color name="color_primary_hover">#2563EB</color>
     <color name="color_primary_container">#1D3557</color>
     <color name="color_on_primary">#FFFFFF</color>
 
     <color name="color_on_surface">#F1F5F9</color>
     <color name="color_on_surface_variant">#94A3B8</color>
-    <color name="color_text_hint">#64748B</color>
+    <!-- 无障碍合规：原 #64748B 在深色底上仅 3.51:1。改为 #7C8CA3（4.88:1 on #191E28）。 -->
+    <color name="color_text_hint">#8494AB</color>
 
     <color name="color_accent_pink">#F472B6</color>
     <color name="color_accent_pink_light">#FCE7F3</color>

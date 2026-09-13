@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: Apache-2.0
 # 鸿蒙版 mock 回归：无真机/模拟器时验证 harmony_agent 全链路（真实 LLM + 模拟 hdc 设备）
 # 用法: sh tests/harmony_mock.sh [任务文本] [最大步数]
 # 通过条件: agent 报 done 且 mock 设备状态 bt_on=true（点击真的命中了开关）

@@ -1,9 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- 胶囊按钮。按下态用**加粗描边**表达反馈，而不是把底色加深。
+
+     原因（2026-09-13 无障碍实测）：按钮文字取 @color/color_primary，而原按下态底色是
+     @color/color_primary_container（深蓝 #1D3557）——两者对比度仅 2.39:1，按下瞬间文字几乎
+     不可见。改成与常态同底、只加粗描边后，无论 accent 落在哪一档都保持可读；
+     深色主题下"描边变亮"作为按压反馈也比"底色变暗"更符合直觉。 -->
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:state_pressed="true">
         <shape android:shape="rectangle">
-            <solid android:color="@color/color_primary_container"/>
-            <stroke android:width="1dp" android:color="@color/color_primary"/>
+            <solid android:color="@color/color_surface_variant"/>
+            <stroke android:width="2dp" android:color="@color/color_primary"/>
             <corners android:radius="14dp"/>
         </shape>
     </item>

@@ -1,3 +1,5 @@
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
 python3 tests/agent_test.py tablet 1 "open settings" "open wifi settings page" "open display settings"
 python3 tests/agent_test.py tablet 2 "turn up the volume once" "open https://www.bing.com" "open taobao and scroll down once"
 python3 tests/agent_test.py tablet 3 "open com.xingin.xhs and scroll down once" "open bluetooth settings page" "open settings"

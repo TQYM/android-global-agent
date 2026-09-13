@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: Apache-2.0
 # 异形屏适配真机回归矩阵（规划书 §6 标准任务集 + 形态专项）
 # 用法: sh tests/plan-display-matrix.sh [oneplus|tablet|emu|all]
 # 前置: 设备 USB 已连接并开启开发者调试（emu = 模拟器 emulator-5554）。

@@ -1,3 +1,5 @@
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
 python3 tests/agent_test.py oneplus 1 "open settings" "open wifi settings page" "open display settings"
 python3 tests/agent_test.py oneplus 2 "turn up the volume once" "open https://www.bing.com" "open wechat"
 python3 tests/agent_test.py oneplus 3 "open douyin and scroll down once" "open bluetooth settings page" "open settings"

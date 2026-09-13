@@ -44,6 +44,39 @@ public final class A11yGuard {
     private static int sLostCount, sRepairOkCount, sRepairFailCount;
     private static String sLastEvent = "";
 
+    /**
+     * 无障碍连接状态变化回调（主线程）。前台界面订阅它，好在服务**异步重绑完成**时重画状态。
+     *
+     * <p>存在的理由：`onResume` 里判定时服务可能尚未绑定，而重绑完成时界面早已画完——
+     * 界面会一直挂着「无障碍未开启」，而这一帧截图会被引擎当作首帧感知输入、
+     * 误导模型以为它看不见屏幕。靠猜延迟不可靠，改为订阅真实恢复事件。
+     */
+    public interface Observer {
+        void onA11yState(boolean connected);
+    }
+
+    private static volatile Observer sObserverRef;
+
+    /** 注册/注销观察者。**必须在 Activity onStop 注销**，否则静态引用会泄漏 Activity。 */
+    public static void setObserver(Observer obs) { sObserverRef = obs; }
+
+    private static void notifyObserver(boolean connected) {
+        final Observer obs = sObserverRef;
+        if (obs == null) return;
+        if (sHandler == null) sHandler = new Handler(Looper.getMainLooper());
+        sHandler.post(() -> {
+            try {
+                obs.onA11yState(connected);
+            } catch (Throwable t) {
+                // 观察者自身出错不得影响守护逻辑
+                log("观察者回调异常：" + t.getClass().getSimpleName());
+            }
+        });
+    }
+
+    /** 供 {@link AgentA11yService#onServiceConnected()} 广播"已连接"。 */
+    public static void notifyConnected() { notifyObserver(true); }
+
     private A11yGuard() { }
 
     /** 安装守护（幂等）：注册设置监听 + 启动周期自检。在 KeepAliveService.onCreate 调用。 */
@@ -117,6 +150,7 @@ public final class A11yGuard {
         if (sHandler != null) sHandler.postDelayed(() -> {
             boolean b = AgentA11yService.get() != null;
             log("修复后复查: " + (b ? "已恢复连接 ✓" : "仍未连接 ✗"));
+            if (b) notifyObserver(true);
         }, 2500);
         return false;
     }

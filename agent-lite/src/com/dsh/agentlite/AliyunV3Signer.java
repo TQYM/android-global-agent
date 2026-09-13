@@ -78,9 +78,14 @@ public final class AliyunV3Signer {
                 req.method, req.uri, req.query, headers, contentSha256);
         String stringToSign = ALGORITHM + "\n" + hex(sha256(canonicalRequest.getBytes(StandardCharsets.UTF_8)));
 
-        byte[] mac = hmacSha256(req.accessKeySecret.getBytes(StandardCharsets.UTF_8),
-                stringToSign.getBytes(StandardCharsets.UTF_8));
-        String signature = hex(mac);
+        String signature;
+        byte[] keyBytes = charsToUtf8(req.accessKeySecret);
+        try {
+            byte[] mac = hmacSha256(keyBytes, stringToSign.getBytes(StandardCharsets.UTF_8));
+            signature = hex(mac);
+        } finally {
+            java.util.Arrays.fill(keyBytes, (byte) 0);   // 密钥字节用完即抹
+        }
 
         String signedHeaders = String.join(";", headers.keySet());
         String authorization = ALGORITHM
@@ -191,6 +196,38 @@ public final class AliyunV3Signer {
         return mac.doFinal(data);
     }
 
+    /**
+     * char[] → UTF-8 字节。
+     *
+     * <p>刻意不经 {@code new String(chars)}：那会产生一个不可清零的明文 String。
+     * 这里逐码点手工编码，中间不出现 String。
+     */
+    public static byte[] charsToUtf8(char[] chars) {
+        if (chars == null) return new byte[0];
+        java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream(chars.length * 2);
+        for (int i = 0; i < chars.length; i++) {
+            int c = chars[i];
+            if (c < 0x80) {
+                bos.write(c);
+            } else if (c < 0x800) {
+                bos.write(0xC0 | (c >> 6));
+                bos.write(0x80 | (c & 0x3F));
+            } else if (Character.isHighSurrogate((char) c) && i + 1 < chars.length
+                    && Character.isLowSurrogate(chars[i + 1])) {
+                int cp = Character.toCodePoint((char) c, chars[++i]);
+                bos.write(0xF0 | (cp >> 18));
+                bos.write(0x80 | ((cp >> 12) & 0x3F));
+                bos.write(0x80 | ((cp >> 6) & 0x3F));
+                bos.write(0x80 | (cp & 0x3F));
+            } else {
+                bos.write(0xE0 | (c >> 12));
+                bos.write(0x80 | ((c >> 6) & 0x3F));
+                bos.write(0x80 | (c & 0x3F));
+            }
+        }
+        return bos.toByteArray();
+    }
+
     /** 小写十六进制（官方要求 HexEncode 用小写）。 */
     public static String hex(byte[] data) {
         StringBuilder sb = new StringBuilder(data.length * 2);
@@ -208,8 +245,9 @@ public final class AliyunV3Signer {
     /** 一次待签名请求的描述。字段名与官方公共请求头一一对应。 */
     public static final class Request {
         public final String accessKeyId;
-        /** AccessKeySecret。**只在本方法栈内使用，禁止外传/记录。** */
-        public final String accessKeySecret;
+        /** AccessKeySecret。**只在本方法栈内使用，禁止外传/记录。** 用 char[] 而非 String：
+         *  String 不可清零，密钥明文会一直留在堆上直到 GC；char[] 用完可立刻抹掉。 */
+        public final char[] accessKeySecret;
         public final String method;
         /** Endpoint，同时作为 host 头参与签名，如 {@code bailian.aliyuncs.com}。 */
         public final String host;
@@ -228,7 +266,7 @@ public final class AliyunV3Signer {
         /** 额外请求头；公共头由 {@link #sign} 统一补齐，不必在此重复。 */
         public final Map<String, String> headers;
 
-        public Request(String accessKeyId, String accessKeySecret, String method, String host,
+        public Request(String accessKeyId, char[] accessKeySecret, String method, String host,
                        String uri, String action, String version, String date,
                        Map<String, String> query, String body, Map<String, String> headers) {
             this.accessKeyId = accessKeyId;

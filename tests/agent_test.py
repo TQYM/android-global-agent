@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """Agent 真机高强度测试 harness。
 用法: python3 agent_test.py <tablet|oneplus> <round_no> <task1> [task2 ...]
 每个任务: 拉起 App → 清空输入框 → 输入任务 → 点运行 → 轮询 engine.log 判定结果 → 回主页。

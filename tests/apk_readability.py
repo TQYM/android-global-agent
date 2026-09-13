@@ -24,7 +24,16 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEFAULT_APK = os.path.join(ROOT, "agent-unified", "dist", "agentlite-unified-0.7.0-android.apk")
+
+# 默认目标：**优先 agent-lite 主产物**（日常构建/装机都走这里），整合层产物作回退。
+# 2026-09-13 修正：原先硬编码整合层 dist 路径，而该文件会被清理/重建。
+# 指向不存在时它会报错退出（不会静默通过），但**指向陈旧文件时会给出与当前源码不符的
+# 结论**——那比直接报错更危险，故改为按存在性挑第一个候选。
+_DEFAULT_CANDIDATES = (
+    os.path.join(ROOT, "agent-lite", "build", "agent-lite.apk"),
+    os.path.join(ROOT, "agent-unified", "dist", "agentlite-unified-0.7.0-android.apk"),
+)
+DEFAULT_APK = next((p for p in _DEFAULT_CANDIDATES if os.path.exists(p)), _DEFAULT_CANDIDATES[0])
 
 ANDROID_NS = "http://schemas.android.com/apk/res/android:"
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """watch_task.py — 手表（OPPO Watch OWW261）标准任务集矩阵 runner。
 
 手表 UI 输入区在屏外（手机布局未适配），统一走 adb am start --es task --ez auto_run true 通道；
