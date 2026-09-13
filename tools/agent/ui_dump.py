@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """Semantic UI bridge for Android devices (standard library only).
 
 Turns `adb shell uiautomator dump` into a compact list of interactive

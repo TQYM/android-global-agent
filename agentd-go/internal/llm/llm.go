@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 // Package llm is a minimal OpenAI-compatible chat client (no external deps).
 //
 // Android ships no /etc/resolv.conf, so Go's pure resolver falls back to

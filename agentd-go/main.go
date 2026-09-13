@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 // agentd is a device-resident Android UI agent with a local WebUI.
 // Started as root, it drives the phone through uiautomator/screencap/input
 // and calls a user-configured LLM API for decisions. No PC required.

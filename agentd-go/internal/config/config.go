@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 // Package config persists the user-editable LLM API settings on the device.
 package config
 

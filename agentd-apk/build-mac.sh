@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
 # Build agentd-ui.apk on macOS without Gradle: aapt2 + javac + d8 + apksigner.
 # Requires: JDK (javac on PATH), $HOME/Library/Android/sdk build-tools 36 +
 # platforms;android-34. Output: agentd-apk/build/agentd-ui.apk

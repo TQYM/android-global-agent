@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 // Package agent runs the perceive→decide→act→verify loop on-device.
 package agent
 

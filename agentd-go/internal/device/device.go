@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 // Package device runs Android shell commands to perceive and control the UI.
 //
 // agentd is started as root (via `su -c`), so it executes the system

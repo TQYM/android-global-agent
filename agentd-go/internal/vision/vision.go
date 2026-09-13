@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 // Package vision turns full-resolution screencap PNGs into compact JPEG
 // data URLs suitable for per-step vision LLM requests. A 1.5K phone
 // screenshot PNG is multi-MB; vision models downscale server-side anyway,

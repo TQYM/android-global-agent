@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 // Package semantics parses the uiautomator hierarchy XML into a compact
 // list of interactive nodes and renders it as prompt text for the LLM.
 package semantics
