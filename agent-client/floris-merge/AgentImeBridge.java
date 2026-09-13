@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 package dev.patrickgold.florisboard.agent;
 
 import android.content.BroadcastReceiver;

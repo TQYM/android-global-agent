@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 package com.dsh.agent;
 
 import android.graphics.Bitmap;
@@ -109,10 +111,19 @@ public class RootShell {
         return exec("input keyevent 279");
     }
 
-    /** root 自动开启本应用的无障碍服务（幂等）。 */
+    /**
+     * root 自动开启本应用的无障碍服务（幂等，追加式）。
+     * P0-2 修复（2026-09-13）：原先整体覆盖 enabled_accessibility_services，会把用户
+     * 已开启的 TalkBack/银行/自动化类服务静默清掉。改为先读当前列表、已含本服务则
+     * 不动、否则以冒号追加到尾部，用户已有配置完整保留。
+     */
     public static boolean ensureA11y(android.content.Context ctx) {
         String comp = ctx.getPackageName() + "/" + AgentA11yService.class.getName();
-        return exec("settings put secure enabled_accessibility_services " + comp)
-                && exec("settings put secure accessibility_enabled 1");
+        String cur = execOutput("settings get secure enabled_accessibility_services").trim();
+        if (!cur.contains(comp)) {
+            String next = (cur.isEmpty() || cur.equals("null")) ? comp : cur + ":" + comp;
+            if (!exec("settings put secure enabled_accessibility_services " + next)) return false;
+        }
+        return exec("settings put secure accessibility_enabled 1");
     }
 }

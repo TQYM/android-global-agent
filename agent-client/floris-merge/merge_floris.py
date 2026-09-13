@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """缝合 FlorisBoard + AgentImeBridge：
    - 清单 IME 服务名 → 桥类（字符串池同索引替换重建）
    - classes.dex：清 FlorisImeService 类级 + onCreate/onDestroy/onCreateInputView 的 final 位

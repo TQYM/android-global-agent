@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
 # Build agent-client APK on macOS with the stock SDK cmdline tools only
 # (aapt2 + javac + d8 + zipalign + apksigner). No Gradle, no Kotlin, no deps.
 set -e

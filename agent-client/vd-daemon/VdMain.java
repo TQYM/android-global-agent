@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 import android.graphics.PixelFormat;
 import android.hardware.display.VirtualDisplay;
 import android.media.ImageReader;

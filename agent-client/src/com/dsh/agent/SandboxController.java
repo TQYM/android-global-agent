@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 package com.dsh.agent;
 
 import android.content.Context;
@@ -183,6 +185,7 @@ public final class SandboxController {
      * 虚拟屏），只有完全没在跑的应用才冷启进 VD。
      */
     public boolean launchApp(Context ctx, String pkg) {
+        pkg = ActionValidator.pkg(pkg);   // root 边界强制白名单（P0-1：包名拼入 su -c 前的唯一硬边界）
         String tid = findTaskId(pkg);
         if (tid != null) {
             AgentEngine.staticLog("沙盒接管：迁移已有任务 #" + tid + "（" + pkg + "）进虚拟屏");
@@ -201,13 +204,15 @@ public final class SandboxController {
 
     /** 把设置页/系统 action 启动进虚拟屏。 */
     public boolean launchAction(String action) {
+        action = ActionValidator.action(action);   // root 边界强制白名单（P0-1）
         return RootShell.exec("am start --display " + displayId + " -a " + action);
     }
 
     /** 把链接/scheme 启动进虚拟屏。 */
     public boolean launchUrl(String url) {
+        url = ActionValidator.url(url);   // root 边界强制白名单（P0-1）
         return RootShell.exec("am start --display " + displayId
-                + " -a android.intent.action.VIEW -d '" + url.replace("'", "") + "'");
+                + " -a android.intent.action.VIEW -d '" + url + "'");
     }
 
     /** 启动后校验：虚拟屏是否真的出现了该应用的窗口（弹回真屏则 false）。 */
@@ -224,6 +229,7 @@ public final class SandboxController {
 
     /** 把迁移到真屏的任务拉回虚拟屏（防御性兜底）。 */
     public boolean reclaimTask(String pkg) {
+        pkg = ActionValidator.pkg(pkg);   // root 边界强制白名单（P0-1）
         String cmd = "T=$(dumpsys activity activities | grep -oE 'Task\\{[a-f0-9]+ #[0-9]+[^}]*A=[0-9]+:"
                 + pkg + "[ }]' | grep -oE '#[0-9]+' | head -1 | tr -d '#'); "
                 + "[ -n \"$T\" ] && am display move-stack $T " + displayId;

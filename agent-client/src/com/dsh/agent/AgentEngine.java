@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 package com.dsh.agent;
 
 import android.content.ActivityNotFoundException;
@@ -594,6 +596,7 @@ public class AgentEngine {
             case "app": {
                 String pkg = a.optString("package", "");
                 if (!pkg.contains(".") && APP_NAMES.containsKey(pkg)) pkg = APP_NAMES.get(pkg);
+                pkg = ActionValidator.pkg(pkg);   // P0-1：进 root/沙盒前的入口白名单，非法即抛错回灌模型
                 if (sandboxWanted()) {
                     SandboxController sb = requireSandbox();
                     boolean launched = false;
@@ -638,7 +641,7 @@ public class AgentEngine {
                 return "setting " + page;
             }
             case "open_url": {
-                String url = a.optString("url", "");
+                String url = ActionValidator.url(a.optString("url", ""));   // P0-1：scheme 白名单 + 字符集校验
                 if (sandboxWanted()) {
                     if (requireSandbox().launchUrl(url)) return "open_url(沙盒)";
                     throw new Exception("沙盒内打开链接失败，请重试");
