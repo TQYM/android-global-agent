@@ -1,7 +1,7 @@
 # Android Global Agent — 项目全景文档
 
 > 本文档供后续 AI 接手时快速了解项目现状、技术决策与已知边界。
-> 最后更新：2026-09-13（新增 §13 全面体检结论与改进路线；正文 §1–§12 仍以 2026-09-06 为基准，刷新列入待办）
+> 最后更新：2026-09-13（新增 §14 iOS 端「账号+远程控制」与 §13 全面体检结论；正文 §1–§12 仍以 2026-09-06 为基准，刷新列入待办）
 
 ---
 
@@ -302,6 +302,48 @@ agent-client P2 批量修复（LlmClient 重试/finally、ActionParser 括号配
 
 ---
 
+## 14. iOS 端（2026-09-13 新增）：账号 + 远程控制
+
+**结论**：iOS 端按用户授权预案落档为**裁剪版** —— 保留账号 / 信息同步 / 远程控制 / 局域网加密互通，
+**冻结设备端自动化执行**（iOS 不向三方 App 开放系统级无障碍与手势注入，成因与鸿蒙不同但结果相同）。
+
+| 项 | 值 |
+|---|---|
+| 实现位置 | `ios/`（Swift Package，核心库不依赖 UIKit → 可在 macOS 上全量验证） |
+| 实现手册 | **`docs/IOS_IMPLEMENTATION_MANUAL.zh-CN.md`**（能力边界证据链 / 服务端实测契约 / 后台模型 / 安全红线 / 已知坑） |
+| 验证命令 | `bash ios/build-mac.sh [--e2e]` |
+| 测试基线 | **42 项全绿** = 13 密码学交叉验证（对 Java 逐字节）+ 19 协议/红线 + **10 真连服务端端到端** |
+| 平台编译 | macOS + `arm64-apple-ios16.0`（iPhoneOS SDK）双通过 |
+
+### 14.1 本次实测发现的服务端契约偏差（★ 写代码前必看）
+
+三处「文档措辞与 Go 实现不符」，iOS 侧据此纠正，**Android 侧与文档同样需要复核**：
+
+| # | 文档/直觉写法 | 实际字段（权威：Go 源码） | 位置 |
+|---|---|---|---|
+| C1 | `lan_key_params.key_length` | **`key_len`**（另有 `algorithm`） | `account.go:72-77` |
+| C2 | push 响应 `next_seq` | **`server_seq`**，响应另含 `duplicates` | `api.go:349-355` |
+| C3 | pull 响应 `next_seq` | **`server_seq`** | `api.go:370-376` |
+
+另两条**行为**（非字段）事实，两端都应按此修订预期：
+
+- **指令 ack 只接受 `running` / `done` / `failed`**，**没有 `cancelled`**（`command.go:166-171`）。
+  「拒绝执行」必须以 `failed` + 理由回报，否则 ack 被 400 拒掉、指令状态原地不动。
+- **终态 ack 后服务端删除该指令**（`command.go:195`），之后 `GET /device/command?id=` 一律 404。
+  ⇒ 结果只能取 ack 的返回值，不能"回头再查"。
+- **先 ack `running` 再执行是不可恢复错误**：`PendingFor` 只返回 `pending`（`command.go:149`），
+  一旦标了 running 就不再被领取，执行途中被杀进程则该指令永久卡死。正确顺序是**先执行、后 ack 终态**。
+- ★ **下发方无法确认已完成的指令**（本次实测）：目标设备回报终态 → 服务端删除 → 下发方再查即 404，
+  拿不到结果文本。即「iPhone 下发 → Android 执行完 → iPhone 看结果」这条链路**当前是断的**。
+  闭环需目标设备在 ack 之外另发一条 `/sync/push` 记录（服务端尚未提供该回执通道，见手册 §9 U3）。
+
+### 14.2 未完成
+
+真机端到端（无 iPhone 在线）；**线上服务端 `8.133.225.105:18443` 编写时连接被拒**（`curl: (7)`，需确认服务与安全组）；
+服务端 `key_len` 等偏差的文档侧修复；APNs 静默推送通道（iOS 被控端可靠性的关键缺口）；SwiftUI 界面；App Intents 动作集。
+
+---
+
 ## 工作日志
 
 ### 2026-09-13 00:54 +08 · 会话 33f50b22 · 新建 project-work-log skill
@@ -506,3 +548,18 @@ agent-client P2 批量修复（LlmClient 重试/finally、ActionParser 括号配
 - 11:29 sync-sources 同步内购改动，契约门禁 26/26 绿，提交 2bc7683（体检 P1-4 消红）（源:命令:verify-contract.py）
 - 11:31 手册 §13 与体检报告 §7.1 标注修复进展；apply.sh/rollback.sh 刻意留盘不入库（源:文件:PROJECT_OVERVIEW.zh-CN.md §13.1）
 - 11:31 终态: done
+
+### 2026-09-13 11:54 +08 · local · 增加 iOS 端（账号+远程控制）
+- 11:54 首次运行检查：读工作日志尾恢复上下文；核实无 iPhone 在线、线上服务端 18443 连接被拒（源:用户请求+命令:curl）
+- 11:56 起本地服务端（自签证书 SAN 含 127.0.0.1）作为端到端靶机（源:命令:agentlite-server -addr 127.0.0.1:18443）
+- 11:58 建 ios/ Swift Package：核心库不依赖 UIKit，Mac 上即可全量验证协议（源:文件:ios/Package.swift）
+- 12:00 密码学交叉验证：Java 生成向量 → Swift PBKDF2/GCM 逐字节一致（首验手抄向量错 1 字符致红，改由脚本注入修正）（源:文件:_local/ios-e2e/java/EmitVectors.java）
+- 12:02 ★ 端到端抓出 5 处真实缺陷：lan_key_params 实为 key_len、push/pull 实为 server_seq、ack 无 cancelled 状态、终态 ack 后指令被删（404）、先 ack running 会致指令永久卡死（源:命令:swift test --filter EndToEndTests）
+- 12:05 按服务端源码逐条纠正模型与指令状态机；CommandInbox 改为「先执行后 ack 终态」（源:文件:ios/Sources/AgentLiteCore/{Models,CommandInbox}.swift）
+- 12:06 修 pinner 空集合误报：环回联调改为不挂 pinner，端到端测试改走生产同一条 pin 校验路径（源:文件:ios/Sources/AgentLiteCore/HTTPClient.swift）
+- 12:07 测试基线 42 项全绿（13 密码学+19 协议+10 端到端）；macOS 与 iphoneos SDK 双平台编译通过（源:命令:bash ios/build-mac.sh --e2e）
+- 12:07 iOS 实现手册落盘（能力边界/实测契约/后台模型/安全红线/已知坑 13 条），本手册新增 §14（源:文件:docs/IOS_IMPLEMENTATION_MANUAL.zh-CN.md）
+- 12:08 sync-sources 同步（含证书 SAN 文档改动），契约门禁恢复 26/26（源:命令:verify-contract.py）
+- 12:10 复跑 CLI 全链路（pin/注册/whoami/devices/send/collect/watch）均实测通过，暴露 U3：下发方无法确认已终态指令（源:命令:swift run agentlite-ios）
+- 12:12 CLI watch 对 404 改为人话解释；手册 §4.3/§8.2/§9 补齐回执通道缺口（源:文件:docs/IOS_IMPLEMENTATION_MANUAL.zh-CN.md）
+- 12:12 终态: done（真机验证与线上连通性列为未完成项，见手册 §9）

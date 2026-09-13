@@ -1,0 +1,474 @@
+# iOS 端功能实现手册（AgentLite for iOS）
+
+> **文档定位**：这是一份**可以照着写代码**的实现手册，不是可行性 PPT。
+> 每一个「服务端事实」都在 2026-09-13 用一次真实运行核对过；对不上的一律标注为待核实。
+>
+> **结论先行**（一句话）：
+> **iOS 端可以做「账号 + 信息同步 + 远程控制」；不能做「设备端自动操作别人 App」。**
+> 因此本项目按用户授权预案落档为**裁剪版**：保留账号与远程控制，自动化执行能力冻结（见 §3）。
+>
+> 配套实现：`ios/`（42 项测试全绿，含 10 项真连服务端的端到端用例）。
+>
+> 最后更新：2026-09-13 ｜ 事实基准：本地服务端 `agentlite-sync 0.1.0` 实跑 + 源码逐行核对
+
+---
+
+## 0. 按需跳转
+
+| 你要做的事 | 去哪一节 |
+|---|---|
+| 先搞清楚「iOS 到底能不能自动点别人 App」 | [§1 能力边界](#1-能力边界先回答最重要的问题) |
+| 决定做什么、不做什么 | [§3 落档决策：保留什么、裁剪什么](#3-落档决策保留什么裁剪什么) |
+| 开始写代码（接口怎么调） | [§4 服务端契约（实测）](#4-服务端契约实测) |
+| 局域网 P2P 怎么对接 Android | [§5 局域网 P2P 与 iOS 的特有约束](#5-局域网-p2p-与-ios-的特有约束) |
+| 后台/被系统杀的问题 | [§6 后台执行模型](#6-后台执行模型ios-端最大的工程约束) |
+| 安全红线 | [§7 安全纪律](#7-安全纪律四条红线) |
+| 怎么跑起来、怎么验证 | [§8 构建与验证](#8-构建与验证) |
+| 接着往下做 | [§9 未完成项与下一步](#9-未完成项与下一步) |
+| 踩过的坑 | [§10 已知坑](#10-已知坑照抄避免重踩) |
+
+---
+
+## 1. 能力边界：先回答最重要的问题
+
+### 1.1 结论
+
+| 问题 | 答案 |
+|---|---|
+| iOS 上能否实现 Android 那样的「读屏 + 自动点击任意 App」？ | **不能**，非越狱、非企业签名、无 Mac 常驻的前提下没有通道 |
+| 那 iOS 端还有价值吗？ | **有**，而且价值明确：账号体系、跨设备同步、**远程下发/接收指令**、局域网加密互通 |
+| iPhone 能当被控端吗？ | **能，但只能执行「用户事先授权的本地动作」**（App Intents/快捷指令），不能任意操作 |
+| iPhone 能当控制端吗？ | **能，且这是它的强项** —— 下发指令、查看结果、管理多设备 |
+
+### 1.2 为什么不能（逐条说清，避免后来者重复调研）
+
+| # | 事实 | 对本项目的影响 |
+|---|---|---|
+| B1 | iOS **不向第三方 App 开放系统级无障碍/节点树读取**。Android 的 `AccessibilityService.getWindowsOnAllDisplays()` 在 iOS 上没有对应物 | 感知层（读屏）整块无对应实现 |
+| B2 | iOS **没有可跨 App 注入手势的公开 API**。Android 的 `dispatchGesture` 无对应物 | 执行层（点按/滑动）整块无对应实现 |
+| B3 | **XCTest / WebDriverAgent** 能自动化 iOS，但要求：Mac 常驻 + Xcode 构建 + 开发者签名 + 设备开开发者模式 + 定期重签 | 属于**研发工具链**，不是可交付给用户的产品形态 |
+| B4 | **快捷指令/App Intents** 能让 App 执行**自己声明的**动作，但动作集合是**预设且受限**的，不能"任意操作别家 App" | 可以支撑「有限被控」，不能支撑「通用 Agent」 |
+| B5 | App 后台**不能常驻**：没有 Android 那种前台服务；后台刷新由系统调度，时机不可控 | 轮询式指令投递需重设计（见 §6） |
+| B6 | 自签 HTTPS + ATS：iOS 默认拒绝自签证书（实测 `NSURLErrorServerCertificateUntrusted`，-1202） | 必须做证书 pin（见 §7.1），不能靠「信任所有证书」绕过 |
+
+> **本项目与鸿蒙的关系**：`docs/HARMONY_NEXT_EVAL.zh-CN.md` 的结论是「NEXT 不给三方无障碍 → 设备端 App 路线不可行」。iOS 的结论**成因不同但结果相同**：iOS 有完备的无障碍框架，只是**不开放给第三方 App 去操作别的 App**。两者都不构成本项目 iOS 端「账号+远程控制」的障碍。
+
+---
+
+## 2. 三条候选路线对比（评估留痕）
+
+| 路线 | 能力 | 用户门槛 | 可持续性 | 结论 |
+|---|---|---|---|---|
+| **① 原生 App（账号 + 远程控制 + 本地受限动作）** | 账号/同步/指令/局域网；本地动作需用户预先授权 | 装 App 即用 + 一次免费 Apple ID 签名（7 天）或开发者账号（1 年） | 高：不依赖 Mac、不依赖越狱 | ✅ **采纳（本手册主线）** |
+| **② WDA/XCUITest 外挂式** | 完整自动化（读屏+点击），与 Android Agent 对等 | 需 Mac 常驻 + 开发者模式 + 定期重签 | 低：只适合研发/测试场景 | ⏸ **冻结**，文档保留（§3.3） |
+| **③ 越狱/私有 API** | 接近 Android 的能力 | 极高（设备需特定系统版本 + 越狱） | 差：系统更新即失效，且安全风险不可控 | ❌ **不做**，与项目安全红线冲突 |
+
+**为什么 ① 是「能做的那一半」而不是「退而求其次」**：账号、同步、远程控制这三件事**本来就不依赖设备端自动化能力**——它们是服务端 + 协议层的事。iOS 端把它们做实，就和 Android 端形成了**同一账号下的异构设备网**：iPhone 当控制端/接收端，Android 当执行端。这是**功能**，不是残次品。
+
+---
+
+## 3. 落档决策：保留什么、裁剪什么
+
+### 3.1 保留（本次已实现，有测试）
+
+| 模块 | Swift 文件 | 状态 |
+|---|---|---|
+| 密码学原语（PBKDF2 / AES-256-GCM 信封） | `Crypto.swift` + `CAgentLiteShim` | ✅ 与 Java 逐字节一致（交叉向量测试） |
+| HTTPS 客户端 + **证书 pin** + 服务端错误信封映射 | `HTTPClient.swift` | ✅ 含 pin 拒绝路径 |
+| 账号：注册 / 登录 / 恢复登录态 / 退出 | `AccountService.swift` | ✅ 10 项 e2e |
+| 设备绑定（指纹稳定、不产生幽灵设备） | `DeviceIdentity.swift` | ✅ e2e 断言「同机重登设备数仍为 1」 |
+| 凭据存储（Keychain / 文件后端） | `KeychainStore.swift`, `FileCredentialStore.swift` | ✅ |
+| 信息同步（push/pull + 游标） | `SyncService.swift` | ✅ e2e 含幂等性（duplicates）断言 |
+| **远程控制：下发 / 领取 / 回报 / 跟踪** | `CommandService.swift`, `CommandInbox.swift` | ✅ e2e 全链路 |
+| 敏感操作红线（跨设备指令不继承授权） | `CommandExecutor.swift` | ✅ e2e 断言以 failed+理由回报 |
+| 局域网 P2P（与 Android 逐字节互通） | `LANPeer.swift` | ✅ 跨端互解测试 |
+| CLI（真机以外验证协议） | `Sources/AgentLiteCLI` | ✅ |
+
+### 3.2 裁剪（本次**不做**，且**不假装能做**）
+
+| 被裁项 | 原因 | 用户可见的后果 |
+|---|---|---|
+| 视觉感知（截屏理解） | B1：拿不到系统级截屏与其它 App 的界面 | iPhone 不能"看屏幕" |
+| 手势注入（点按/滑动） | B2 | iPhone 不能自动操作别的 App |
+| 键盘/文本注入到其它 App | 同 B2 | 同上 |
+| Android 式常驻后台轮询 | B5 | 指令领取延迟不可控（见 §6） |
+| root/沙盒 | iOS 无对应生态 | 不适用 |
+
+★ **最重要的一条产品纪律**：能力之外的任务，iOS 端**必须回报 `failed` 并说明原因**，绝不回报 `done`。
+理由：跨设备指令的信任基础是「结果不撒谎」。一次假成功会让用户以为设备能做，从而把关键任务交给它。
+（该纪律已固化为测试 `testUnsupportedTaskReportsFailed`。）
+
+### 3.3 路线 ② 的触发条件（什么时候重新打开）
+
+满足**全部**三条时才值得投入 WDA 路线：
+1. 使用场景是**研发/测试**（有 Mac、能接受开发者模式常开），而非面向普通用户；
+2. 需要的是**回归测试/批量验证**，而不是「用户日常让手机自己干活」；
+3. 接受「证书 7 天/1 年一续」的运维成本。
+
+---
+
+## 4. 服务端契约（实测）
+
+> ★ **纪律：以服务端源码为唯一权威，文档措辞不作依据。**
+> 本节的字段是在实跑中逐字核对过的；`docs/` 或 README 的措辞与之不符时，**以本节的实测值为准**。
+> 权威源文件：`agentlite-server/{main,api,store,account,command}.go`。
+
+### 4.1 端点清单（`agentlite-server/main.go:88-123`）
+
+| 方法 | 路径 | 鉴权 | 说明 |
+|---|---|---|---|
+| GET | `/health` | 免 | 存活检查 |
+| POST | `/api/v1/account/register` | 免 | 注册（限流） |
+| POST | `/api/v1/account/login` | 免 | 登录（限流） |
+| GET | `/api/v1/account/me` | Bearer | 账号档案 + **设备列表** + `lan_key_params` |
+| POST | `/api/v1/device/bind` | Bearer | 绑定设备（按 fingerprint 去重） |
+| POST | `/api/v1/sync/push` | Bearer + `X-Device-Id` | 上行同步 |
+| GET | `/api/v1/sync/pull?since=&limit=` | Bearer + `X-Device-Id` | 下行同步 |
+| GET | `/api/v1/config` | Bearer | 服务端配置 |
+| POST | `/api/v1/device/command` | Bearer + `X-Device-Id` | **下发**跨设备指令 |
+| GET | `/api/v1/device/commands` | Bearer + `X-Device-Id` | **领取**本机待办指令 |
+| POST | `/api/v1/device/command/ack` | Bearer + `X-Device-Id` | **回报**指令状态 |
+| GET | `/api/v1/device/command?id=` | Bearer | 下发方查结果 |
+| POST | `/api/v1/lan/rendezvous` | Bearer + `X-Device-Id` | 局域网会合（取得同账号对端内网地址） |
+| POST | `/v1/chat/completions` | Bearer | 额度网关（OpenAI 兼容） |
+
+### 4.2 ⚠️ 三处「文档与实现不一致」——写代码前必看
+
+这三条都是本次**跑端到端测试时才暴露**的真实偏差。iOS 端若照文档写，会直接崩在第一次请求上。
+
+| # | 文档/直觉写法 | **实际字段（权威）** | 后果 |
+|---|---|---|---|
+| C1 | `lan_key_params.key_length` | **`key_len`**（+ 还有 `algorithm` 字段） | 解码抛 `keyNotFound`，注册/登录**第一跳就失败** |
+| C2 | push 响应 `next_seq` | **`server_seq`**，且响应含 **`duplicates`** | 同上，同步不可用 |
+| C3 | pull 响应 `next_seq` | **`server_seq`**（语义 = 账号流当前水位） | 同上，且游标会错 |
+
+权威定义：`lan_key_params` 见 `account.go:72-77`；push 响应见 `api.go:349-355`；pull 响应见 `api.go:370-376`。
+
+### 4.3 关键请求/响应形状（照抄可用）
+
+**注册** `POST /api/v1/account/register`
+```json
+// 请求
+{"name": "myaccount", "key": "至少8位"}
+// 200 响应（accountPayload, api.go:207）
+{
+  "account_id": "a_…", "name": "myaccount", "token": "…",   // token 仅此一次返回明文
+  "quota": 500, "quota_used": 0,
+  "created_at": "2026-09-13T04:03:21Z",
+  "lan_key_params": {"algorithm":"PBKDF2WithHmacSHA256","iterations":100000,"key_len":32,"salt_prefix":"agentlite-lan|"},
+  "server_time": "2026-09-13T04:03:21Z"
+}
+```
+校验规则（`account.go:92`）：账号名 **3–32 位**，仅小写字母/数字/`_`/`-`（服务端会先 `ToLower`）；账号密钥 **≥8 位**。
+错误码：`account_exists`(409)、`bad_input`(400)、`bad_credentials`(401, 注册/登录失败统一文案，**不区分账号不存在与密钥错**——防账号枚举)、`rate_limited`(429)。
+
+**绑定设备** `POST /api/v1/device/bind`
+```json
+{"fingerprint":"ios-<32hex>","name":"iPhone-1a2b","model":"iPhone","brand":"Apple","sdk":26,"app_version":"0.1.0"}
+→ {"device_id":"d_…","account_id":"a_…","created":true,"server_time":"…"}
+```
+- `fingerprint` 必填、**≤256 字符**，同 fingerprint 视为同一台设备（`store.go:223`）。
+- `device_id` 由服务端签发；**后续所有设备级接口都必须带 `X-Device-Id`**，否则 400 `missing_device`（`api.go:146`）。
+
+**下发指令** `POST /api/v1/device/command`
+```json
+{"to_device":"d_目标设备","task":"[跨设备指令] 打开设置"}   // task ≤512 字符
+→ {"command":{"command_id":"c_…","account_id":"…","from_device":"d_我","to_device":"d_对方",
+              "task":"…","status":"pending","created_at":"…","expires_at":"…"}}
+```
+错误码：`command_self`(400, 不能给自己下)、`bad_target`(403, 目标不属于本账号)、`bad_input`(400, 含**限流**：每账号每分钟最多 10 条，`command.go:116`)。
+
+**领取指令** `GET /api/v1/device/commands` → `{"commands":[…],"count":N}`
+- ★ **只返回 `status == "pending"` 的指令**（`command.go:149`）。
+- 超出 TTL（**5 分钟**，`CommandTTL`）未领取的指令会被就地标记 `expired` 并**删除**。
+
+**回报** `POST /api/v1/device/command/ack`
+```json
+{"command_id":"c_…","status":"done","detail":"执行结果摘要（≤256 字符，服务端截断）"}
+```
+- ★★ **`status` 只接受 `running` / `done` / `failed`**（`command.go:166-171`）。
+  **没有 `cancelled`** —— 传它会被 400 `bad_input` 拒掉。
+- 只有**目标设备本人**能 ack：非目标设备 → 403 `not_target`；已终态 → 409 `already_acked`；不存在/过期 → 404。
+- ★★ **终态 ack 之后，服务端会把该指令从内存表删除**（`command.go:195`）。此后 `GET /device/command?id=` 一律 **404**。
+  ⇒ **ack 的返回值是这条指令结果的唯一可获得时刻**，客户端必须就地保存，不能"回头再查"。
+  （该行为已固化为 e2e 断言，防止后来者误判为 bug。）
+- ★★ **由此推出一个必须写进 UI 的边界：下发方无法确认已完成的指令。**
+  目标设备回报终态 → 服务端删除 → 下发方再查就是 404，**拿不到 `detail`**。
+  也就是说「iPhone 下发 → Android 执行完 → iPhone 显示结果」这条链路
+  **在当前服务端上是不完整的**：iPhone 只能知道"指令消失了"（多半是完成了），
+  拿不到结果文本。要闭环，目标设备必须在 ack 之外**另发一条同步记录**（`/sync/push`），
+  由下发方从同步流里取结果。**该回执通道服务端尚未提供**，已记为 U3（§9.1）。
+
+**指令状态机（服务端全集）**：`pending → running → done|failed`，另有服务端自标的 `expired`。
+
+### 4.4 同步语义
+
+- `seq` 由服务端**按账号**单调分配，客户端只当游标用。**绝不能用本地时间当游标**（多设备时钟不同步会静默丢记录）。
+- `data` 是**不透明 JSON**：服务端不解释（`api.go:310`），客户端也不能丢字段 → Swift 侧用 `JSONValue` 原样承载。
+- 上行必须带 `origin_device_id`，否则服务端记成「本机产生」——数据不丢但**溯源错**（`SyncClient.java:451` 记录过该坑）。
+- 幂等：按记录 `id` 去重，重复推送计入 `duplicates` 而非重复落库。
+
+---
+
+## 5. 局域网 P2P 与 iOS 的特有约束
+
+### 5.1 线协议（与 Android 逐字节互通，`agentlite-server/README.md §4`）
+
+```
+key = PBKDF2-HMAC-SHA256(password = 账号密钥, salt = "agentlite-lan|" + account_id,
+                         iter = 100_000, len = 32)
+POST http://<peer>:18444/lan/v1/sync
+body = base64( nonce(12B) || AES-256-GCM(plaintext, key, nonce, aad) )   // tag 128 位
+aad  = "agentlite-lan-v1|" + account_id
+```
+抗重放**两条都要**：`|now - ts| ≤ 120s`，且 `(device_id, nonce)` 未见过（滚动窗口 5 分钟）。
+只做时间窗是不够的——重放旧报文时密文本身完全合法。
+
+### 5.2 ★ AAD 里为什么没有 device_id（务必照抄）
+
+解密前拿不到发送方 `device_id`（它在密文里），若 AAD 绑它就成了鸡生蛋。
+折中：**AAD 只绑 `account_id`，`device_id` 在明文内校验**。明文受 GCM 保护，所以来源绑定强度没有降低，只是校验点从 AAD 移到了明文。
+Android 原始记录在 `agent-lite/src/com/dsh/agentlite/LanSync.java:305-308`。**iOS 侧不照做就会与 Android 互解失败。**
+
+### 5.3 ★ iOS 只能是 P2P 的**发起方**
+
+Android 端在局域网接口**常驻 `ServerSocket` 监听**（`LanSync.java:220`）；iOS **做不到**：App 进后台后监听 socket 会被挂起/回收，没有「一直监听」这回事。
+
+⇒ **由 Android 侧承担监听方，iOS 侧主动连接。** 这不是妥协实现，而是平台事实。
+后果：iPhone→Android 的局域网同步可用；Android→iPhone 的**入站**连接在 iOS 前台时勉强可用、后台必然不可用。
+**需要"别人主动连 iPhone"的场景，一律改走服务端指令队列（§4）**，不要试图打局域网。
+
+### 5.4 已实现且已验证的部分
+
+`LANPeer` 实现了 `seal/open/acceptInbound/respondInbound` + 抗重放缓存，测试覆盖：
+- 与 Java 生成的密文**逐字节互解**（`CryptoTests.testOpenJavaEnvelope`）
+- 重放被拒、超时窗被拒、**跨账号密文被拒**
+这些是「iOS 能参与局域网」的充分证明（在 Mac 上完成验证，真机只是换运行环境）。
+
+---
+
+## 6. 后台执行模型（iOS 端最大的工程约束）
+
+### 6.1 约束
+
+| 平台 | 机制 | 指令领取延迟 |
+|---|---|---|
+| Android | 常驻前后台线程轮询（`RemoteCommand.POLL_INTERVAL_MS = 20_000`） | ~20 秒 |
+| iOS | **无**常驻后台；`BGAppRefreshTask` 由系统调度 | **不可控**（可能几分钟到几十分钟） |
+
+★ 而指令 **TTL 只有 5 分钟**。因此：
+> **iOS 作为"被控端"的可靠性本质低于 Android。** 这一点必须写进 UI 预期，不能靠工程手段消除。
+
+### 6.2 采取的方案（按优先级）
+
+1. **前台实时**（可靠）：App 在前台时轮询（间隔建议 5–10 秒），这是主路径。
+2. **BGAppRefresh / BGProcessingTask**：注册后台刷新，被唤醒时执行一次完整收取。
+3. **静默推送（APNs `content-available:1`）**：现状服务端**没有** APNs 通道，属于未完成项（§9）。
+4. **UI 明示**：在"被控端"界面标注「iPhone 可能延迟响应；需要即时执行请用 Android 设备」。
+
+### 6.3 ★ 单次收取的顺序纪律（踩过坑，必须照抄）
+
+```
+拉取 pending → 逐条【执行】→ 逐条【回报终态】
+禁止：先 ack running 再执行
+```
+
+理由（读源码得出）：`PendingFor` 只返回 `status == pending` 的指令（`command.go:149`）。
+一旦先 ack 成 `running`，这条指令就**不再出现在待办列表**里；此时若执行途中断电/被系统杀进程，
+它**永远不会被再次领取**，下发方只能一直看到 `running` —— **一个不可恢复的中间态**。
+先执行再 ack 则相反：中途失败顶多「这次没回报」，下次唤醒仍能领到并重做。
+代价是任务可能被执行两次，所以**本地动作应写成幂等的**；跨设备指令以「最终一定有结果」优先。
+
+### 6.4 预算控制
+
+单次收取设**时间预算**（默认 25 秒，`CommandInbox.defaultBudget`）：iOS 后台窗口有限，
+被系统强杀会导致 ack 丢失、下发方以为没生效而重复下发。**宁可少执行一条**，也不要被强杀。
+
+---
+
+## 7. 安全纪律（四条红线）
+
+### 7.1 证书 pin（不可关闭）
+
+服务端用**自签证书**（`agentlite-server/README.md §5`），系统信任链验不过。
+实测：不加 pin 时 URLSession 直接返回 `-1202 NSURLErrorServerCertificateUntrusted`。
+
+两条路只能选一条：
+- ❌ 放开 ATS / 信任任意证书 → 等于把中间人攻击面彻底打开；
+- ✅ **把服务端证书 SPKI SHA-256 随 App 下发，逐次比对**（本端采用）。
+
+- 用 **SPKI** 而不是整证书哈希：续签同一把密钥时整证书哈希会变而公钥不变，减少"换证书就要发版"的次数，且不降低安全性。
+- **空 pin 集合 = 拒绝一切连接**（安全默认，不是"不校验"）。
+- 取指纹：`swift run agentlite-ios pin --cert agentlite-server/tls/server.crt`。
+- 仅**环回地址**允许免 pin（本地联调），且是编译期 `precondition` 强制的 —— 防止这条捷径被带到线上。
+
+### 7.2 凭据存储
+
+| 项 | 做法 |
+|---|---|
+| 账号令牌 / 账号密钥 / 局域网密钥 | **Keychain**，`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`（不随 iCloud 备份迁移） |
+| 设备指纹 | Keychain（重装 App 不产生幽灵设备） |
+| CLI/测试 | 文件后端，**权限 0600**，且与 Keychain 后端**类型上分开**（不可互换） |
+
+★ 为什么账号密钥必须留在设备上：局域网对称密钥由它 PBKDF2 派生，**服务端不经手**。
+若要每次同步都让用户重输账号密钥，就等于没有「局域网优先」这个特性。
+
+### 7.3 敏感操作不继承授权（与 Android 同纪律）
+
+跨设备指令**不继承下发方的任何授权**。命中支付/转账/验证码/删除/发送等关键词时：
+**执行前**直接拒绝（`SensitiveGuard`），并以 `failed` + 理由回报。
+e2e 已断言「拒绝发生在到达 provider 之前」（调用次数为 0）。
+
+### 7.4 隐私：不采集硬件标识
+
+设备指纹是**自己生成的随机 ID**，不是 UDID/IDFV/序列号；上报的 `model` 只到 `iPhone`/`iPad` 粒度。
+理由：硬件标识属于不可重置的追踪标识，上报它既过不了审核也没必要。
+
+---
+
+## 8. 构建与验证
+
+### 8.1 跑测试（真机以外即可验证协议）
+
+```bash
+cd ios
+
+# ① 离线单测（密码学交叉向量 + 线协议 + 安全红线）——无需网络
+swift test --filter "CryptoTests|ProtocolTests"
+#    期望：32 项全绿
+
+# ② 端到端（真连服务端，需先起一个本地服务端，见下）
+AGENTLITE_E2E_BASE="https://127.0.0.1:18443" \
+AGENTLITE_E2E_CERT="../_local/ios-e2e/tls/server.crt" \
+  swift test --filter EndToEndTests
+#    期望：10 项全绿
+```
+
+**起本地服务端**（不碰线上，数据落在 `_local/`）：
+```bash
+mkdir -p _local/ios-e2e/tls && cd _local/ios-e2e/tls
+openssl req -x509 -newkey rsa:2048 -sha256 -days 30 -nodes \
+  -keyout server.key -out server.crt -subj "/CN=127.0.0.1/O=AgentLite" \
+  -addext "subjectAltName=IP:127.0.0.1,DNS:localhost"
+cd ../../../agentlite-server
+./agentlite-server -addr 127.0.0.1:18443 \
+  -data ../_local/ios-e2e/data \
+  -cert ../_local/ios-e2e/tls/server.crt -key ../_local/ios-e2e/tls/server.key \
+  -register-rate 5000 -register-window 1m
+#   ↑ 端到端用例会多次注册账号，务必放开注册限流（默认每 IP 10 次/10 分钟）
+```
+
+### 8.2 CLI（手工联调 / 真机以外验证）
+
+```bash
+cd ios && swift build
+export AGENTLITE_BASE="https://8.133.225.105:18443"
+export AGENTLITE_PIN="$(swift run -q agentlite-ios pin --cert ../agentlite-server/tls/server.crt)"
+
+swift run agentlite-ios register --name myacct --key 至少八位密钥
+swift run agentlite-ios whoami            # 账号 / 额度 / 设备列表
+swift run agentlite-ios devices           # 同账号的其它设备
+swift run agentlite-ios send --to d_xxx --task "打开设置"
+swift run agentlite-ios watch --id c_xxx  # 仅在「未终态」期间有效，见下方 ★
+swift run agentlite-ios collect           # 本机作为目标设备收件
+
+# ★ watch 的边界：对方一旦回报终态，服务端就删除了该指令，watch 会得到 404。
+#   CLI 会把这种情况翻译成人话而不是报错。真正的结果文本只有**目标设备**那侧拿得到
+#  （见 §4.3 与 U3）。
+```
+
+### 8.3 真机运行（Xcode 侧）
+
+`ios/` 是 Swift Package，App 外壳需另外建立（见 §9.2）。要点：
+1. Xcode → 新建 iOS App，把 `AgentLiteCore` 作为**本地 Package 依赖**加入；
+2. Bundle ID 用你自己的免费 Apple ID 签名即可（7 天有效，重签即可续）；
+3. `Info.plist` 需加 **`NSLocalNetworkUsageDescription`**（局域网 P2P 要访问本地网络，iOS 14+ 会弹权限）；
+4. 生产 pin：把 `agentlite-server/tls/server.crt` 的 SPKI 固化进 App（或首次启动从内置证书算出）;
+5. 真机端到端目前**未完成**（§9.1）——手机不在线。
+
+### 8.4 交叉验证用到的 Java 向量生成器
+
+`_local/ios-e2e/java/EmitVectors.java`：用与 `LanSync.java` **逐行相同**的参数生成密钥与密文，
+让 Swift 侧的期望值不是「自己算自己」，而是**由 Java 侧真实产出**。
+（这是本项目一贯做法：`tests/verify_lan_p2p.sh` 用桌面 JVM 做对端模拟，同一思路。）
+
+---
+
+## 9. 未完成项与下一步
+
+### 9.1 未完成（诚实清单）
+
+| # | 项 | 状态 | 阻塞原因 |
+|---|---|---|---|
+| U1 | iPhone 真机端到端 | ❌ 未做 | 无 iPhone 设备在线（`adb devices` 只有手表 OVW261，用户明示不装手表） |
+| U2 | 线上服务端连通性 | ⚠️ 未验证 | 编写时 `8.133.225.105:18443` **连接被拒**（`curl: (7) Couldn't connect`）。需确认服务是否在跑、安全组是否放行 |
+| U3 | **指令结果回执通道缺失** | ❌ 未做（服务端） | 终态 ack 后服务端即删除指令，下发方查不到结果（§4.3）。需目标设备在 ack 之外另发 `/sync/push` 记录，或服务端保留终态一段时间 |
+| U3b | 服务端 `key_len` / `server_seq` 字段与文档措辞不符 | ⚠️ 已绕过未修复 | iOS 侧按实测字段实现；**文档与 Go 源码的措辞不一致仍存在**，建议在 `docs/DEVELOPMENT_MANUAL.zh-CN.md §7` 补注 |
+| U4 | APNs 静默推送通道 | ❌ 未做 | 服务端无 APNs 集成；这是 iOS 被控端可靠性的关键缺口 |
+| U5 | SwiftUI 界面 | ❌ 未做 | 本次只交付核心库 + CLI（界面依赖真机才有验证价值） |
+| U6 | App Intents / 快捷指令动作集 | ❌ 未做 | 需要真机确认动作授权流程（`LocalActionProvider` 协议已就位） |
+| U7 | `lan/rendezvous` 调用封装 | ❌ 未做 | 服务端接口已就绪（`api.go:115`），iOS 侧尚未接（`LANPeer` 已能直连，缺"自动发现对端"） |
+
+### 9.2 建议的下一步顺序
+
+1. **先修 U2**：确认线上服务可用性（这决定所有真机联调能否进行）。
+2. **U3 回执通道**（客户端/服务端最小改动）：目标设备 ack 时顺带 `push` 一条
+   `{command_id,status,detail}` 同步记录；下发方从同步流读结果。**不做这条，
+   "下发→执行→看结果"的体验就是断的**（iPhone 只能看到指令消失）。
+3. **U5 界面**：SwiftUI 三屏即可 —— 账号页 / 设备列表页 / 指令页（下发 + 收件箱 + 结果）。
+4. **U6 动作集**：先落 3–5 个高频本地动作（打开 App、记笔记、查日程），验证 App Intents 授权流程。
+5. **U4 APNs**：服务端加推送通道 + iOS 注册 device token。这是让 iOS 被控端**真正可用**的关键。
+6. **U1 真机验证**：以上完成后一次性验证。
+
+---
+
+## 10. 已知坑（照抄，避免重踩）
+
+| # | 坑 | 现象 | 规避 |
+|---|---|---|---|
+| K1 | `Never` 当 `Encodable` 占位 | macOS 14 以下编译告警，Swift 6 模式升级为**错误** | 用 `EmptyBody` 空结构体 |
+| K2 | SPM 的 C 目标公共头不能 `#include <CommonCrypto/...>` | 头文件解析失败，`CCKeyDerivationPBKDF` 找不到 | 公共头只留 `int` + 基本类型签名，CommonCrypto 只在 `.c` 里 include；另需单独 include `CommonCryptoError.h`（`kCCParamError` 在该头） |
+| K3 | `import CommonCrypto` 在 Swift 6 工具链下不导出 PBKDF2 | `cannot find 'CCKeyDerivationPBKDF' in scope` | 同上，走自建 C shim |
+| K4 | pinner 挂**空 pin 集合** | 每个请求都失败，错误被误报成"证书不匹配（可能是中间人）" | 空 pin = 拒绝一切；环回联调**不挂 pinner**，而不是挂空 pinner |
+| K5 | 测试里用 `URLSession.shared` 扮演对端 | 绕过 pin，测试失去对生产信任链的覆盖 | 测试也走同一个被 pin 的 session |
+| K6 | 嵌套在 actor 内的类型写 `Codable` | 推断牵连，报"does not conform to Decodable" | 会跨模块/跨类复用的线格式类型提到顶层（如 `SyncOutgoingItem`） |
+| K7 | 服务端注册限流 | 端到端用例跑到一半 429 `rate_limited` | 本地服务端加 `-register-rate 5000` |
+| K8 | 自签证书 + ATS | `-1202 NSURLErrorServerCertificateUntrusted` | 必须 pin（§7.1） |
+| K9 | 文档字段名与实现不符（C1–C3） | 第一跳请求就解码失败 | **以服务端 Go 源码为准**，落盘前用一次实跑核对 |
+| K10 | 先 ack `running` 再执行 | 指令永久停在 running，不可恢复 | 先执行、后 ack 终态（§6.3） |
+| K11 | 终态 ack 后回头查指令 | 404，看起来像 bug | 服务端已删除该指令（`command.go:195`）；结果取 ack 返回值 |
+| K12 | 用 `cancelled` 作为 ack 状态 | 400 被拒，指令状态不变 | 服务端只有 `running/done/failed`；拒绝也用 `failed`，理由放 `detail` |
+| K13 | 让下发方"回头查"已完成的指令 | 404，像是 bug | 服务端终态即删除；结果取自 ack 返回值，或另建回执通道（U3） |
+
+---
+
+## 附：文件清单
+
+```
+ios/
+├── Package.swift                          # iOS 16+ / macOS 13+，核心库不依赖 UIKit
+├── Sources/
+│   ├── CAgentLiteShim/                    # C shim：把 CommonCrypto PBKDF2 暴露给 Swift
+│   ├── AgentLiteCore/
+│   │   ├── Crypto.swift                   # PBKDF2 / AES-GCM 信封 / 常量（跨端硬约束）
+│   │   ├── HTTPClient.swift               # HTTPS + 证书 pin + 错误信封映射
+│   │   ├── Models.swift                   # 服务端契约的 Swift 映射（字段逐字对应）
+│   │   ├── AccountService.swift           # 注册/登录/恢复/绑定/设备列表
+│   │   ├── SyncService.swift              # push/pull + 游标
+│   │   ├── CommandService.swift           # 下发/领取/回报/跟踪
+│   │   ├── CommandInbox.swift             # 拉取→执行→回报 的可重入收取
+│   │   ├── CommandExecutor.swift          # 执行器 + 能力边界 + 敏感红线
+│   │   ├── LANPeer.swift                  # 局域网 P2P（与 Android 互通）
+│   │   ├── KeychainStore.swift            # Keychain / 内存后端 + 凭据仓库
+│   │   ├── FileCredentialStore.swift      # CLI/测试用文件后端（0600）
+│   │   ├── DeviceIdentity.swift           # 设备指纹（稳定、非硬件标识）
+│   │   ├── PlatformInfo.swift             # 平台探测（如实上报，不伪装 Android）
+│   │   └── AgentLiteClient.swift          # 顶层门面
+│   └── AgentLiteCLI/main.swift            # 命令行外壳（真机以外验证协议）
+└── Tests/AgentLiteCoreTests/
+    ├── CryptoTests.swift                  # 13 项：与 Java 逐字节交叉验证
+    ├── ProtocolTests.swift                # 19 项：线格式 / 红线 / 抗重放
+    └── EndToEndTests.swift                # 10 项：真连服务端全链路
+```
+
+**测试基线（2026-09-13 实测）**：`swift test` → **42 项全绿**（含 10 项端到端）。

@@ -55,3 +55,7 @@ tests/ui_text_test/javac.log
 
 # 桌面 JVM 测试的编译产物（javac 现场生成，含 lan_peer_sim）
 *.class
+
+# Swift Package Manager 构建产物（ios/ 实测 .build 约数十 MB，必须排除）
+.build/
+ios/.build/
