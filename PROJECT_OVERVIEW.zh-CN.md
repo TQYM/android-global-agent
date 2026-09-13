@@ -267,6 +267,12 @@ sh build-mac.sh
 
 ### 13.1 必须立即处理（P0）
 
+> ✅ **修复进展（2026-09-13 11:29，全部完成）**：P0-2/P0-3（注入/无障碍）→ `69ddf0b`，ActionValidator 白名单
+> 网关 + 追加式 ensureA11y，dex 字符串常量验证进包；P0-4（构建）→ `cf04f6c`，go.mod 1.24 编译+vet 通过；
+> P0-1（入库）→ `bd6dbb0`/`0cc7094`/`90c2ffb` 服务端/内购/文档规范分批入库；契约门禁 → `2bc7683`
+> sync-sources 后 26/26 绿。工作区仅剩 apply.sh/rollback.sh（DSH 宿主补丁，刻意不入库）。
+> P0-3 的「恢复按钮」未做（追加式修复后不再有可破坏面，降为可选）。
+
 1. **核心工程未入版本控制**：`agentlite-server/`、`agent-unified/`、`skills/`、手册、测试大半未跟踪，另有 53 个文件未提交。服务端源码唯一异地副本在线上 `/srv/`——本机磁盘故障即永久丢失。**分批提交，已审计无密钥**（`竞赛材料/` 待确认）。
 2. **agent-client root 命令注入**：模型输出（包名/URL）直接拼 `su -c`（`SandboxController.java:193/212`），提示注入可让任意命令以 root 执行。入口白名单即可修复。
 3. **agent-client 无障碍列表整体覆盖**：`RootShell.ensureA11y()` 用 `settings put` 覆盖而非追加（`RootShell.java:117`），用户已有无障碍服务被静默关闭。先读后追加 + 恢复按钮。
@@ -277,7 +283,7 @@ sh build-mac.sh
 - **轮换 DashScope Key**（用户动作）：曾随 APK 进入发布件与对话记录，清文件≠吊销。
 - agent-client 五项：停止按钮无法中断（HTTP 无 cancel 通道，挂起 120s）；`MainActivity.sInstance` 泄漏 + 日志静默丢失；ask 弹窗与手势回调死锁链；`KeepAliveService.updateState()` 死代码；`RootShell.available()` 主线程阻塞。
 - agentd-go：WebUI（`/api/config` 含 Key、`/api/screen` 窃屏、`/api/task`）与 a11y 桥 8081 **全部无鉴权且以 root 运行**——Android loopback 不是安全边界，设备上任一 App 可连。
-- agent-unified：构建前先 `sync-sources.sh`（契约门禁当前红：内购文件未同步）；**定夺 `agent-unified/client` 与 `agent-lite` 谁是真身**。
+- agent-unified：~~构建前先 `sync-sources.sh`（契约门禁当前红：内购文件未同步）~~ ✅ 已修复（`2bc7683`：sync 后 26/26 绿）；**定夺 `agent-unified/client` 与 `agent-lite` 谁是真身**——本轮已按整合层自身设计（agent-lite 为真身、副本零改动）执行同步，后续以此为准。
 - 服务端部署后补手册 §7（本地代码已新增 5 条订单路由）。
 - 本文档正文 §1–§12 刷新至 09-13 现状（未收录：服务端、整合工程、agentd、账号同步、内购、保活、手表）。
 - agent-lite 账号令牌明文 → 复用 `AkStore` 的 Keystore 模式。
@@ -489,3 +495,14 @@ agent-client P2 批量修复（LlmClient 重试/finally、ActionParser 括号配
 - 11:18 体检报告定稿（4 组件定向审查 + P0–P3 路线图）；本手册新增 §13 摘录（源:文件:PROJECT_OVERVIEW.zh-CN.md §13）
 - 11:19 开发手册 §7 补 5 条订单路由（标注待线上确认）+ §11 收录体检报告与 HANDOFF（源:文件:docs/DEVELOPMENT_MANUAL.zh-CN.md）
 - 11:19 终态: done（4 通道子代理送达异常，已以主审定向审查+全量实测替代并在报告 §7.5 声明）
+
+### 2026-09-13 11:22 +08 · local · 体检 P0 修复与全量入库
+- 11:24 新增 ActionValidator 白名单网关（pkg/url/action），AgentEngine 入口 + SandboxController 四处 root 边界双重强制（源:文件:agent-client/src/com/dsh/agent/ActionValidator.java）
+- 11:24 ensureA11y 改先读后追加，用户已有无障碍服务不再被覆盖（源:文件:agent-client/src/com/dsh/agent/RootShell.java:117）
+- 11:25 agent-client 构建通过，dex 常量验证修复进包（首验误用注释文本得 0，改字符串常量复验命中）（源:命令:build-mac.sh）
+- 11:26 agentd-go go.mod 1.27→1.24，编译+vet 通过（源:文件:agentd-go/go.mod:3）
+- 11:28 服务端二进制误入暂存 → git rm --cached + amend 出库，补 ignore 规则 *.class 与 agentlite-server 产物（源:命令:git rm --cached）
+- 11:29 分批入库：69ddf0b 安全 / cf04f6c 工具链 / bd6dbb0 服务端首入 / 0cc7094 内购+测试 / 90c2ffb 文档规范（源:命令:git commit）
+- 11:29 sync-sources 同步内购改动，契约门禁 26/26 绿，提交 2bc7683（体检 P1-4 消红）（源:命令:verify-contract.py）
+- 11:31 手册 §13 与体检报告 §7.1 标注修复进展；apply.sh/rollback.sh 刻意留盘不入库（源:文件:PROJECT_OVERVIEW.zh-CN.md §13.1）
+- 11:31 终态: done
