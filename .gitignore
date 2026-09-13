@@ -43,9 +43,15 @@ agentd-go/build/
 agent-client/assets/vd_daemon.jar
 tests/results-*.jsonl
 
+# 服务端编译产物（go build 现场生成）
+agentlite-server/agentlite-server
+
 .m3-deps/
 
 # 可读性/文案门禁的生成物（classes 由 javac 现场编译）
 tests/ui_text_test/classes/
 tests/ui_widget_guard-cache/
 tests/ui_text_test/javac.log
+
+# 桌面 JVM 测试的编译产物（javac 现场生成，含 lan_peer_sim）
+*.class
