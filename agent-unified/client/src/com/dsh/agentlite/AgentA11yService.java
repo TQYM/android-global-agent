@@ -59,6 +59,9 @@ public class AgentA11yService extends AccessibilityService {
         overlay = new OverlayController(this);
         sSpec = DisplaySpec.get(this);
         Log.i(TAG, "service connected; spec=" + sSpec);
+        // 广播恢复信号：主界面可能已在 onResume 时判定为"未连接"并画出提示横幅，
+        // 若不在此刻通知，横幅会一直停在「无障碍未开启」并被引擎当成首帧感知输入。
+        A11yGuard.notifyConnected();
     }
 
     @Override

@@ -11,12 +11,13 @@
 
     <color name="color_primary">@android:color/system_accent1_200</color>
     <color name="color_primary_hover">@android:color/system_accent1_300</color>
+    <color name="color_primary_text">@android:color/system_accent1_200</color>
     <color name="color_primary_container">@android:color/system_accent1_700</color>
     <color name="color_on_primary">@android:color/system_accent1_900</color>
 
     <color name="color_on_surface">@android:color/system_neutral1_100</color>
     <color name="color_on_surface_variant">@android:color/system_neutral2_200</color>
-    <color name="color_text_hint">@android:color/system_neutral2_400</color>
+    <color name="color_text_hint">@android:color/system_neutral2_300</color>
 
     <color name="color_accent_pink">@android:color/system_accent3_200</color>
     <color name="color_accent_pink_light">@android:color/system_accent3_100</color>

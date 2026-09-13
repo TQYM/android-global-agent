@@ -63,6 +63,12 @@ public class LlmClient {
      * 未登录时沿用用户自填的 DashScope 配置直连，功能不退化。
      */
     public static LlmClient forPrefs(Context ctx, Prefs p, String model) {
+        // 官方购买模式：用户自己买了 token 资源包、用自己的 Key。
+        // 此时**必须让开网关**——否则网关一直顶在前面，刚写入的那张 Key 永远用不上
+        // （PURCHASE_REDIRECT_DESIGN 决策 4：这批用户关闭 use_gateway）。
+        if (p.useOwnKey()) {
+            return new LlmClient(p.baseUrl(), p.apiKey(), model);
+        }
         if (p.loggedIn() && p.sp.getBoolean("use_gateway", true)) {
             String base = SyncClient.serverBase(ctx);
             String token = p.accountToken();

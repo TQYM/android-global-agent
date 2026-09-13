@@ -41,21 +41,67 @@ done
   "$BUILD"/res/*.flat
 
 # 3) compile java (R.java + sources)
-# 3.0) 测试便利：dev.local（gitignore，不入库）存在则把 API 配置编译进 APK。
-#      密钥不落 git；发布构建时删掉 dev.local 即可回到空默认。
-API_KEY=""; BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1"; MODEL="qwen3.5-omni-plus"
+# 3.0) dev.local（gitignore，不入库）提供**非密**构建默认值：endpoint / 模型 / 同步服务地址。
+#
+# ⚠️ API_KEY **禁止**内联进 APK（2026-09-13 起）。
+#    原因：写进 DevConfig 的字符串会以明文留在 classes.dex，
+#    任何拿到 APK 的人 `strings classes.dex | grep sk-` 即可提取（apk_readability.py 会报硬违规）。
+#    更糟的是 BASE_URL 同样可被覆盖——把它指向攻击者域名，等于把密钥主动送出去。
+#    密钥改为运行时录入：App 内「设置 → 配置」手填，或用 tests/push_dev_key.sh 由 adb 推送。
+API_KEY=""
+BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1"; MODEL="qwen3.5-omni-plus"
 # 远程信息同步服务（agentlite-server）。自签证书随包打入 assets/agentlite_sync_ca.pem。
 SYNC_URL="https://8.133.225.105:18443"
-if [ -f dev.local ]; then . ./dev.local; fi
+if [ -f dev.local ]; then
+  # 在子 shell 里读，避免 dev.local 里的其它变量污染构建环境
+  _DEV_API_KEY="$(. ./dev.local 2>/dev/null; printf '%s' "${API_KEY:-}")"
+  _DEV_BASE_URL="$(. ./dev.local 2>/dev/null; printf '%s' "${BASE_URL:-}")"
+  _DEV_MODEL="$(. ./dev.local 2>/dev/null; printf '%s' "${MODEL:-}")"
+  _DEV_SYNC_URL="$(. ./dev.local 2>/dev/null; printf '%s' "${SYNC_URL:-}")"
+
+  if [ -n "$_DEV_API_KEY" ]; then
+    cat >&2 <<'EOF'
+
+  ✗ 构建已中止：dev.local 里有 API_KEY，内联进 APK 会造成明文密钥泄露。
+
+    APK 是会被分发/上传/备份的文件，写进 DevConfig 的密钥会以明文留在 classes.dex 里，
+    任何人 strings 一下就能拿走，而这把密钥能花你的钱。
+
+    正确做法：
+      1) 删掉 dev.local 里的 API_KEY 行（BASE_URL / MODEL 仍会生效）；
+      2) 装机后在 App 内「设置 → 配置 → API Key」手填一次即可（Prefs 会持久化，
+         之后重装只要不清理应用数据就一直在）。
+
+    为什么不做「adb 自动推送密钥」：本包是 release（无 android:debuggable），
+    run-as 用不了、改不了 shared_prefs；而用 am start 把密钥塞进 intent extra
+    会把它暴露给 logcat / dumpsys 和任何已装应用——为一个便利引入更难查的泄露不划算。
+
+    另需自查 BASE_URL 是否指向可信域名——被改写的 BASE_URL 会把密钥直接发给攻击者，
+    所以「只防 API_KEY」是不够的。
+
+EOF
+    exit 1
+  fi
+
+  [ -n "$_DEV_BASE_URL" ] && BASE_URL="$_DEV_BASE_URL"
+  [ -n "$_DEV_MODEL" ] && MODEL="$_DEV_MODEL"
+  [ -n "$_DEV_SYNC_URL" ] && SYNC_URL="$_DEV_SYNC_URL"
+fi
 if [ ! -f assets/agentlite_sync_ca.pem ]; then
   echo "!! 缺少 assets/agentlite_sync_ca.pem —— 同步功能将无法建立 TLS 连接" >&2
 fi
 mkdir -p "$BUILD/gen/com/dsh/agentlite"
 cat > "$BUILD/gen/com/dsh/agentlite/DevConfig.java" <<EOF
 package com.dsh.agentlite;
-/** 构建期生成（build-mac.sh）。dev.local 存在时内置测试用 API 配置，请勿手动编辑。 */
+/**
+ * 构建期生成（build-mac.sh），请勿手动编辑。
+ *
+ * API_KEY 恒为空串：**密钥绝不内联进 APK**（会以明文留在 classes.dex，可被 strings 提取）。
+ * 密钥在运行时由用户录入并经 Android Keystore 保护，见 AkStore / Prefs.setApiKey。
+ * endpoint 与模型名不是秘密，随包提供合理默认值即可。
+ */
 public final class DevConfig {
-    public static final String API_KEY = "${API_KEY}";
+    public static final String API_KEY = "";
     public static final String BASE_URL = "${BASE_URL}";
     public static final String MODEL = "${MODEL}";
     public static final String SYNC_URL = "${SYNC_URL}";
