@@ -29,13 +29,18 @@ import (
 type gatewayConfig struct {
 	baseURL string
 	apiKey  string
-	client  *http.Client
+	// upstreamModel 非空时，把客户端请求里的 model 统一改写为它（见 adaptRequest）。
+	// 用途：换上游后客户端配置里的模型名（如 qwen3.5-omni-plus）在上游不存在，
+	// 由服务端做映射，用户端**不需要改任何设置**（手册 §16：降低技术门槛）。
+	upstreamModel string
+	client        *http.Client
 }
 
-func newGateway(baseURL, apiKey string) *gatewayConfig {
+func newGateway(baseURL, apiKey, upstreamModel string) *gatewayConfig {
 	return &gatewayConfig{
-		baseURL: strings.TrimRight(baseURL, "/"),
-		apiKey:  apiKey,
+		baseURL:       strings.TrimRight(baseURL, "/"),
+		apiKey:        apiKey,
+		upstreamModel: strings.TrimSpace(upstreamModel),
 		client: &http.Client{
 			// 不设全局 Timeout：流式对话可能持续数分钟，靠 ResponseController 管理读写期限
 			Transport: &http.Transport{
@@ -84,6 +89,9 @@ func (s *server) handleChatCompletions(w http.ResponseWriter, r *http.Request, a
 	if probe.Stream {
 		body = ensureIncludeUsage(body)
 	}
+
+	// 上游适配：模型名映射 + 关闭思考链（换上游后客户端零改动）
+	body, probe.Model = s.gateway.adaptRequest(body, probe.Model)
 
 	upReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
 		s.gateway.baseURL+"/chat/completions", bytes.NewReader(body))
@@ -182,6 +190,45 @@ func (s *server) handleModels(w http.ResponseWriter, r *http.Request, a *Account
 
 // extractUsageTokens 从响应体（或单个 SSE 行）里取 usage.total_tokens。
 // 取不到返回 0，由 chargeQuota 兜底为最小计费单位。
+// adaptRequest 对上游请求体做两处适配（2026-09-15）：
+//
+//  1. **模型名映射**：upstreamModel 非空时改写 body 的 model。客户端配置里的
+//     模型名是给「原来那个上游」用的，换上游后必然不存在；映射放在服务端，
+//     用户端零改动。
+//  2. **关闭思考链**：DeepSeek 系模型默认先吐 reasoning_content，UI Agent 那套
+//     「只输出一个 JSON 动作」的提示词会被思考吃满 token，content 变成空串。
+//     实测 `{"thinking":{"type":"disabled"}}` 有效（`reasoning_effort:"none"` 同样有效，
+//     `enable_thinking:false` 与 `chat_template_kwargs` 无效）。
+//
+// 只在需要时改写；解析失败就原样转发（绝不因为适配把请求弄坏）。
+// 返回新的请求体与**实际生效**的模型名（计费与日志用后者）。
+func (g *gatewayConfig) adaptRequest(body []byte, model string) ([]byte, string) {
+	var m map[string]interface{}
+	if err := json.Unmarshal(body, &m); err != nil {
+		return body, model
+	}
+	changed := false
+	if g.upstreamModel != "" && model != g.upstreamModel {
+		m["model"] = g.upstreamModel
+		model = g.upstreamModel
+		changed = true
+	}
+	if strings.Contains(strings.ToLower(g.baseURL), "deepseek") {
+		if _, ok := m["thinking"]; !ok {
+			m["thinking"] = map[string]string{"type": "disabled"}
+			changed = true
+		}
+	}
+	if !changed {
+		return body, model
+	}
+	out, err := json.Marshal(m)
+	if err != nil {
+		return body, model
+	}
+	return out, model
+}
+
 // ensureIncludeUsage 给流式请求注入 stream_options.include_usage=true。
 //
 // 为什么必须注入：DashScope 的 OpenAI 兼容流式**默认不回传用量**——每个 chunk
