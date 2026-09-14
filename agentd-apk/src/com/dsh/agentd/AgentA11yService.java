@@ -11,10 +11,15 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.security.SecureRandom;
 
 /**
  * Resident perception service: holds a first-class accessibility connection
@@ -24,13 +29,30 @@ import java.net.Socket;
  */
 public class AgentA11yService extends AccessibilityService {
 
+    private static final String TAG = "AgentA11y";
     private static final int PORT = 8081;
+    /** 桥接令牌文件名（落在本应用私有目录，同机其他 App 读不到）。 */
+    private static final String TOKEN_FILE = "bridge.token";
+    /** 令牌最小长度（hex(32 字节) = 64 字符），低于此值视为损坏并重新生成。 */
+    private static final int TOKEN_MIN_LEN = 32;
+    /** 网关客户端要带的头名，与 agentd-go/internal/device 约定一致。 */
+    private static final String TOKEN_HEADER = "X-Agentd-Bridge";
+
     private Thread serverThread;
+    /**
+     * 桥接令牌；null = 生成/落盘失败，此时退化为「仅回环 + 方法白名单」模式。
+     *
+     * <p>为什么要令牌（手册 §15.1 P0-1）：Android 的 loopback 不是应用级安全边界，
+     * 同机任意 App 都能连 127.0.0.1:8081 读屏（/nodes）或注入文本（/settext）。
+     * 令牌存在本应用私有目录，只有本应用与 root（agentd）读得到。
+     */
+    private volatile String bridgeToken;
 
     @Override
     protected void onServiceConnected() {
         super.onServiceConnected();
-        android.util.Log.i("AgentA11y", "onServiceConnected: service bound");
+        android.util.Log.i(TAG, "onServiceConnected: service bound");
+        ensureToken();
         if (serverThread == null || !serverThread.isAlive()) {
             serverThread = new Thread(new Runnable() {
                 @Override
@@ -43,14 +65,50 @@ public class AgentA11yService extends AccessibilityService {
         }
     }
 
+    /**
+     * 读取（或首次生成）桥接令牌，写入 {@code files/bridge.token}。
+     *
+     * <p>失败时不抛出：安全加固不该把感知通道整个打死——降级为仅回环监听，
+     * 并留下一条只含异常类型的日志。
+     */
+    private void ensureToken() {
+        try {
+            File f = new File(getFilesDir(), TOKEN_FILE);
+            if (f.isFile()) {
+                String t = new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8).trim();
+                if (t.length() >= TOKEN_MIN_LEN) {
+                    bridgeToken = t;
+                    return;
+                }
+            }
+            byte[] raw = new byte[32];
+            new SecureRandom().nextBytes(raw);
+            StringBuilder sb = new StringBuilder(raw.length * 2);
+            for (byte b : raw) {
+                sb.append(String.format("%02x", b));
+            }
+            String token = sb.toString();
+            Files.write(f.toPath(), (token + "\n").getBytes(StandardCharsets.UTF_8));
+            bridgeToken = token;
+            android.util.Log.i(TAG, "bridge token 已生成（应用私有目录，仅本应用与 root 可读）");
+        } catch (Exception e) {
+            bridgeToken = null;
+            android.util.Log.w(TAG, "bridge token 不可用，回退为仅回环监听："
+                    + e.getClass().getSimpleName());
+        }
+    }
+
     private void serve() {
         // Retry with backoff: a transient bind failure (or a race with the
         // system during reconnect) must not strand the service until the
         // next a11y rebind.
         for (int attempt = 0; attempt < 10; attempt++) {
             try {
-                ServerSocket ss = new ServerSocket(PORT);
-                android.util.Log.i("AgentA11y", "listening on :" + PORT);
+                // 显式绑定回环：无参构造器等价于 0.0.0.0，局域网内任何设备
+                // 都能直连 8081 读屏/注入文本（手册 §15.1 P0-1）。
+                ServerSocket ss = new ServerSocket(PORT, 50, InetAddress.getLoopbackAddress());
+                android.util.Log.i(TAG, "listening on 127.0.0.1:" + PORT
+                        + (bridgeToken != null ? " (token required)" : " (token unavailable)"));
                 while (true) {
                     try {
                         Socket s = ss.accept();
@@ -109,6 +167,17 @@ public class AgentA11yService extends AccessibilityService {
                     } catch (NumberFormatException ignored) {
                     }
                 }
+            }
+
+            // 鉴权：令牌在不匹配时拒绝。先把 body 读掉再回应——直接 close 会
+            // 发 RST，客户端可能收不到 401 而是看到连接被重置。
+            String expected = bridgeToken;
+            if (expected != null && !expected.equals(headerValue(lines, TOKEN_HEADER))) {
+                drain(raw, Math.min(contentLength, 64 * 1024));
+                respond(s, "401 Unauthorized", "application/json",
+                        "{\"ok\":false,\"error\":\"bridge token 缺失或不匹配\"}");
+                s.close();
+                return;
             }
             if (requestLine.startsWith("GET /nodes")) {
                 respond(s, "200 OK", "application/json", nodesJson());
@@ -212,6 +281,36 @@ public class AgentA11yService extends AccessibilityService {
             }
         }
         return null;
+    }
+
+    /** 取一个请求头的值（大小写不敏感），缺失返回空串。 */
+    private static String headerValue(String[] lines, String name) {
+        for (String h : lines) {
+            int colon = h.indexOf(':');
+            if (colon > 0 && h.substring(0, colon).trim().equalsIgnoreCase(name)) {
+                return h.substring(colon + 1).trim();
+            }
+        }
+        return "";
+    }
+
+    /** 读掉并丢弃 len 字节请求体，避免 close 时发 RST 把响应冲掉。 */
+    private static void drain(java.io.InputStream in, int len) {
+        if (len <= 0) {
+            return;
+        }
+        byte[] buf = new byte[len];
+        int off = 0;
+        try {
+            while (off < buf.length) {
+                int n = in.read(buf, off, buf.length - off);
+                if (n < 0) {
+                    break;
+                }
+                off += n;
+            }
+        } catch (IOException ignored) {
+        }
     }
 
     private void respond(Socket s, String status, String type, String body)

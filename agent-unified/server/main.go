@@ -58,6 +58,8 @@ func main() {
 		upstreamURL = flag.String("upstream-url",
 			envOr("AGENTLITE_UPSTREAM_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
 			"额度网关的上游 OpenAI 兼容端点")
+		upstreamModel = flag.String("upstream-model", envOr("AGENTLITE_UPSTREAM_MODEL", ""),
+			"非空时把客户端请求的 model 统一映射为该模型（换上游后客户端零改动）")
 		upstreamKey = flag.String("upstream-key", envOr("AGENTLITE_UPSTREAM_KEY", ""),
 			"上游 API Key（放 0600 env 文件，勿写入单元文件）；留空则网关关闭")
 	)
@@ -81,7 +83,7 @@ func main() {
 		rl:         newRateLimiter(*rlMax, *rlWindow),
 		started:    time.Now(),
 		adminToken: *adminTok,
-		gateway:    newGateway(*upstreamURL, *upstreamKey),
+		gateway:    newGateway(*upstreamURL, *upstreamKey, *upstreamModel),
 	}
 
 	mux := http.NewServeMux()
