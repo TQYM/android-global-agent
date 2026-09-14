@@ -2,14 +2,15 @@
 
 package com.dsh.agentlite;
 
+import android.animation.TimeInterpolator;
 import android.app.Activity;
 import android.content.Intent;
-import android.graphics.Color;
-import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
+import android.view.animation.PathInterpolator;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -45,6 +46,21 @@ public final class PurchaseActivity extends Activity {
     /** 大语言模型推理资源包（token 资源包）的官方购买页商品码。 */
     private static final String BUY_URL =
             "https://common-buy.aliyun.com/?commodityCode=sfm_llminference_spn_public_cn";
+
+    /**
+     * 缓动曲线：cubic-bezier(.23, 1, .32, 1)（emil-design-eng 的 --ease-out）。
+     *
+     * <p>平台自带的 DecelerateInterpolator 太弱——起手不够快、收尾拖沓，同样的 150ms
+     * 看起来更慢。这条曲线让位移在头 1/3 就走完大半，观感上「立刻跟手」。
+     */
+    private static final TimeInterpolator EASE_OUT =
+            new PathInterpolator(0.23f, 1f, 0.32f, 1f);
+
+    /** 按压反馈时长：100–160ms 区间内取 120ms（按钮反馈需短到感觉是瞬时的）。 */
+    private static final long PRESS_MS = 120L;
+
+    /** 状态变化淡入时长：UI 过渡保持在 300ms 以内。 */
+    private static final long FADE_MS = 180L;
 
     private LinearLayout packsContainer;
     private TextView tvQuota, tvPayHint, tvCurrentOrder, tvOrders, tvMsg, tvAkLabel;
@@ -88,9 +104,19 @@ public final class PurchaseActivity extends Activity {
         findViewById(R.id.btnBack).setOnClickListener(v -> finish());
         findViewById(R.id.btnPay).setOnClickListener(v -> openOfficialBuyPage());
         findViewById(R.id.btnCancel).setOnClickListener(v -> onSecondaryAction());
+        pressFeedback(findViewById(R.id.btnBack));
+        pressFeedback(findViewById(R.id.btnPay));
+        pressFeedback(findViewById(R.id.btnCancel));
 
-        // 旧的订单记录区块（兑换码时代）与本流程无关，隐藏而非删布局（保留可回退）
-        if (tvOrders != null) tvOrders.setVisibility(View.GONE);
+        // 旧的订单记录区块（兑换码时代）与本流程无关，隐藏而非删布局（保留可回退）。
+        // 隐藏的是整个 orderArea：改版后「订单记录（旧链路，已废弃）」标题没有 id，
+        // 此前只隐藏 tvOrders，标题作为孤儿节点会永远挂在页面上。
+        View orderArea = findViewById(R.id.orderArea);
+        if (orderArea != null) {
+            orderArea.setVisibility(View.GONE);
+        } else if (tvOrders != null) {
+            tvOrders.setVisibility(View.GONE);
+        }
 
         swSingleModel.setOnCheckedChangeListener((btn, checked) -> {
             prefs.setSingleModelMode(checked);
@@ -139,15 +165,15 @@ public final class PurchaseActivity extends Activity {
         LinearLayout card = card();
         TextView t = new TextView(this);
         t.setText(title);
-        t.setTextColor(Color.parseColor("#E2E8F0"));
-        t.setTextSize(15f);
+        t.setTextColor(getColor(R.color.color_on_surface));
+        textSize(t, R.dimen.text_body);
         t.setTypeface(null, android.graphics.Typeface.BOLD);
         card.addView(t);
         TextView d = new TextView(this);
         d.setText(detail);
-        d.setTextColor(Color.parseColor("#94A3B8"));
-        d.setTextSize(13f);
-        d.setPadding(0, dp(4), 0, 0);
+        d.setTextColor(getColor(R.color.color_on_surface_variant));
+        textSize(d, R.dimen.text_caption);
+        d.setPadding(0, dimen(R.dimen.space_xs), 0, 0);
         card.addView(d);
         return card;
     }
@@ -156,37 +182,50 @@ public final class PurchaseActivity extends Activity {
         LinearLayout card = card();
         TextView t = new TextView(this);
         t.setText(name);
-        t.setTextColor(Color.parseColor("#E2E8F0"));
-        t.setTextSize(16f);
+        t.setTextColor(getColor(R.color.color_on_surface));
+        textSize(t, R.dimen.text_section);
         t.setTypeface(null, android.graphics.Typeface.BOLD);
         card.addView(t);
 
         TextView d = new TextView(this);
         d.setText(note + "　·　点击后跳到百炼官方购买页");
-        d.setTextColor(Color.parseColor("#94A3B8"));
-        d.setTextSize(13f);
-        d.setPadding(0, dp(4), 0, dp(8));
+        d.setTextColor(getColor(R.color.color_on_surface_variant));
+        textSize(d, R.dimen.text_caption);
+        d.setPadding(0, dimen(R.dimen.space_xs), 0, dimen(R.dimen.space_s));
         card.addView(d);
 
         Button buy = new Button(this);
         buy.setText("去官方页面购买");
+        buy.setAllCaps(false);   // 平台主题默认把按钮文字转全大写（真机实测「保存 ACCESSKEY」）
+        buy.setBackgroundResource(R.drawable.btn_ghost);
+        buy.setTextColor(getColor(R.color.color_on_surface));
+        textSize(buy, R.dimen.text_body);
+        buy.setMinWidth(0);
+        buy.setMinHeight(0);
+        buy.setMaxLines(1);
+        buy.setEllipsize(android.text.TextUtils.TruncateAt.END);
         buy.setOnClickListener(v -> openOfficialBuyPage());
+        pressFeedback(buy);
         card.addView(buy);
         return card;
     }
 
+    /**
+     * 档位卡片（动态生成，位于「③ 在官方页面购买」卡片**内部**）。
+     *
+     * <p>用 bg_card_inner 而非 bg_card：嵌套卡片若与外层同色就分不出边界，
+     * 内层必须抬高一档容器色。
+     */
     private LinearLayout card() {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(14), dp(12), dp(14), dp(12));
-        GradientDrawable bg = new GradientDrawable();
-        bg.setColor(Color.parseColor("#111C33"));
-        bg.setCornerRadius(dp(10));
-        bg.setStroke(dp(1), Color.parseColor("#1E293B"));
-        card.setBackground(bg);
+        int padH = dimen(R.dimen.card_padding);
+        int padV = dimen(R.dimen.space_m);
+        card.setPadding(padH, padV, padH, padV);
+        card.setBackgroundResource(R.drawable.bg_card_inner);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        lp.bottomMargin = dp(8);
+        lp.bottomMargin = dimen(R.dimen.space_s);
         card.setLayoutParams(lp);
         return card;
     }
@@ -205,12 +244,18 @@ public final class PurchaseActivity extends Activity {
         etAkId.setEnabled(!hasAk);
         etAkId.setAlpha(hasAk ? 0.5f : 1.0f);
         etCode.setText("");
+        // hint 要短到一屏放得下：字段名已在上方标签里，这里只补「怎么用 / 安不安全」。
+        // 此前 hint 里重复了字段名，在系统字体放大的档位上被截成「AccessKeySecret（只在本机加密」。
         etCode.setHint(hasAk
-                ? "AccessKeySecret（已保存；要更换请先点下方「更换 AccessKey」）"
-                : "AccessKeySecret（只在本机加密保存，绝不上传）");
+                ? "已保存（要更换请点下方按钮）"
+                : "仅存本机，绝不上传");
         etCode.setEnabled(!hasAk);
         etCode.setAlpha(hasAk ? 0.5f : 1.0f);
-        ((Button) findViewById(R.id.btnCancel)).setText(hasAk ? "更换 AccessKey" : "保存 AccessKey");
+        Button btnSecondary = findViewById(R.id.btnCancel);
+        btnSecondary.setText(hasAk ? "更换 AccessKey" : "保存 AccessKey");
+        // 「录入 ↔ 已配置」切换不硬跳：文案与标签同步淡入
+        fadeIn(tvAkLabel);
+        fadeIn(btnSecondary);
     }
 
     /** 只显示前 6 位与后 4 位——AccessKeyId 本身不是秘密，但也没必要整条展示。 */
@@ -406,14 +451,89 @@ public final class PurchaseActivity extends Activity {
 
     private void msg(String text, boolean error) {
         tvMsg.setText(text);
-        tvMsg.setTextColor(error ? Color.parseColor("#F87171") : Color.parseColor("#94A3B8"));
+        tvMsg.setTextColor(getColor(error ? R.color.color_error_text
+                : R.color.color_on_surface_variant));
+        fadeIn(tvMsg);
     }
 
     private void toast(String s) {
         Toast.makeText(this, s, Toast.LENGTH_SHORT).show();
     }
 
-    private int dp(int v) {
-        return Math.round(v * getResources().getDisplayMetrics().density);
+    // ------------------------------------------------------------------
+    // 令牌与动效
+    //
+    // 布局用 @dimen / @color，动态生成的控件也必须走同一套令牌——否则同一个页面里
+    // 会并存两种字阶与两套颜色（这正是本页改版前的状态）。
+    //
+    // 动效只做两件事：按压反馈、状态淡入。都是「偶尔看见」的操作，150ms 级别足够；
+    // 不做位移型动画（长文案在 ScrollView 里位移会显得页面在抖）。
+    // ------------------------------------------------------------------
+
+    private int dimen(int res) {
+        return getResources().getDimensionPixelSize(res);
+    }
+
+    /** 用资源令牌设字号（px 单位，直接吃 dimens.xml 里的 sp 值经密度换算后的像素）。 */
+    private void textSize(TextView v, int dimenRes) {
+        v.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, getResources().getDimension(dimenRes));
+    }
+
+    /**
+     * 系统「动画时长缩放」——开发者选项/无障碍里可调到 0，等价于 CSS 的 prefers-reduced-motion。
+     *
+     * <p>为 0 时所有动效时长取 0：状态照常变化，只是不做过渡。项目此前没有这个开关，
+     * 关掉系统动效的用户仍会看到本页的缩放与淡入。
+     */
+    private float animScale() {
+        try {
+            float s = android.provider.Settings.Global.getFloat(getContentResolver(),
+                    android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f);
+            return s < 0f ? 0f : Math.min(s, 2f);
+        } catch (Throwable t) {
+            return 1f;   // 读不到就按默认动效走，不影响功能
+        }
+    }
+
+    private long ms(long base) {
+        return (long) (base * animScale());
+    }
+
+    /**
+     * 按压反馈：按下缩到 0.97、松开回弹（120ms）。
+     *
+     * <p>挂在 touch 而不是 click 上——click 要等手指抬起才触发，反馈就晚了。
+     * 返回 false 不消费事件，点击照常派发。
+     */
+    private void pressFeedback(View v) {
+        if (v == null || animScale() == 0f) return;   // 关动效时保留 drawable 的按压色态即可
+        v.setOnTouchListener((view, e) -> {
+            float to;
+            switch (e.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    to = 0.97f;
+                    break;
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    to = 1f;
+                    break;
+                default:
+                    return false;
+            }
+            view.animate().scaleX(to).scaleY(to)
+                    .setDuration(ms(PRESS_MS)).setInterpolator(EASE_OUT).start();
+            return false;
+        });
+    }
+
+    /** 状态淡入：新内容从 0.4 不透明度起来，避免文案「啪」地替换。 */
+    private void fadeIn(View v) {
+        if (v == null) return;
+        if (animScale() == 0f) {
+            v.setAlpha(1f);
+            return;
+        }
+        v.setAlpha(0.4f);
+        v.animate().alpha(1f).setDuration(ms(FADE_MS)).setInterpolator(EASE_OUT).start();
     }
 }

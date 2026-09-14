@@ -59,6 +59,44 @@ public final class UiText {
      *
      * @param appDisplayName `app &lt;包名&gt;` 场景下已解析好的应用显示名；为 null 时退回包名
      */
+    /**
+     * 失败终态的「下一步」建议（SPEC-UX-001 §4：每个失败都必须可恢复）。
+     *
+     * <p>只依据**已加工的人话归因**判断，不读原始异常——这样文案永远不泄露技术原文，
+     * 也能保证「网络/额度/无障碍/配置/超时」这几类高频失败各自有明确出口。
+     */
+    public static String nextStep(String reason) {
+        String r = reason == null ? "" : reason;
+        if (r.contains("网络") || r.contains("连接") || r.contains("断网")) {
+            return "检查手机网络（WiFi 或流量）后点「重试一次」";
+        }
+        if (r.contains("两条模型通道")) {
+            return "稍后重试；若持续如此请联系服务方，或在「设置 → 高级」换一份可用的接口配置";
+        }
+        if (r.contains("账号额度")) {
+            return "稍后重试；或在「设置 → 高级」里配置自己的接口作为备用通道";
+        }
+        if (r.contains("额度") || r.contains("充值") || r.contains("余额") || r.contains("欠费")) {
+            return "到「设置 → 账号与额度」领取试用额度或用兑换码充值";
+        }
+        if (r.contains("密钥") || r.contains("权限")) {
+            return "登录账号使用账号额度；或到「设置 → 高级」更换/校正接口配置";
+        }
+        if (r.contains("模型")) {
+            return "到「设置 → 高级」换一个可用的模型名再试";
+        }
+        if (r.contains("无障碍")) {
+            return "在系统设置里重新开启「Agent 无障碍服务」，再点「重试一次」";
+        }
+        if (r.contains("配置") || r.contains("登录") || r.contains("令牌") || r.contains("凭据")) {
+            return "登录账号，或在「设置 → 高级」里填写自己的接口配置";
+        }
+        if (r.contains("超时") || r.contains("步数") || r.contains("太久")) {
+            return "把任务拆小一点（例如先只说「打开微信」）再试";
+        }
+        return "点「重试一次」；仍失败就把任务说得更具体一点（例如指明应用名）";
+    }
+
     public static String friendlyLabel(String raw, String appDisplayName) {
         if (raw == null || raw.isEmpty()) return "正在执行…";
         if (raw.equals("app")) return "打开应用";   // exec 抛异常时 label=kind 的兜底路径

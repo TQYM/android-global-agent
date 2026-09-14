@@ -53,6 +53,9 @@ public class AgentEngine {
     private volatile boolean stopRequested;
     private volatile Thread thread;
     private volatile Listener listener;
+
+    /** 当前任务正在使用的 LLM 客户端：stop() 据此断开进行中的请求（手册 §15.2-2）。 */
+    private volatile LlmClient activeLlm;
     private int step;
     private String lastApp;        // 当前任务所在应用包名
     private boolean visionOnly;    // 纯视觉模式（节点被应用屏蔽）
@@ -73,21 +76,71 @@ public class AgentEngine {
     private boolean resultShown;              // 终态卡片已弹出（引擎收尾时保留卡片）
     private int guardSkipStep = -1;           // 交还接管后的一步内跳过敏感守卫（防同页重触发）
 
+    // ---- 最小完成复验（SPEC-UX-001 §7 / 手册 §16.3「done 不能只采信模型自报」）----
+    /** 上一步「应当到达」的前台包名片段（null = 无期望）。 */
+    private String expectPkg;
+    private String expectLabel;
+    /**
+     * 上一步登记的「屏幕应当发生变化」弱期望（动作描述），null = 无。
+     *
+     * <p>{@code open_url} / {@code open_api} / 纯视觉坐标点击无法预知"目标包名"，
+     * 但它们都必须让屏幕内容发生变化——没变化就说明动作白做了（SPEC-UX-001 §7 / 手册 §16.9 T3）。
+     */
+    private String expectEffect;
+    /** 上一次感知的屏幕指纹（{@link NodeInfo#fingerprint}），用于弱期望核验。 */
+    private String lastScreenFp;
+
+    /** 最近一次感知到的前台包名，以及任务期间是否观察到前台切换（done 的最小证据）。 */
+    private String foregroundPkg;
+    private boolean sawForegroundChange;
+    private boolean doneVerifyAsked;
+
+    /**
+     * 应用商店/应用市场的包名特征（手册 §16.9 T2 的硬防线）。
+     *
+     * <p>快速模型在「打开某应用」失败后，很容易点进商店去搜索安装——那是**用户没有授权**
+     * 的下载行为。安全规则必须落在引擎里，不能只写在提示词里（§16.9 实施约束首条）。
+     */
+    private static final String[] APP_STORE_MARKERS = {
+            "vending", "appstore", "appmarket", "qqdownloader", "wandoujia",
+            "sogou.appcenter", "market",
+    };
+
+    /** 未注册动作的连续次数上限：超过就终态，避免和模型无意义地来回。 */
+    private static final int MAX_UNREGISTERED_RETRIES = 3;
+    private int unregisteredRetries;
+
+    /** 对话历史保留的「最近条数」（另有首条 system 与任务描述，共 keep+2 条）。 */
+    private static final int HISTORY_KEEP = 8;
+    /**
+     * 单任务硬上限（手册 §15.2-10）：超时即收尾。
+     *
+     * <p>模型连续输出无效动作时，靠 maxSteps 兜底可能要跑很久；上限保证任何
+     * 情况下任务都会交出控制权（无障碍通道、悬浮窗、输入法借用都能归还）。
+     */
+    private static final long MAX_TASK_MILLIS = 20 * 60 * 1000L;
+
     private AgentEngine(Context ctx) { app = ctx; }
 
     public boolean isRunning() { return running; }
 
+    /** 最近一次任务文本（失败卡片「重试一次」用）。 */
+    public String lastTask() { return currentTask == null ? "" : currentTask; }
+
     public void setListener(Listener l) { listener = l; }
 
-    /** 静态版日志：供 Activity 等非引擎处落盘排障。 */
+    /**
+     * 静态版日志：供 Activity / 无障碍守护等非引擎处落盘排障。
+     *
+     * <p>与 {@link #log} 共用 {@link EngineLog}：入队即返回，真正的文件 IO 在
+     * 后台线程做（手册 §15.2-9）。此前每次调用都同步开关一次文件，写入失败
+     * 还被静默吞掉。
+     */
     public static void staticLog(String msg) {
         try {
             android.app.Application app = MainActivity.appStatic();
-            java.io.FileWriter w = new java.io.FileWriter(
-                    new java.io.File(app.getExternalFilesDir(null), "engine.log"), true);
-            w.write(new java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.US)
-                    .format(new java.util.Date()) + " " + msg + "\n");
-            w.close();
+            if (app == null) return;
+            EngineLog.get(app).append(msg);
         } catch (Exception ignored) { }
     }
 
@@ -96,11 +149,7 @@ public class AgentEngine {
         Listener l = listener;
         if (l != null) l.onLog(s);
         try {
-            java.io.FileWriter w = new java.io.FileWriter(
-                    new java.io.File(app.getExternalFilesDir(null), "engine.log"), true);
-            w.write(new java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.US)
-                    .format(new java.util.Date()) + " " + s + "\n");
-            w.close();
+            EngineLog.get(app).append(s);
         } catch (Exception ignored) { }
     }
 
@@ -130,9 +179,16 @@ public class AgentEngine {
             try {
                 runLoop(task);
             } catch (Throwable t) {
-                log("任务异常终止: " + t);                       // 堆栈只进 logcat（O-2 留痕）
-                failTask("引擎内部异常，任务已停止（可重试）");   // 守则附录 B「内部异常」分类
+                if (stopRequested || t instanceof LlmClient.CancelledException) {
+                    // 用户主动停止：不是失败，不打「内部异常」卡片（守则附录 B 分类）
+                    log("任务已停止");
+                    history("终止", "用户停止");
+                } else {
+                    log("任务异常终止: " + t);                       // 堆栈只进 logcat（O-2 留痕）
+                    failTask("引擎内部异常，任务已停止（可重试）");   // 守则附录 B「内部异常」分类
+                }
             } finally {
+                activeLlm = null;
                 running = false;
                 OverlayController ov = overlay();
                 if (ov != null) ov.taskEnded(resultShown);
@@ -148,6 +204,10 @@ public class AgentEngine {
 
     public void stop() {
         stopRequested = true;
+        // 立刻断开进行中的模型请求：只置标志位的话，用户要等最长 120 秒的读超时
+        // 才看到任务停下（手册 §15.2-2）。断开会让 chat() 抛 CancelledException。
+        LlmClient l = activeLlm;
+        if (l != null) l.cancel();
         CountDownLatch p = pauseLatch;   // 接管等待中也要能停止（零延迟夺回控制权）
         if (p != null) p.countDown();
         CountDownLatch a = authLatch;    // 授权等待中同理
@@ -190,7 +250,8 @@ public class AgentEngine {
     }
 
     // ---- 动作 schema（小布/小爱式：API/DeepLink/直达优先，界面兜底） ----
-    private static final String SCHEMA = "\n\n动作必须是单个 JSON 对象，字段 action 取值：\n" +
+    private static final String SCHEMA = "\n\n动作必须是单个 JSON 对象（词表版本 "
+            + ActionSchema.SCHEMA_VERSION + "），字段 action 取值：\n" +
             "【软件 API / DeepLink / 意图直达 —— 极速优先，能用 API 绝不手动点界面】\n" +
             "- {\"action\":\"open_api\",\"target\":\"app中文名或类型\",\"intent\":\"search|navigate|play|dial|browse\",\"param\":\"...\"}\n" +
             "  软件通用意图 API（自动构造标准 Android 意图直达）：\n" +
@@ -218,6 +279,8 @@ public class AgentEngine {
             "- {\"action\":\"swipe\",\"x1\":<int>,\"y1\":<int>,\"x2\":<int>,\"y2\":<int>,\"dur\":<int>} 滑动\n" +
             "- {\"action\":\"scroll\",\"direction\":\"up\"|\"down\"}    翻页\n" +
             "- {\"action\":\"key\",\"code\":<int>}                  按键(4=返回,3=主页,187=最近任务)\n" +
+            "- {\"action\":\"back\"}                              返回上一页（无障碍返回，比 key 4 更可靠，优先用）\n" +
+            "- {\"action\":\"home\"}                              回到桌面（比 key 3 更可靠）\n" +
             "- {\"action\":\"edge_back\",\"side\":\"left|right\"}    边缘手势返回(从屏幕左/右边缘向内滑，全面屏手势的「返回」)\n" +
             "- {\"action\":\"text\",\"text\":\"...\"}                 输入文字(支持中文，替换输入框内容；先 tap 聚焦输入框)\n" +
             "- {\"action\":\"wait\",\"ms\":<int>}                   等待页面加载(最长 8000ms)\n" +
@@ -230,6 +293,15 @@ public class AgentEngine {
             "3. 幂等与闭环：能直达不翻页；页面加载中先 wait；若动作执行后屏幕无任何变化，禁止重复点同一位置，必须换策略。\n" +
             "4. 敏感红线：涉及支付扣费、转账、发送敏感信息前必须使用 ask 提问获得许可。\n" +
             "5. 跨设备：仅当用户明确说「让设备X做Y」时才用 remote；本机能做的事不要绕道别的设备。收到的任务以「[跨设备指令]」开头时，说明它来自同账号的另一台设备——敏感操作仍必须向**本机用户**ask 确认，跨设备指令不继承下发方的任何授权。\n" +
+            "6. 打开应用只用 app 动作：不确定是否安装也先用 app，包名不确定就先 list_apps 查一次。" +
+            "**严禁**为了打开某个应用而进入应用商店/应用市场（Play 商店、应用宝、各家自带市场）去搜索或安装，" +
+            "也严禁用「搜索结果页」代替启动应用；目标应用确实不在设备上时用 fail 说明「未安装」，不要尝试安装。\n" +
+            "7. 启动应用后先确认前台已经是目标应用（下一步节点表会显示它）：若仍停在桌面或商店，" +
+            "改用 app 重试一次；再失败就 fail，不要绕道别的方式硬凑。\n" +
+            "8. 同一个动作连续两次都没让屏幕发生变化时，第三次必须换完全不同的思路" +
+            "（换动作类型、换目标节点、或先 wait），绝不允许原样重复。\n" +
+            "9. 低风险任务（打开应用/页面、查看信息）不要用 ask 打断用户；" +
+            "只有支付、转账、发送消息、删除数据、同意协议这类不可逆动作才必须 ask。\n" +
             "节点编号每一步都会重新分配——只能使用最新节点表里的编号，严禁沿用上一步的旧编号。" +
             "任务只是「打开某应用/页面」时，看到该应用主界面出现就立即 done，不要继续探索；" +
             "「打开A并滚动/点击一下」类任务，完成那一个动作就 done。" +
@@ -317,7 +389,9 @@ public class AgentEngine {
         LlmClient llm = LlmClient.forPrefs(app, prefs, prefs.model())
                 .visionModel(prefs.visionModel())
                 .tokenListener((p, c, t) -> prefs.addTokens(p, c, t));
+        activeLlm = llm;   // 登记给 stop()：停止时直接断开进行中的请求
         int maxSteps = prefs.maxSteps();
+        unregisteredRetries = 0;
         boolean vision = prefs.vision();
 
         log("任务启动: " + task + " (model=" + prefs.model() + (vision ? " +vision" : "") + ")");
@@ -355,8 +429,16 @@ public class AgentEngine {
         boolean prevFailed = false;
 
         try {
+        long startedAt = android.os.SystemClock.elapsedRealtime();
         for (step = 1; step <= maxSteps; step++) {
             if (stopRequested) { log("任务已被用户停止"); history("终止", "用户停止"); return; }
+            if (android.os.SystemClock.elapsedRealtime() - startedAt > MAX_TASK_MILLIS) {
+                failTask("任务超时（超过 " + (MAX_TASK_MILLIS / 60000) + " 分钟），已停止——请缩小任务范围后重试");
+                return;
+            }
+            // 每步开头统一收紧历史：原先只在循环末尾裁剪，而多条 continue 分支
+            // （解析失败、提问、执行失败…）会绕过它，导致上下文持续膨胀（§15.2-10）。
+            messages = trimHistory(messages, HISTORY_KEEP);
 
             AgentA11yService svc = AgentA11yService.get();
             if (svc == null) {
@@ -367,6 +449,26 @@ public class AgentEngine {
                     if (svc != null) break;
                 }
                 if (svc == null) { failTask("无障碍服务断开，任务中止"); return; }
+            }
+
+            // 最小完成复验：核对上一步「打开应用/设置页」是否真的生效。
+            // 拿不到前台包名（无 a11y/受限设备）时不下结论——宁可少判，不可误判。
+            String pkgNow = svc.activePackage();
+            if (pkgNow != null && !pkgNow.isEmpty()) {
+                if (foregroundPkg == null) {
+                    foregroundPkg = pkgNow;
+                } else if (!pkgNow.equals(foregroundPkg)) {
+                    sawForegroundChange = true;
+                    foregroundPkg = pkgNow;
+                }
+                String stale = verifyExpectation(pkgNow);
+                if (stale != null) {
+                    log("完成复验未通过：" + stale);
+                    messages.put(LlmClient.textMsg("user", stale));
+                    expectPkg = null;
+                    expectLabel = null;
+                    continue;
+                }
             }
 
             // 补充通道（报告 §4.2.2「补充」按钮：追加指令在线修正，任务不中断）
@@ -408,12 +510,36 @@ public class AgentEngine {
             // 本助手拉应用引发的系统启动确认弹窗（「"Agent Lite"想要打开"XX"」）——
             // 用户已在事前授权过该应用，代点「仅本次允许」继续，不打断任务（报告 §5.1.1 授权覆盖语义）
             if (autoConfirmLaunch(svc, nodes)) { sleep(800); continue; }
-            // 自动确定服务条款/用户协议/隐私政策弹窗
-            if (autoAgreeTerms(svc, nodes)) { sleep(800); continue; }
+            // 服务条款/隐私政策 = 用户的不可逆授权：**不代点**，暂停交给用户
+            // （手册 §16.2 P0-2；引擎不替用户同意任何协议）
+            if (isTermsDialog(nodes)) {
+                log("检测到服务条款/隐私政策弹窗：暂停并等待你自行确认（引擎不代点）");
+                if (!enterPause("检测到服务条款/隐私政策，请自行确认后点「交还 AI」继续")) {
+                    history("终止", "接管期间用户停止");
+                    return;
+                }
+                continue;
+            }
             if (nodes.isEmpty()) {   // 加载中的空屏不值得问模型
                 sleep(1200);
                 nodes = svc.collectNodes();
             }
+            // 弱期望核验：open_url/open_api/纯视觉坐标点击必须让屏幕内容变化
+            String fpNow = NodeInfo.fingerprint(nodes);
+            if (expectEffect != null) {
+                String effLabel = expectEffect;
+                expectEffect = null;
+                if (lastScreenFp != null && fpNow.equals(lastScreenFp) && !sawForegroundChange) {
+                    log("完成复验未通过（屏幕无变化）：" + effLabel);
+                    messages.put(LlmClient.textMsg("user",
+                            "上一步「" + effLabel + "」执行后屏幕内容没有任何变化，说明它可能没有生效。"
+                                    + "请换一种方式重试（换动作类型、换目标节点，或先 wait 再判断）；"
+                                    + "确认做不到就用 fail 说明原因。"));
+                    lastScreenFp = fpNow;
+                    continue;
+                }
+            }
+            lastScreenFp = fpNow;
             zeroNodeSteps = nodes.isEmpty() ? zeroNodeSteps + 1 : 0;
             // 受限应用强制纯视觉：丢弃可读节点，保持「只看截图」的一致性
             if (visionForced && !nodes.isEmpty()) { nodes = new java.util.ArrayList<>(); zeroNodeSteps++; }
@@ -506,6 +632,27 @@ public class AgentEngine {
                 log("额度不足: " + qe.getMessage());
                 failTask("额度不足——请在「设置 → 账号与额度」用兑换码充值后重试");
                 return;
+            } catch (LlmClient.CancelledException ce) {
+                // 用户点了「停止」→ 连接被主动断开：正常终止，不是失败
+                log("任务已停止");
+                history("终止", "用户停止");
+                return;
+            } catch (LlmClient.UpstreamRejectedException ure) {
+                // 上游明确拒绝（欠费/密钥失效/无权限）：给出人话归因 + 可执行的下一步，
+                // 不要把云厂商原文甩给用户（手册 §16.2 P0-4）
+                log("上游拒绝（技术细节仅日志）：" + trim(String.valueOf(ure.getMessage()), 300));
+                // 区分通道：账号额度不可用是**服务端**的事，用户改自己的设置没用；
+                // 自备配置不可用才是用户能自己处理的（手册 §16.2 P0-4：下一步必须可执行）
+                String reason;
+                if (ure.humanReason.contains("备用通道同样不可用")) {
+                    reason = "两条模型通道都不可用：" + ure.humanReason;
+                } else if (ure.viaGateway) {
+                    reason = "账号额度暂时不可用：" + ure.humanReason + "（服务端上游问题，非本机设置）";
+                } else {
+                    reason = ure.humanReason + "（在「设置 → 高级」里填写的那份接口配置）";
+                }
+                failTask(reason);
+                return;
             } catch (Exception e) {
                 log("模型调用失败: " + e);                        // 细节只进 logcat
                 failTask("模型调用失败——请检查网络与 API 配置后重试");   // 守则附录 B「模型调用失败」
@@ -523,6 +670,20 @@ public class AgentEngine {
             }
 
             String kind = action.optString("action", "");
+            if (!ActionSchema.isRegistered(kind)) {
+                // §16.5：不合法动作只允许一次短错误回灌（不执行、不猜测、不静默）
+                log("未注册动作：" + kind + "（词表版本 " + ActionSchema.SCHEMA_VERSION + "）");
+                unregisteredRetries++;
+                if (unregisteredRetries > MAX_UNREGISTERED_RETRIES) {
+                    failTask("模型连续给出不存在的动作，无法继续（可重试或更换模型）");
+                    return;
+                }
+                messages.put(LlmClient.textMsg("assistant", reply));
+                messages.put(LlmClient.textMsg("user",
+                        "动作 \"" + kind + "\" 不存在。只能用词表里列出的动作（词表版本 "
+                                + ActionSchema.SCHEMA_VERSION + "），请重新只输出一个合法 JSON 动作。"));
+                continue;
+            }
             if ("ask".equals(kind)) {
                 String q = action.optString("question", "");
                 log("向用户提问: " + q);
@@ -541,6 +702,18 @@ public class AgentEngine {
                 continue;
             }
             if ("done".equals(kind)) {
+                // 复验先行：一次都没观察到前台变化、也没给出可核对的到达目标时，
+                // 先要求模型自证（只追问一次；第二次直接接受，避免把用户卡在循环里）
+                if (!sawForegroundChange && expectPkg == null && !doneVerifyAsked) {
+                    doneVerifyAsked = true;
+                    log("done 缺少完成证据，向模型追问一次");
+                    messages.put(LlmClient.textMsg("assistant", reply));
+                    messages.put(LlmClient.textMsg("user",
+                            "还没有观察到任务完成的证据（前台应用/页面在本轮没有变化）。"
+                                    + "请确认目标是否真的达成：已达成则用一句 summary 说明**依据**后再 done；"
+                                    + "未达成请继续执行，做不到就如实输出 fail。"));
+                    continue;
+                }
                 // 完成卡片（报告 §4.3.1）：绿色语义，摘要+产物收口
                 String summary = action.optString("summary", "完成");
                 log("任务完成：" + summary);
@@ -556,10 +729,29 @@ public class AgentEngine {
                 return;
             }
 
+            // 硬防线：任务没要求装应用时，不允许在应用商店里操作
+            if (isAppStoreForeground(svc) && !taskAllowsStore()) {
+                log("拦截：前台是应用商店，而任务未要求安装/搜索应用");
+                messages.put(LlmClient.textMsg("assistant", reply));
+                messages.put(LlmClient.textMsg("user",
+                        "当前前台是应用商店，但任务并没有要求安装或搜索应用，因此这一步被拒绝执行。"
+                                + "请用 app 动作直接启动目标应用（包名不确定就先 list_apps），"
+                                + "或改用 setting/open_url；目标应用确实不在设备上时用 fail 说明「未安装」。"
+                                + "严禁在商店里搜索、下载或安装任何应用。"));
+                continue;
+            }
+
             String execErr = null;
             String label = kind;
             try {
                 label = exec(svc, action, nodes);
+                // 登记弱期望：这三类动作没有可预知的「目标包名」，但都必须让屏幕变化。
+                // text 由无障碍层返回值保证（setText 成功即写入成功）；remote 是跨设备，
+                // 本机屏幕本就不该变化——都不登记。
+                if (kind.equals("open_url") || kind.equals("open_api")
+                        || (kind.equals("tap") && !action.has("index"))) {
+                    expectEffect = label;
+                }
             } catch (StoppedException se) {
                 log("任务已被用户停止");
                 history("终止", "用户停止");
@@ -647,14 +839,7 @@ public class AgentEngine {
 
             messages.put(LlmClient.textMsg("assistant", reply));
             messages.put(LlmClient.textMsg("user", nextMsg));
-            // 保留 system + 任务 + 最近 8 条
-            while (messages.length() > 10) {
-                JSONArray trimmed = new JSONArray();
-                trimmed.put(messages.get(0));
-                trimmed.put(messages.get(1));
-                for (int i = messages.length() - 8; i < messages.length(); i++) trimmed.put(messages.get(i));
-                messages = trimmed;
-            }
+            messages = trimHistory(messages, HISTORY_KEEP);
             status();
         }
         } finally {
@@ -680,6 +865,60 @@ public class AgentEngine {
      * 因此这里是**唯一加工点**：卡片、胶囊、通知三处展示的文案都取自 uiReason()，
      * 原始文案（可能含异常类名/堆栈/内部字段）只进 logcat。
      */
+    /**
+     * 裁剪对话历史：保留「首条 system + 任务描述 + 最近 keep 条」。
+     *
+     * <p>历史里每条感知消息可能带几十个节点文本，不裁剪的话长任务会把上下文
+     * 撑到几百 KB——既拖慢请求，也可能超出模型上下文被直接拒绝（手册 §15.2-10）。
+     */
+    private static JSONArray trimHistory(JSONArray messages, int keep) {
+        if (messages == null || messages.length() <= keep + 2) return messages;
+        JSONArray trimmed = new JSONArray();
+        trimmed.put(messages.opt(0));
+        trimmed.put(messages.opt(1));
+        for (int i = messages.length() - keep; i < messages.length(); i++) {
+            Object o = messages.opt(i);
+            if (o != null) trimmed.put(o);
+        }
+        return trimmed;
+    }
+
+    /** 当前前台是否为应用商店/应用市场。 */
+    private boolean isAppStoreForeground(AgentA11yService svc) {
+        String pkg = svc.activePackage();
+        if (pkg == null || pkg.isEmpty()) return false;
+        String low = pkg.toLowerCase(java.util.Locale.US);
+        for (String marker : APP_STORE_MARKERS) {
+            if (low.contains(marker)) return true;
+        }
+        return false;
+    }
+
+    /** 任务是否**明确**要求装应用（只有这种情况才放行商店操作）。 */
+    private boolean taskAllowsStore() {
+        String t = currentTask == null ? "" : currentTask.toLowerCase(java.util.Locale.US);
+        return t.contains("安装") || t.contains("下载") || t.contains("应用商店")
+                || t.contains("应用市场") || t.contains("商店里") || t.contains("install")
+                || t.contains("download");
+    }
+
+    /**
+     * 核对上一步的期望是否达成（SPEC-UX-001 §7）。
+     *
+     * @return 需要回灌给模型的一句话；null = 通过或无期望
+     */
+    private String verifyExpectation(String currentPkg) {
+        String want = expectPkg;
+        String label = expectLabel;
+        if (want == null) return null;
+        expectPkg = null;
+        expectLabel = null;
+        if (currentPkg == null || currentPkg.isEmpty()) return null;
+        if (currentPkg.contains(want)) return null;
+        return "上一步「" + label + "」似乎没有生效：当前前台应用是 " + currentPkg
+                + "，不是预期的 " + want + "。请确认后换一种方式重试（或如实说明失败原因）。";
+    }
+
     private void failTask(String reason) {
         String raw = reason == null ? "" : reason;
         String shown = UiText.uiReason(raw);
@@ -691,7 +930,7 @@ public class AgentEngine {
         history("失败", shown);
         KeepAliveService.updateProgress(app, currentTask, "未完成: " + shown, step, 0);
         OverlayController ov = overlay();
-        if (ov != null) { resultShown = true; ov.showFail(shown); }
+        if (ov != null) { resultShown = true; ov.showFail(shown, raw.trim()); }
     }
 
     
@@ -777,56 +1016,30 @@ public class AgentEngine {
     }
 
     /**
-     * 自动确定服务条款/隐私政策/用户协议弹窗（常见于首次安装或应用更新后）。
-     * 识别「服务协议/条款/隐私政策」相关的提示，并代点「同意并继续/同意/同意并使用/接受」。
+     * 是否为「服务条款 / 隐私政策 / 用户协议」类弹窗——**只检测，不代点**。
+     *
+     * <p>此前这里是 {@code autoAgreeTerms()}：识别到条款弹窗后替用户点「同意并继续」、
+     * 甚至代勾「已阅读并同意」。那是在替用户作出**不可逆的法律授权**，
+     * 违反手册 §16.2 P0-2 与 §16.5 第 4 步（协议、付费、权限条款必须人工确认）。
+     *
+     * <p>现在只回答"是不是条款弹窗"，处理方式是**暂停并把控制权交还用户**
+     * （见任务循环里的 {@code enterPause}）——用户自己在屏幕上点同意或拒绝，
+     * 点完「交还 AI」任务继续。
      */
-    private boolean autoAgreeTerms(AgentA11yService svc, List<NodeInfo> nodes) {
-        boolean isTermsDialog = false;
+    private boolean isTermsDialog(List<NodeInfo> nodes) {
+        if (nodes == null || nodes.isEmpty()) return false;
         for (NodeInfo n : nodes) {
             String l = n.label();
             if (l.contains("服务条款") || l.contains("服务协议") || l.contains("隐私政策")
                     || l.contains("用户协议") || l.contains("隐私协议") || l.contains("用户许可")
                     || l.contains("个人信息保护政策") || l.contains("个人信息保护指引")
                     || l.contains("协议与隐私政策") || l.contains("同意协议")) {
-                isTermsDialog = true;
-                break;
-            }
-        }
-        if (!isTermsDialog) return false;
-
-        // 1. 优先点击包含明确「同意」并有动作倾向的按钮
-        for (NodeInfo n : nodes) {
-            String l = n.label();
-            if (n.clickable && (l.equals("同意并继续") || l.equals("同意") || l.equals("同意并使用")
-                    || l.equals("同意并接受") || l.equals("我同意") || l.equals("已阅读并同意")
-                    || l.equals("接受") || l.equals("同意并进入") || l.equals("确定"))) {
-                log("检测到服务条款/用户协议弹窗，自动确定「" + l + "」");
-                if (n.index >= 0 && svc.tapNode(n.index)) return true;
-                return svc.tap(n.cx, n.cy);
-            }
-        }
-
-        // 2. 检查是否有未勾选的协议复选框（部分 App 要求勾选后才亮起同意按钮）
-        for (NodeInfo n : nodes) {
-            String l = n.label();
-            if (n.clickable && (l.contains("已阅读并同意") || l.contains("同意《") || l.contains("阅读并同意"))) {
-                log("检测到服务条款勾选框，自动代点勾选「" + l + "」");
-                if (n.index >= 0 && svc.tapNode(n.index)) { sleep(300); }
-                else { svc.tap(n.cx, n.cy); sleep(300); }
-            }
-        }
-
-        // 3. 再次查找可点击的同意/继续/进入按钮
-        for (NodeInfo n : nodes) {
-            String l = n.label();
-            if (n.clickable && (l.contains("同意") || l.equals("确定") || l.equals("进入") || l.equals("开始使用"))) {
-                log("自动确定服务条款「" + l + "」");
-                if (n.index >= 0 && svc.tapNode(n.index)) return true;
-                return svc.tap(n.cx, n.cy);
+                return true;
             }
         }
         return false;
     }
+
 
     private void pushScreen(Bitmap bmp) {
         Listener l = listener;
@@ -988,6 +1201,9 @@ public class AgentEngine {
             if (ov != null) ov.progress("规划路径中…");
             LlmClient planner = LlmClient.forPrefs(app, prefs, plannerModel)
                     .tokenListener((p, c, t) -> prefs.addTokens(p, c, t));
+            // 规划请求同样登记：它先于主循环发出，用户在规划阶段点停止时
+            // 必须能一起断开（真机实测：停止后任务卡在规划请求上等满 connect 超时）。
+            activeLlm = planner;
             JSONArray msgs = new JSONArray();
             msgs.put(LlmClient.textMsg("system",
                     "你是手机自动化极速规划引擎。提炼用户任务的结构化执行路径，输出 3 行纯文本，严禁废话：\n" +
@@ -1163,6 +1379,8 @@ public class AgentEngine {
                 startApp(pkg);
                 sleep(1000);   // 应用启动等待调优为 1.0s，大幅加速执行响应
                 lastApp = pkg;
+                expectPkg = pkg;
+                expectLabel = "打开应用 " + pkg;
                 return "app " + pkg;
             }
             case "setting": {
@@ -1170,6 +1388,10 @@ public class AgentEngine {
                 String intentAction = SETTINGS_PAGES.get(page.toLowerCase());
                 if (intentAction == null) throw new Exception("未知设置页 " + page);
                 startActivity(new Intent(intentAction));
+                // 设置应用的包名因厂商而异（com.android.settings / com.oplus.settings…），
+                // 这里用片段匹配，避免把「已打开但包名不同」误判成失败
+                expectPkg = "settings";
+                expectLabel = "打开设置页 " + page;
                 return "setting " + page;
             }
             case "open_url": {

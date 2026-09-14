@@ -133,25 +133,25 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
         wire();
         handleIntent(getIntent());
         KeepAliveService.start(this);
-        if (android.os.Build.VERSION.SDK_INT >= 33
-                && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
-                        != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS}, 42);
-        }
-        requestPermissions(new String[]{
-                Manifest.permission.RECORD_AUDIO,
-                Manifest.permission.POST_NOTIFICATIONS}, 1);
+        // SPEC-UX-001 §5（权限渐进申请）：启动期**不**再一次性索要录音 + 通知权限。
+        // 录音权限在第一次点「语音」时申请（见 toggleMic），通知权限在第一次真正
+        // 跑任务时申请（见 ensureNotifyPermission）——用户先明白要做什么，再被问权限。
 
         // 功能启用级弹窗（报告 §5.1.1：首次打开时告知操作与权限使用场景）
         if (!prefs.sp.getBoolean("intro_shown", false)) {
             prefs.sp.edit().putBoolean("intro_shown", true).apply();
             new android.app.AlertDialog.Builder(this)
                     .setTitle("Agent 操作手机说明")
-                    .setMessage("本助手通过无障碍服务读取屏幕并模拟点击来替你操作手机：\n"
-                            + "· 任务执行中屏幕边缘会出现粉色呼吸光晕，顶部胶囊显示进展\n"
-                            + "· 支付、协议、验证码等敏感环节会强制暂停，由你手动完成\n"
-                            + "· 点顶部胶囊可随时接管、补充指令或停止\n"
-                            + "· 任务结束后可在「历史 / 授权 / 生态 / 记忆」中回查与撤回")
+                    .setMessage("本助手通过无障碍服务读取屏幕并模拟点击来替你操作手机。开始前，先说清三件事：\n\n"
+                            + "【数据去哪】屏幕内容与截图会发送给你配置的模型服务（登录账号时走账号额度网关），"
+                            + "用于决定下一步点哪里；本机不额外上传其它数据。\n\n"
+                            + "【谁在控制】任务期间由助手操作手机；你随时可以夺回控制权——\n"
+                            + "· 屏幕边缘的粉色呼吸光晕 = 助手正在操作，光晕熄灭 = 已暂停\n"
+                            + "· 点顶部胶囊可接管、补充指令或停止\n\n"
+                            + "【怎么停】点胶囊里的「停止」立即结束；点「接管」则暂停等你操作，"
+                            + "处理完点「交还 AI」继续。\n\n"
+                            + "支付、协议、验证码等敏感环节会强制暂停，由你手动完成；"
+                            + "任务结束后可在「历史 / 授权 / 记忆」中回查与撤回。")
                     .setPositiveButton("知道了", null)
                     .show();
         }
@@ -332,6 +332,13 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
             etTask.setText("");
             return;
         }
+        if (!hasUsableCredential()) {
+            // SPEC-UX-001 §3：无凭据时**禁止**向模型发请求。此前会直接启动任务、
+            // 打一次注定失败的请求，再报「请检查 API 配置」——用户既看不懂也不知道
+            // 下一步该做什么（手册 §16.2 P0-1）。改为前置拦截 + 一张可操作的解决卡。
+            showCredentialCard();
+            return;
+        }
         if (AgentA11yService.get() == null) {
             // 服务可能刚被系统重绑（例：刚从无障碍设置页返回）——短暂等待重试，
             // 避免带着空感知启动任务（10 轮检查实测：会让模型看到「未开启」提示而误判失败）
@@ -340,6 +347,54 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
             return;
         }
         startTask(task);
+    }
+
+    /**
+     * 是否有可用的「大脑」配置？三条合法路径（手册 §16.5 第 3 步）：
+     *
+     * <ol>
+     *   <li><b>账号登录</b>：用账号额度，推荐路径，不需要用户懂任何云服务概念；</li>
+     *   <li><b>自带 Key</b>：高级路径，用户自己填了直连配置；</li>
+     *   <li>未登录但已填 Key：同样可用（离线场景）。</li>
+     * </ol>
+     *
+     * <p>令牌被判失效（401）也算不可用——继续跑只会得到一串 401。
+     */
+    private boolean hasUsableCredential() {
+        if (!prefs.apiKey().isEmpty()) return true;          // 自带 Key（含高级路径）
+        if (prefs.useOwnKey()) return false;                 // 明确选择自带 Key 但没填
+        return prefs.loggedIn() && !prefs.accountInvalid();  // 账号额度路径
+    }
+
+    /**
+     * 通知权限延迟到**首次真正跑任务**时申请（SPEC-UX-001 §5）。
+     *
+     * <p>它只影响前台服务进度通知是否可见：不授予任务照样能跑，所以没必要在
+     * 启动瞬间抛给用户一个「为什么要通知」的疑问。只问一次，拒绝后不再纠缠。
+     */
+    private void ensureNotifyPermission() {
+        if (android.os.Build.VERSION.SDK_INT < 33) return;
+        if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
+                == android.content.pm.PackageManager.PERMISSION_GRANTED) return;
+        if (prefs.sp.getBoolean("notify_asked", false)) return;
+        prefs.sp.edit().putBoolean("notify_asked", true).apply();
+        requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS}, 42);
+    }
+
+    /** 无凭据时的解决卡：人话解释 + 唯一主按钮 + 一条备选路径（SPEC-UX-001 §4）。 */
+    private void showCredentialCard() {
+        String msg = "助手需要一个「大脑」才能理解你的指令，现在还差最后一步：\n\n"
+                + "· 登录账号 —— 直接使用账号额度，推荐，不需要任何配置\n"
+                + "· 已经有自己的配置 —— 进入设置填写后即可使用\n\n"
+                + "两种方式都只在你的设备与本机之间使用，随时可以在设置里更换或退出登录。";
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("还差一步就能开始")
+                .setMessage(msg)
+                .setPositiveButton("登录 / 领取额度", (d, w) ->
+                        startActivity(new Intent(this, LoginActivity.class)))
+                .setNeutralButton("打开设置", (d, w) -> openSettings())
+                .setNegativeButton("稍后", null)
+                .show();
     }
 
     /**
@@ -355,6 +410,8 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
             toast("网络不可用：请检查手表 WiFi（省电模式下会被关闭）");
             return;
         }
+        // 走到这里说明真要跑任务了：此时才解释并申请通知权限（SPEC-UX-001 §5）
+        ensureNotifyPermission();
         acquireWifiLock();
         engine.start(task);
         toast("任务已启动，可上滑划出，灵动岛将实时显示进度");
@@ -444,6 +501,13 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
             return;
         }
         recorder = new VoiceRecorder();
+        final VoiceRecorder r = recorder;
+        // 30 秒上限到点自动收尾：与用户主动点「结束」走同一条路径
+        r.setOnAutoStop(() -> ui.post(() -> {
+            if (recorder != r) return;      // 已被其它路径结束
+            onLog("录音已达 30 秒上限，自动结束");
+            toggleMic();
+        }));
         if (recorder.start()) {
             btnMic.setText("■");
             onLog("录音中…再点一次结束");

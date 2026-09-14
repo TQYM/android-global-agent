@@ -30,6 +30,9 @@ public class LlmClient {
     private String fbBaseUrl;
     private String fbApiKey;
     private boolean onFallback;
+    /** 主/备通道是否为「账号额度网关」——决定失败归因该指向哪一侧（手册 §16.2 P0-4）。 */
+    private boolean primaryIsGateway;
+    private boolean fallbackIsGateway;
 
     /**
      * 额度耗尽（网关返回 402）。
@@ -41,6 +44,118 @@ public class LlmClient {
     public static class QuotaExhaustedException extends Exception {
         public QuotaExhaustedException(String msg) { super(msg); }
     }
+
+    /**
+     * 用户主动停止导致的取消（不是网络故障）。
+     *
+     * <p>单独成类，是为了让上层把「我让你停的」与「网络出错」分开：前者不该报错、
+     * 不该触发网关回退、也不该被算作任务失败。
+     */
+    public static class CancelledException extends Exception {
+        public CancelledException(String msg) { super(msg); }
+    }
+
+    /**
+     * 上游明确拒绝了请求（欠费 / 密钥失效 / 无权限 / 模型不存在）。
+     *
+     * <p>与「网络故障」完全两回事：网络故障重试可能成功，而欠费重试一百次也一样。
+     * 单独成类是为了让引擎给出**能照着做**的归因（手册 §16.2 P0-4），
+     * 而不是笼统地甩一句「请检查网络与 API 配置」。
+     */
+    public static class UpstreamRejectedException extends Exception {
+        /** 面向用户的人话原因（不含云厂商原文）。 */
+        public final String humanReason;
+        /** 是否值得换一条通道重试（例如自备 Key 欠费 → 改用账号额度）。 */
+        public final boolean retryOnOtherChannel;
+        /** 拒绝发生在**账号额度网关**通道上（true）还是用户自备配置上（false）。 */
+        public final boolean viaGateway;
+
+        UpstreamRejectedException(String humanReason, String rawDetail,
+                                  boolean retryOnOtherChannel, boolean viaGateway) {
+            super(rawDetail);
+            this.humanReason = humanReason;
+            this.retryOnOtherChannel = retryOnOtherChannel;
+            this.viaGateway = viaGateway;
+        }
+    }
+
+    /**
+     * 把上游错误体翻译成人话（只认关键词，不做猜测）。
+     *
+     * <p>典型来源：DashScope 欠费返回 {@code "type":"Arrearage"}；OpenAI 兼容网关
+     * 密钥错误返回 {@code invalid_api_key}；模型名不存在返回 {@code model_not_found}。
+     */
+    static UpstreamRejectedException classifyUpstream(int code, String text, boolean viaGateway) {
+        String t = text == null ? "" : text.toLowerCase(java.util.Locale.US);
+        if (t.contains("arrearage") || t.contains("overdue") || t.contains("insufficient")
+                || t.contains("balance") || t.contains("欠费") || t.contains("余额不足")) {
+            return new UpstreamRejectedException(
+                    "接口账号余额不足（欠费），模型无法调用", text, true, viaGateway);
+        }
+        if (t.contains("invalid_api_key") || t.contains("incorrect api key")
+                || t.contains("invalid api key") || t.contains("unauthorized")
+                || t.contains("authentication")) {
+            return new UpstreamRejectedException(
+                    "接口密钥无效或已失效（可能被撤销或填错）", text, true, viaGateway);
+        }
+        if (t.contains("model_not_found") || t.contains("model not found")
+                || t.contains("does not exist") || t.contains("no such model")) {
+            return new UpstreamRejectedException(
+                    "所选的模型名在接口方不存在或未开通", text, false, viaGateway);
+        }
+        if (t.contains("access denied") || t.contains("permission")
+                || t.contains("forbidden") || t.contains("not authorized")) {
+            return new UpstreamRejectedException(
+                    "接口账号没有调用该模型的权限", text, false, viaGateway);
+        }
+        if (code == 401 || code == 403) {
+            return new UpstreamRejectedException("接口拒绝了本次调用（密钥或权限问题）", text, true, viaGateway);
+        }
+        return new UpstreamRejectedException("接口方拒绝了本次请求", text, false, viaGateway);
+    }
+
+    /** 单次响应体上限。正常响应是几 KB 的 JSON，超过 1MB 只可能是异常或恶意上游。 */
+    private static final int MAX_RESPONSE_BYTES = 1 << 20;
+
+    /**
+     * 网络调用线程池。
+     *
+     * <p>存在的唯一理由是让「取消」不必等阻塞中的 socket：请求在池线程里跑，
+     * 主循环轮询结果并检查取消标志（见 {@link #chatCancellable}）。
+     * daemon 线程 + cached 池：空闲线程自动回收，也不会拖住进程退出。
+     */
+    private static final java.util.concurrent.ExecutorService NET_POOL =
+            java.util.concurrent.Executors.newCachedThreadPool(r -> {
+                Thread t = new Thread(r, "llm-net");
+                t.setDaemon(true);
+                return t;
+            });
+
+    /** 取消检查间隔。越小越即时、越大越省电；200ms 对交互已无感。 */
+    private static final long CANCEL_POLL_MS = 200;
+
+    /** 正在进行的连接（供 {@link #cancel()} 断开）。 */
+    private volatile HttpURLConnection active;
+    private volatile boolean cancelled;
+
+    /**
+     * 取消当前与后续请求：断开正在读的连接并置位取消标志。
+     *
+     * <p>此前 {@code AgentEngine.stop()} 只能置一个标志位，而一次读最长等 120 秒
+     * （手册 §15.2-2）——用户点了「停止」却要盯着屏幕等两分钟才动。{@code disconnect()}
+     * 会让阻塞中的 read 立刻抛 IOException，再在这里被识别成 {@link CancelledException}。
+     */
+    public void cancel() {
+        cancelled = true;
+        HttpURLConnection c = active;
+        if (c != null) {
+            try { c.disconnect(); } catch (Exception ignored) { }
+        }
+    }
+
+    /** 是否已被取消（引擎在循环里据此快速退出）。 */
+    public boolean isCancelled() { return cancelled; }
+
     private String visionModel;   // 含图消息时切换（纯文本模型配视觉搭档）
     private TokenUsageListener tokenListener;
 
@@ -67,7 +182,19 @@ public class LlmClient {
         // 此时**必须让开网关**——否则网关一直顶在前面，刚写入的那张 Key 永远用不上
         // （PURCHASE_REDIRECT_DESIGN 决策 4：这批用户关闭 use_gateway）。
         if (p.useOwnKey()) {
-            return new LlmClient(p.baseUrl(), p.apiKey(), model);
+            LlmClient own = new LlmClient(p.baseUrl(), p.apiKey(), model);
+            // 自带 Key 是高级路径，但它一旦欠费/失效，用户会完全用不了——而此时
+            // 账号额度往往还可用。把它登记为备用通道：上游拒绝且"换通道可能有用"时自动改用
+            // 账号额度，并在日志里说清楚（手册 §16.2 P0-3：优先让普通用户用账号额度）。
+            if (p.loggedIn() && !p.accountInvalid()) {
+                String gwBase = SyncClient.serverBase(ctx);
+                String token = p.accountToken();
+                if (!gwBase.isEmpty() && !token.isEmpty()) {
+                    own.fallback(gwBase + "/v1", token);
+                    own.fallbackIsGateway = true;
+                }
+            }
+            return own;
         }
         if (p.loggedIn() && p.sp.getBoolean("use_gateway", true)) {
             String base = SyncClient.serverBase(ctx);
@@ -75,8 +202,10 @@ public class LlmClient {
             if (!base.isEmpty() && !token.isEmpty()) {
                 // 备用是用户自填的直连配置：网关 5xx / 网络异常 / 上游鉴权失败时回退，
                 // 但 **402 额度耗尽绝不回退**——否则额度形同虚设。
-                return new LlmClient(base + "/v1", token, model)
+                LlmClient gw = new LlmClient(base + "/v1", token, model)
                         .fallback(p.baseUrl(), p.apiKey());
+                gw.primaryIsGateway = true;
+                return gw;
             }
         }
         return new LlmClient(p.baseUrl(), p.apiKey(), model);
@@ -124,20 +253,61 @@ public class LlmClient {
     public String chat(JSONArray messages) throws Exception {
         Exception last = null;
         for (int attempt = 0; attempt < 4; attempt++) {
+            if (cancelled) throw new CancelledException("任务已停止");
             try {
-                return chatOnce(messages);
+                return chatCancellable(messages);
             } catch (QuotaExhaustedException q) {
                 throw q;   // 额度耗尽：立即上抛，不做 429 那套退避重试（白等 2 分钟且不会成功）
+            } catch (CancelledException ce) {
+                throw ce;  // 用户取消：同理，不该退避重试
             } catch (Exception e) {
                 last = e;
                 String msg = String.valueOf(e.getMessage());
                 if (!msg.contains("HTTP 429") && !msg.contains("quota")) throw e;
                 int waitSec = 20 * (attempt + 1);
                 android.util.Log.i("LlmClient", "429 限流，" + waitSec + "s 后重试（第 " + (attempt + 1) + " 次）");
-                try { Thread.sleep(waitSec * 1000L); } catch (InterruptedException ie) { throw e; }
+                try {
+                    Thread.sleep(waitSec * 1000L);
+                } catch (InterruptedException ie) {
+                    // 恢复中断标志：被停止/接管打断时不该吞掉这个信号
+                    Thread.currentThread().interrupt();
+                    throw e;
+                }
             }
         }
         throw last;
+    }
+
+    /**
+     * 把一次请求交给网络线程执行，主线程轮询等待——这样「取消」不必等 socket。
+     *
+     * <p>为什么不能直接同步调用：{@code stop()} 里的 {@code disconnect()} 只能中断
+     * <b>已建立连接</b>的请求；连接阶段（地址不可达、DNS 慢）不响应它。真机实测
+     * （2026-09-14）：点停止后仍要等满 15 秒 connect 超时才退出，用户看到的是
+     * 「按了停止没反应」。轮询把两者解耦：主循环最多 200ms 就退出，滞留的 socket
+     * 在后台自然收尾，其返回值被丢弃（cancelled 已置位）。
+     */
+    private String chatCancellable(JSONArray messages) throws Exception {
+        java.util.concurrent.Future<String> f = NET_POOL.submit(() -> chatOnce(messages));
+        for (;;) {
+            if (cancelled) {
+                f.cancel(true);
+                throw new CancelledException("任务已停止");
+            }
+            try {
+                return f.get(CANCEL_POLL_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
+            } catch (java.util.concurrent.TimeoutException te) {
+                // 正常：继续轮询，既等结果也等取消
+            } catch (java.util.concurrent.ExecutionException ee) {
+                Throwable cause = ee.getCause();
+                if (cause instanceof Exception) throw (Exception) cause;
+                throw new Exception(String.valueOf(cause));
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                f.cancel(true);
+                throw new CancelledException("任务被中断");
+            }
+        }
     }
 
     private String chatOnce(JSONArray messages) throws Exception {
@@ -150,7 +320,12 @@ public class LlmClient {
                 .put("temperature", 0.0)
                 .put("max_tokens", 160);
         // 关闭冗余思考链或深度推理，追求毫秒级指令直出
-        if (baseUrl.contains("bigmodel.cn") || baseUrl.contains("aliyuncs.com") || baseUrl.contains("dashscope")) {
+        // 关闭思考链：智谱/通义用 thinking+enable_thinking；DeepSeek 实测**只认**
+        // {"thinking":{"type":"disabled"}}（enable_thinking / chat_template_kwargs 无效），
+        // 不关的话思考会把 max_tokens 吃满、content 返回空串（2026-09-15 实测）。
+        // 走账号额度网关时 URL 不含这些域名，由服务端在转发前注入同样的字段。
+        if (baseUrl.contains("bigmodel.cn") || baseUrl.contains("aliyuncs.com")
+                || baseUrl.contains("dashscope") || baseUrl.contains("deepseek")) {
             try {
                 body.put("thinking", new JSONObject().put("type", "disabled"));
                 body.put("enable_thinking", false);
@@ -172,9 +347,17 @@ public class LlmClient {
         }
         JSONArray choices = resp.optJSONArray("choices");
         if (choices == null || choices.length() == 0) {
-            throw new Exception("API 返回无 choices");
+            // 统一的「空结果」出口：上层据此给出可理解的失败原因，而不是拿空串去解析
+            // （手册 §15.2-10：空 choices / 空文本 / 非 JSON 的恢复策略要一致）
+            throw new Exception("模型返回空结果（choices 为空）");
         }
-        return choices.getJSONObject(0).getJSONObject("message").getString("content");
+        JSONObject first = choices.optJSONObject(0);
+        JSONObject msg = first == null ? null : first.optJSONObject("message");
+        String content = msg == null ? "" : msg.optString("content", "");
+        if (content == null || content.trim().isEmpty()) {
+            throw new Exception("模型返回空内容（可能触发内容策略或达到长度上限）");
+        }
+        return content;
     }
 
     /** 语音转文字。asrModel 为空 → 主模型 Omni 原生音频输入；否则走 /audio/transcriptions。 */
@@ -245,22 +428,40 @@ public class LlmClient {
         // 后续每次请求仍然先试主配置、失败、然后因为 onFallback 已置位而直接抛错——
         // 表现为「第一步能跑，第二步就挂」。实测在模拟器上复现过。
         if (onFallback) {
-            return postOnce(fbBaseUrl, fbApiKey, path, payload, contentType);
+            return postOnce(fbBaseUrl, fbApiKey, path, payload, contentType, fallbackIsGateway);
         }
         try {
-            return postOnce(baseUrl, apiKey, path, payload, contentType);
+            return postOnce(baseUrl, apiKey, path, payload, contentType, primaryIsGateway);
         } catch (QuotaExhaustedException q) {
             throw q;
+        } catch (CancelledException ce) {
+            throw ce;   // 取消不是「网关不可用」，绝不能因此回退到用户自己的 Key
+        } catch (UpstreamRejectedException ure) {
+            // 上游拒绝只有「换个通道可能好」时才回退（欠费/密钥失效 → 换账号额度有意义；
+            // 模型名不存在 → 换通道也一样失败，直接上抛）
+            if (!ure.retryOnOtherChannel || fbBaseUrl == null || fbBaseUrl.isEmpty()) throw ure;
+            android.util.Log.i(TAG, "上游拒绝（" + ure.humanReason + "），改用备用通道");
+            onFallback = true;
+            try {
+                return postOnce(fbBaseUrl, fbApiKey, path, payload, contentType, fallbackIsGateway);
+            } catch (UpstreamRejectedException ure2) {
+                // 两条通道都被上游拒绝：用户照着「换通道」的建议做也没用，
+                // 归因必须两边都说清楚，否则他会在两个设置之间来回改（§16.2 P0-4）
+                throw new UpstreamRejectedException(
+                        ure.humanReason + "；备用通道同样不可用：" + ure2.humanReason,
+                        ure2.getMessage(), false, ure2.viaGateway);
+            }
         } catch (Exception e) {
             if (fbBaseUrl == null || fbBaseUrl.isEmpty()) throw e;
             android.util.Log.i(TAG, "额度网关不可用，回退直连（原因：" + e.getMessage() + "）");
             onFallback = true;
-            return postOnce(fbBaseUrl, fbApiKey, path, payload, contentType);
+            return postOnce(fbBaseUrl, fbApiKey, path, payload, contentType, fallbackIsGateway);
         }
     }
 
     private JSONObject postOnce(String base, String key, String path, byte[] payload,
-                                String contentType) throws Exception {
+                                String contentType, boolean viaGateway) throws Exception {
+        if (cancelled) throw new CancelledException("任务已停止");
         HttpURLConnection conn = (HttpURLConnection) new URL(base + path).openConnection();
         // 额度网关是自签证书，系统 CA 库不认；命中内置证书的主机时套用 pin。
         // 直连 DashScope 时 covers() 为 false，行为与从前完全一致。
@@ -271,34 +472,68 @@ public class LlmClient {
         conn.setDoOutput(true);
         conn.setRequestProperty("Authorization", "Bearer " + key);
         conn.setRequestProperty("Content-Type", contentType);
-        conn.getOutputStream().write(payload);
-        int code = conn.getResponseCode();
-        InputStream is = code >= 400 ? conn.getErrorStream() : conn.getInputStream();
-        String text = readAll(is);
-        conn.disconnect();
-        if (code == 402) {
-            // 服务端会在 message 里给中文原因；「quota」字样刻意不出现在异常消息里，
-            // 否则 chat() 会把它误判成 429 限流类错误而白退避重试
-            String human = "额度不足，请在应用内使用兑换码充值";
+        active = conn;
+        try {
+            // 输出流必须关闭：不关会一直占着连接，服务端也可能等不到请求结束。
+            java.io.OutputStream os = conn.getOutputStream();
             try {
-                String m = new JSONObject(text).optString("message", "");
-                if (!m.isEmpty()) human = m;
-            } catch (Exception ignored) { }
-            throw new QuotaExhaustedException(human);
+                os.write(payload);
+                os.flush();
+            } finally {
+                try { os.close(); } catch (Exception ignored) { }
+            }
+            int code = conn.getResponseCode();
+            InputStream is = code >= 400 ? conn.getErrorStream() : conn.getInputStream();
+            String text = readAll(is);
+            if (code == 402) {
+                // 服务端会在 message 里给中文原因；「quota」字样刻意不出现在异常消息里，
+                // 否则 chat() 会把它误判成 429 限流类错误而白退避重试
+                String human = "额度不足，请在应用内使用兑换码充值";
+                try {
+                    String m = new JSONObject(text).optString("message", "");
+                    if (!m.isEmpty()) human = m;
+                } catch (Exception ignored) { }
+                throw new QuotaExhaustedException(human);
+            }
+            if (code == 400 || code == 401 || code == 403) {
+                // 上游明确拒绝：给出人话归因（细节仍在异常 message 里，只进日志）
+                throw classifyUpstream(code, text, viaGateway);
+            }
+            if (code != 200) {
+                throw new Exception("HTTP " + code + ": " +
+                        (text.length() > 200 ? text.substring(0, 200) : text));
+            }
+            return new JSONObject(text);
+        } catch (java.io.IOException e) {
+            // cancel() 会 disconnect 掉连接，读阻塞会立刻抛 IOException——
+            // 这里把「我们自己取消的」与真正的网络故障分开，后者才该触发回退。
+            if (cancelled) throw new CancelledException("任务已停止");
+            throw e;
+        } finally {
+            // 所有路径（含 402 抛出、JSON 解析失败、取消）都要断开，
+            // 否则长任务里的网络异常会持续泄漏连接与 fd（手册 §15.2-3）。
+            active = null;
+            conn.disconnect();
         }
-        if (code != 200) {
-            throw new Exception("HTTP " + code + ": " +
-                    (text.length() > 200 ? text.substring(0, 200) : text));
-        }
-        return new JSONObject(text);
     }
 
+    /** 读完响应体并关闭流；同时给响应体设上限，避免异常上游把内存吃光。 */
     private static String readAll(InputStream is) throws Exception {
         if (is == null) return "";
-        ByteArrayOutputStream buf = new ByteArrayOutputStream();
-        byte[] tmp = new byte[8192];
-        int n;
-        while ((n = is.read(tmp)) != -1) buf.write(tmp, 0, n);
-        return buf.toString("UTF-8");
+        try {
+            ByteArrayOutputStream buf = new ByteArrayOutputStream();
+            byte[] tmp = new byte[8192];
+            int n, total = 0;
+            while ((n = is.read(tmp)) != -1) {
+                total += n;
+                if (total > MAX_RESPONSE_BYTES) {
+                    throw new java.io.IOException("响应体超过 1MB 上限");
+                }
+                buf.write(tmp, 0, n);
+            }
+            return buf.toString("UTF-8");
+        } finally {
+            try { is.close(); } catch (Exception ignored) { }
+        }
     }
 }

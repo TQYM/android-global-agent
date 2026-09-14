@@ -9,10 +9,18 @@ import android.content.SharedPreferences;
 public final class Prefs {
     private static final String FILE = "agent_prefs";
 
+    /** 旧版账号令牌的明文键（迁移用，见 {@link #accountToken()}）。 */
+    private static final String LEGACY_ACCOUNT_TOKEN = "account_token";
+    private static final String TAG = "AgentLitePrefs";
+
     public final SharedPreferences sp;
+
+    /** 账号令牌的加密存储（Keystore AES-GCM），不再走明文 SharedPreferences。 */
+    private final TokenStore tokens;
 
     public Prefs(Context ctx) {
         sp = ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE);
+        tokens = new TokenStore(ctx);
     }
 
     public String baseUrl() {
@@ -254,10 +262,30 @@ public final class Prefs {
 
     // ---- 账号体系（agentlite-server） ----
     // 鉴权模型：账号令牌（Bearer）覆盖全部业务接口，设备用 X-Device-Id 归属到账号。
-    // 令牌明文只存本机 SharedPreferences，服务端只存 sha256；每次登录都会轮换令牌。
+    // 令牌**加密存 Keystore**（TokenStore，AES-GCM），服务端只存 sha256；
+    // 每次登录都会轮换令牌。
 
-    /** 账号令牌：注册/登录成功后由服务端下发。 */
-    public String accountToken() { return sp.getString("account_token", ""); }
+    /**
+     * 账号令牌：注册/登录成功后由服务端下发。
+     *
+     * <p>读取时会顺带完成一次性迁移：旧版把令牌明文写在 {@code account_token}，
+     * 这里尝试「加密落盘 → 删除明文」，**只有加密成功才删除**——Keystore 不可用时
+     * 宁可暂时留着旧值，也不让用户凭空掉线（下次读取会再试一次）。
+     */
+    public String accountToken() {
+        String token = tokens.load();
+        if (!token.isEmpty()) return token;
+        String legacy = sp.getString(LEGACY_ACCOUNT_TOKEN, "");
+        if (legacy == null || legacy.isEmpty()) return "";
+        if (tokens.save(legacy)) {
+            sp.edit().remove(LEGACY_ACCOUNT_TOKEN).apply();
+            android.util.Log.i(TAG, "账号令牌已迁移到 Keystore 加密存储");
+        } else {
+            android.util.Log.w(TAG, "令牌明文迁移未完成（加密不可用），保留旧存储待重试");
+        }
+        return legacy;
+    }
+
     public String accountId() { return sp.getString("account_id", ""); }
     public String accountName() { return sp.getString("account_name", ""); }
 
@@ -274,13 +302,19 @@ public final class Prefs {
     public long accountQuota() { return sp.getLong("account_quota", 0L); }
     public long accountQuotaUsed() { return sp.getLong("account_quota_used", 0L); }
 
-    /** 登录/注册成功的一次性落地；换账号时同步游标归零（服务端按 id 去重，不会重复入库）。 */
-    public void saveAccount(String id, String name, String token, long quota, long quotaUsed) {
+    /**
+     * 登录/注册成功的一次性落地；换账号时同步游标归零（服务端按 id 去重，不会重复入库）。
+     *
+     * @return true = 令牌已加密落盘；false = 安全存储不可用（**没有**任何明文落盘，
+     *         调用方应提示用户，不要假装登录成功）
+     */
+    public boolean saveAccount(String id, String name, String token, long quota, long quotaUsed) {
         boolean switched = !accountId().isEmpty() && !accountId().equals(id);
         SharedPreferences.Editor e = sp.edit()
                 .putString("account_id", id)
                 .putString("account_name", name)
-                .putString("account_token", token)
+                // 明文位置从此不再写入；顺手清掉可能残留的旧值
+                .remove(LEGACY_ACCOUNT_TOKEN)
                 .putLong("account_quota", quota)
                 .putLong("account_quota_used", quotaUsed)
                 .putBoolean("account_invalid", false);
@@ -291,6 +325,7 @@ public final class Prefs {
             e.putString("sync_device_id", "");   // 换账号需重新绑定本机设备
         }
         e.apply();
+        return tokens.save(token);
     }
 
     /** 只刷新额度（/account/me 或兑换成功后调用）。 */
@@ -300,8 +335,10 @@ public final class Prefs {
 
     /** 退出登录：清空账号凭据与本机设备绑定，保留任务历史与记忆。 */
     public void clearAccount() {
+        // 令牌在 Keystore 侧，单独清（含删除 Keystore 别名与进程内缓存）
+        tokens.clear();
         sp.edit()
-                .remove("account_token")
+                .remove(LEGACY_ACCOUNT_TOKEN)
                 .remove("account_id")
                 .remove("account_name")
                 .remove("account_quota")

@@ -78,7 +78,14 @@ public class AssistActivity extends Activity {
             requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, 101);
             return;
         }
-        if (recorder == null) recorder = new VoiceRecorder();
+        if (recorder == null) {
+            recorder = new VoiceRecorder();
+            // 30 秒上限到点自动收尾：走与用户点「停止」相同的转写路径
+            recorder.setOnAutoStop(() -> runOnUiThread(() -> {
+                tvHint.setText("已达 30 秒上限，自动结束录音");
+                stopAndTranscribe();
+            }));
+        }
         if (recorder.start()) {
             tvHint.setText("正在倾听中…说完请点停止或执行");
             btnMic.setText("停止倾听");

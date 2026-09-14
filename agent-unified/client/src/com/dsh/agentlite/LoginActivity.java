@@ -195,7 +195,14 @@ public class LoginActivity extends Activity {
      * 且对「已在运行」「未派生密钥」「局域网开关关闭」都安全跳过，重复调用无副作用。
      */
     private void afterAuthOk(AccountClient.Session s, String plainKey, String okMsg) {
-        AccountClient.saveSession(prefs, s);
+        if (!AccountClient.saveSession(prefs, s)) {
+            // 令牌进不了 Keystore（加密不可用）：绝不退化成明文落盘，
+            // 也不假装登录成功——直接说清楚，让用户先解决存储问题。
+            setBusy(false);
+            msg("登录失败：本机安全存储（Keystore）不可用，无法安全保存登录状态。\n"
+                    + "请解锁屏幕后重试；若仍失败，可能是系统凭据被重置，重启手机再试。", true);
+            return;
+        }
         LanSync.deriveAndStoreKey(this, s.accountId, plainKey);
         LanSync.start(this);
         msg(okMsg, false);

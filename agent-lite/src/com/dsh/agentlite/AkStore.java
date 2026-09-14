@@ -132,11 +132,15 @@ public final class AkStore {
             return false;
         }
         try {
-            byte[] iv = new byte[GCM_IV_BYTES];
-            new java.security.SecureRandom().nextBytes(iv);
-
+            // **不**自带 IV：Keystore 生成的密钥默认 randomizedEncryptionRequired=true，
+            // 自带 IV 会被拒（真机实测 InvalidAlgorithmParameterException，2026-09-14）。
+            // 让 Keystore 生成随机 IV，再取出与密文一起存。
             Cipher c = Cipher.getInstance(TRANSFORMATION);
-            c.init(Cipher.ENCRYPT_MODE, secretKey(), new GCMParameterSpec(GCM_TAG_BITS, iv));
+            c.init(Cipher.ENCRYPT_MODE, secretKey());
+            byte[] iv = c.getIV();
+            if (iv == null || iv.length == 0) {
+                throw new IllegalStateException("Keystore 未返回 IV");
+            }
             byte[] plain = new String(secret).getBytes(StandardCharsets.UTF_8);
             byte[] ct = c.doFinal(plain);
             java.util.Arrays.fill(plain, (byte) 0);

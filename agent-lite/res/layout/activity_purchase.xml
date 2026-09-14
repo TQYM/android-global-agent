@@ -1,12 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-<!-- 收款界面：套餐展示 → 下单 → 兑换码支付 → 订单记录。
-     真实在线支付（支付宝/微信）需商户资质，尚未接入；服务端 online_pay=false 会明示。 -->
+<!-- 充值页（2026-09-13 改版 → 2026-09-14 布局改版）：跳百炼官方购买页 → 返回后自动创建并启用 API Key。
+     旧的「下单 → 兑换码支付 → 订单记录」链路已按决策从本页移除（服务端代码保留）。
+     支付必须由用户本人在官方页面完成，App 内不代收、也不替用户确认付款。
+
+     布局改版要点（同批次的其余 6 个页面早已令牌化，本页此前是唯一 0 令牌的页面）：
+     - 按真实任务流分区：说明 → ① AccessKey → ② 单模型模式 → ③ 官方页购买 → 状态；
+       此前是「平铺一堆裸 TextView」，用户看不出先做哪一步；
+     - 全部改用 @dimen / @color 设计令牌与既有 drawable（bg_card / bg_input / btn_*）；
+     - 拆开「兑换码输入框 + 两个按钮」挤在同一行的横向布局（窄屏必然挤爆）；
+     - 旧链路的「订单记录」标题此前是无 id 的孤儿，Java 只隐藏了内容、标题永远挂在页面上；
+       现包进 orderArea 容器由 Java 整体隐藏。 -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/rootPurchase"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#0B1020"
+    android:background="@color/color_surface"
     android:fillViewport="true">
 
     <LinearLayout
@@ -14,176 +23,307 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="16dp">
+        android:paddingLeft="@dimen/page_margin"
+        android:paddingRight="@dimen/page_margin"
+        android:paddingTop="@dimen/space_l"
+        android:paddingBottom="@dimen/space_l">
 
+        <!-- 顶栏 -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:gravity="center_vertical"
             android:orientation="horizontal">
 
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="sans-serif-medium"
+                    android:text="额度充值"
+                    android:textColor="@color/color_on_surface"
+                    android:textSize="@dimen/text_title"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="购买在你自己的百炼账号里，App 不代收费用"
+                    android:textColor="@color/color_on_surface_variant"
+                    android:textSize="@dimen/text_label" />
+            </LinearLayout>
+
             <Button
                 android:id="@+id/btnBack"
                 android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="返回" />
-
-            <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="12dp"
-                android:layout_weight="1"
-                android:text="额度充值"
-                android:textColor="#E2E8F0"
-                android:textSize="20sp"
-                android:textStyle="bold" />
+                android:layout_height="@dimen/btn_h"
+                android:background="@drawable/btn_ghost"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:paddingLeft="@dimen/space_l"
+                android:paddingRight="@dimen/space_l"
+                android:text="返回"
+                android:textAllCaps="false"
+                android:textColor="@color/color_on_surface"
+                android:textSize="@dimen/text_body" />
         </LinearLayout>
 
-        <!-- 单模型模式开关：百炼资源包按模型名严格匹配，买一个包只能抵扣一个模型。
-             放在充值页而非只放设置页——用户是在这里花钱的，必须在此刻讲清口径。 -->
-        <Switch
-            android:id="@+id/swSingleModelBuy"
-            android:text="单模型模式（省钱：所有请求只用一个模型）"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:textColor="#E2E8F0"
-            android:textSize="14sp"/>
-
-        <!-- AccessKey 录入：自动创建 API Key 用的凭据。建议 RAM 子账号 + 最小权限。 -->
-        <TextView
-            android:id="@+id/tvAkLabel"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:text="阿里云 AccessKey（仅存本机，用于自动创建 API Key）"
-            android:textColor="#94A3B8"
-            android:textSize="13sp"/>
-
-        <EditText
-            android:id="@+id/etAkId"
-            android:hint="AccessKeyId（建议 RAM 子账号，只授 modelstudio:CreateApiKey）"
-            android:layout_width="match_parent"
-            android:layout_height="48dp"
-            android:layout_marginTop="6dp"
-            android:singleLine="true"
-            android:textColor="#E2E8F0"
-            android:textColorHint="#64748B"
-            android:background="@drawable/bg_input"
-            android:paddingLeft="12dp"
-            android:paddingRight="12dp"/>
-
-        <TextView
-            android:id="@+id/tvQuota"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:text="额度：—"
-            android:textColor="#94A3B8"
-            android:textSize="14sp" />
-
+        <!-- 购买方式说明（文案由 PurchaseActivity.renderPacks() 覆写） -->
         <TextView
             android:id="@+id/tvPayHint"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:background="#1E293B"
-            android:padding="10dp"
-            android:text="正在读取支付方式…"
-            android:textColor="#FCD34D"
-            android:textSize="13sp" />
+            android:layout_marginTop="@dimen/space_m"
+            android:background="@drawable/bg_card"
+            android:padding="@dimen/space_m"
+            android:text="购买方式：在百炼官方页面自行选择 token 资源包档位并完成支付。"
+            android:textColor="@color/color_warning_text"
+            android:textSize="@dimen/text_caption" />
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:text="选择套餐"
-            android:textColor="#E2E8F0"
-            android:textSize="16sp"
-            android:textStyle="bold" />
-
-        <LinearLayout
-            android:id="@+id/packsContainer"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:orientation="vertical" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="18dp"
-            android:text="待支付订单"
-            android:textColor="#E2E8F0"
-            android:textSize="16sp"
-            android:textStyle="bold" />
-
-        <TextView
-            android:id="@+id/tvCurrentOrder"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:text="尚未选择套餐"
-            android:textColor="#94A3B8"
-            android:textSize="14sp" />
-
+        <!-- ① AccessKey：自动创建 API Key 的唯一凭据，必须排在购买之前 -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:orientation="horizontal">
+            android:layout_marginTop="@dimen/card_gap"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:padding="@dimen/card_padding">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="① 配置 AccessKey"
+                android:textColor="@color/color_on_surface"
+                android:textSize="@dimen/text_section"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvAkLabel"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_xs"
+                android:text="阿里云 AccessKey（仅存本机，用于自动创建 API Key）"
+                android:textColor="@color/color_on_surface_variant"
+                android:textSize="@dimen/text_caption" />
 
             <EditText
-                android:id="@+id/etCode"
-                android:layout_width="0dp"
+                android:id="@+id/etAkId"
+                android:layout_width="match_parent"
+                android:layout_height="@dimen/input_h"
+                android:layout_marginTop="@dimen/space_s"
+                android:background="@drawable/bg_input"
+                android:hint="AccessKeyId"
+                android:paddingLeft="@dimen/space_m"
+                android:paddingRight="@dimen/space_m"
+                android:singleLine="true"
+                android:textColor="@color/color_on_surface"
+                android:textColorHint="@color/color_text_hint"
+                android:textSize="@dimen/text_body" />
+
+            <TextView
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:hint="输入兑换码"
-                android:inputType="textVisiblePassword"
-                android:textColor="#E2E8F0"
-                android:textColorHint="#64748B"
-                android:textSize="14sp" />
+                android:layout_marginTop="@dimen/space_m"
+                android:text="AccessKeySecret"
+                android:textColor="@color/color_on_surface_variant"
+                android:textSize="@dimen/text_label" />
+
+            <!-- 复用 id=etCode（源自兑换码时代），Java 侧在此录入 AccessKeySecret。
+                 改用 textPassword：这是长期凭据，此前 textVisiblePassword 会明文显示在屏幕上。 -->
+            <EditText
+                android:id="@+id/etCode"
+                android:layout_width="match_parent"
+                android:layout_height="@dimen/input_h"
+                android:layout_marginTop="@dimen/space_xs"
+                android:background="@drawable/bg_input"
+                android:hint="仅存本机，绝不上传"
+                android:inputType="textPassword"
+                android:paddingLeft="@dimen/space_m"
+                android:paddingRight="@dimen/space_m"
+                android:singleLine="true"
+                android:textColor="@color/color_on_surface"
+                android:textColorHint="@color/color_text_hint"
+                android:textSize="@dimen/text_body" />
+
+            <!-- 凭据规则事前讲清（与登录页同一取舍：提交失败之前就让用户知道规则）。
+                 放这里而不是塞进 hint——hint 是单行，系统字体放大后必被截断。 -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_s"
+                android:text="建议用 RAM 子账号，只授予 modelstudio:CreateApiKey 权限。"
+                android:textColor="@color/color_on_surface_variant"
+                android:textSize="@dimen/text_caption" />
+
+            <!-- 复用 id=btnCancel（源自取消下单），Java 侧文案为「保存 AccessKey / 更换 AccessKey」 -->
+            <Button
+                android:id="@+id/btnCancel"
+                android:layout_width="match_parent"
+                android:layout_height="@dimen/btn_h"
+                android:layout_marginTop="@dimen/space_m"
+                android:background="@drawable/btn_ghost"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:text="保存 AccessKey"
+                android:textAllCaps="false"
+                android:textColor="@color/color_on_surface"
+                android:textSize="@dimen/text_body" />
+        </LinearLayout>
+
+        <!-- ② 单模型模式：百炼资源包按模型名严格匹配，买之前就要讲清口径 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/card_gap"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:padding="@dimen/card_padding">
+
+            <Switch
+                android:id="@+id/swSingleModelBuy"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:minHeight="@dimen/touch_min"
+                android:text="② 单模型模式"
+                android:textColor="@color/color_on_surface"
+                android:textSize="@dimen/text_section" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_xs"
+                android:text="省钱：所有请求只用一个模型。官方资源包按模型名严格匹配（qwen-plus 的包不抵扣 qwen-max），只有单模型时才能被同一个包抵扣。"
+                android:textColor="@color/color_on_surface_variant"
+                android:textSize="@dimen/text_caption" />
+        </LinearLayout>
+
+        <!-- ③ 官方页购买：App 内不代收、不预选档位 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/card_gap"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:padding="@dimen/card_padding">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="③ 在官方页面购买"
+                android:textColor="@color/color_on_surface"
+                android:textSize="@dimen/text_section"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_xs"
+                android:text="App 不代收费用，也不会替你选档位——官方页面无法用链接预选套餐，请在那里自行确认价格与用量后支付。付款后返回本页，会自动创建并启用 API Key。"
+                android:textColor="@color/color_on_surface_variant"
+                android:textSize="@dimen/text_caption" />
+
+            <!-- 档位卡片由 PurchaseActivity.renderPacks() 动态填充 -->
+            <LinearLayout
+                android:id="@+id/packsContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_s"
+                android:orientation="vertical" />
 
             <Button
                 android:id="@+id/btnPay"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:text="支付" />
-
-            <Button
-                android:id="@+id/btnCancel"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="4dp"
-                android:text="取消" />
+                android:layout_width="match_parent"
+                android:layout_height="@dimen/btn_h_primary"
+                android:layout_marginTop="@dimen/space_m"
+                android:background="@drawable/btn_primary"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:text="打开官方购买页"
+                android:textAllCaps="false"
+                android:textColor="@color/color_on_primary"
+                android:textSize="@dimen/text_body" />
         </LinearLayout>
 
-        <TextView
-            android:id="@+id/tvMsg"
+        <!-- 当前状态：Key / 我方额度 / 上一步结果（tvMsg 由 Java 覆写） -->
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text=""
-            android:textColor="#F87171"
-            android:textSize="13sp" />
+            android:layout_marginTop="@dimen/card_gap"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:padding="@dimen/card_padding">
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="18dp"
-            android:text="订单记录"
-            android:textColor="#E2E8F0"
-            android:textSize="16sp"
-            android:textStyle="bold" />
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="当前状态"
+                android:textColor="@color/color_on_surface"
+                android:textSize="@dimen/text_section"
+                android:textStyle="bold" />
 
-        <TextView
-            android:id="@+id/tvOrders"
+            <TextView
+                android:id="@+id/tvCurrentOrder"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_s"
+                android:text="尚未选择套餐"
+                android:textColor="@color/color_on_surface_variant"
+                android:textSize="@dimen/text_body" />
+
+            <TextView
+                android:id="@+id/tvQuota"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_xs"
+                android:text="额度：—"
+                android:textColor="@color/color_on_surface_variant"
+                android:textSize="@dimen/text_caption" />
+
+            <TextView
+                android:id="@+id/tvMsg"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_s"
+                android:text=""
+                android:textColor="@color/color_on_surface_variant"
+                android:textSize="@dimen/text_caption" />
+        </LinearLayout>
+
+        <!-- 旧链路的订单记录：整块由 Java 隐藏（此前只隐藏了 tvOrders，标题成了孤儿的永远显示） -->
+        <LinearLayout
+            android:id="@+id/orderArea"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:text="暂无订单"
-            android:textColor="#94A3B8"
-            android:textSize="13sp" />
+            android:layout_marginTop="@dimen/card_gap"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="订单记录（旧链路，已废弃）"
+                android:textColor="@color/color_on_surface"
+                android:textSize="@dimen/text_section"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvOrders"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_xs"
+                android:text="暂无订单"
+                android:textColor="@color/color_on_surface_variant"
+                android:textSize="@dimen/text_caption" />
+        </LinearLayout>
     </LinearLayout>
 </ScrollView>

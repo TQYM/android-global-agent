@@ -335,13 +335,37 @@ public class OverlayController {
     }
 
     /** 失败卡片：明示归因。 */
-    public void showFail(String reason) {
+    /**
+     * 失败卡片（SPEC-UX-001 §4「每个失败可恢复」）。
+     *
+     * <p>此前只有「关闭」一个按钮——用户看完仍然不知道该做什么。现在固定三段：
+     * 人话归因 → 「下一步」建议 → 可点的出口（重试 / 为什么 / 关闭）。
+     *
+     * @param reason    已加工的**人话**归因（UiText.uiReason 产物）
+     * @param detailRaw 原始归因，只在用户主动点「为什么」时才展开（技术细节不主动示人）
+     */
+    public void showFail(String reason, String detailRaw) {
         ui.post(() -> {
             try {
                 setCapsuleFail("失败: " + reason);
                 LinearLayout box = cardShell();
                 box.addView(cardHead(0xFFEF4444, "X", "任务未完成"));
                 box.addView(cardText(reason));
+                String next = UiText.nextStep(reason);
+                if (next != null && !next.isEmpty()) box.addView(cardText("下一步：" + next));
+                box.addView(monetButton("重试一次", v -> {
+                    hideCardSync();
+                    AgentEngine engine = AgentEngine.get(svc);
+                    String task = engine.lastTask();
+                    if (task.isEmpty()) return;
+                    if (!engine.start(task)) {
+                        // 上一次任务还在收尾：不静默失败，给出可读反馈
+                        AgentEngine.staticLog("overlay: 重试被跳过（上一个任务尚未收尾）");
+                        setCapsuleFail("上一个任务还在收尾，稍后再点重试");
+                    }
+                }));
+                box.addView(monetButton("为什么", v -> box.addView(cardText(
+                        "技术细节：" + (detailRaw == null || detailRaw.isEmpty() ? "（无更多信息）" : detailRaw)))));
                 box.addView(monetButton("关闭", v -> hideCardSync()));
                 AgentEngine.staticLog("overlay: 失败卡片已弹出");
             } catch (Throwable t) {

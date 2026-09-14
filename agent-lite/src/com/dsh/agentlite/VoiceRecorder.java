@@ -12,10 +12,23 @@ import java.io.ByteArrayOutputStream;
 public class VoiceRecorder {
 
     private static final int SR = 16000;
+    /**
+     * 录音硬上限（手册 §15.2-10）：30 秒。
+     *
+     * <p>16 kHz 单声道 16 bit = 32 KB/s，30 秒约 960 KB（WAV 再 +44 字节头），
+     * 正好压在 ASR 接口 8 MB 与内存可承受的范围内。没有上限时，用户忘记点
+     * 结束（或按钮被系统拦截）会一直往 ByteArrayOutputStream 里堆，直到 OOM。
+     */
+    private static final int MAX_PCM_BYTES = SR * 2 * 30;
+    /** 达到上限时的回调（UI 据此提示"已自动结束"），可为 null。 */
+    private Runnable onAutoStop;
     private AudioRecord rec;
     private Thread thread;
     private volatile boolean recording;
     private ByteArrayOutputStream pcm;
+
+    /** 注册「达到上限自动结束」的回调。 */
+    public void setOnAutoStop(Runnable r) { onAutoStop = r; }
 
     public synchronized boolean start() {
         if (recording) return false;
@@ -31,7 +44,20 @@ public class VoiceRecorder {
             byte[] buf = new byte[4096];
             while (recording) {
                 int n = rec.read(buf, 0, buf.length);
-                if (n > 0) pcm.write(buf, 0, n);
+                if (n > 0) {
+                    // 上限保护：超了就停止采集并通知 UI，而不是无限堆内存
+                    if (pcm.size() + n > MAX_PCM_BYTES) {
+                        int room = MAX_PCM_BYTES - pcm.size();
+                        if (room > 0) pcm.write(buf, 0, room);
+                        recording = false;
+                        Runnable cb = onAutoStop;
+                        if (cb != null) {
+                            try { cb.run(); } catch (Exception ignored) { }
+                        }
+                        break;
+                    }
+                    pcm.write(buf, 0, n);
+                }
             }
         }, "voice-rec");
         thread.start();

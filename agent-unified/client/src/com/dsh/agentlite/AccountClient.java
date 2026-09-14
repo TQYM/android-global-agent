@@ -164,10 +164,20 @@ public final class AccountClient {
         return s;
     }
 
-    /** 登录成功后落地凭据；换账号时由 Prefs 自动重置同步游标。 */
-    public static void saveSession(Prefs p, Session s) {
-        p.saveAccount(s.accountId, s.name, s.token, s.quota, s.quotaUsed);
-        android.util.Log.i(TAG, "账号已登录: " + s.name + " (" + s.accountId + ")");
+    /**
+     * 登录成功后落地凭据；换账号时由 Prefs 自动重置同步游标。
+     *
+     * @return false = 令牌加密落盘失败（Keystore 不可用）。此时**没有任何明文落盘**，
+     *         调用方必须把它当失败处理，不能继续走"已登录"流程。
+     */
+    public static boolean saveSession(Prefs p, Session s) {
+        boolean stored = p.saveAccount(s.accountId, s.name, s.token, s.quota, s.quotaUsed);
+        if (stored) {
+            android.util.Log.i(TAG, "账号已登录: " + s.name + " (" + s.accountId + ")");
+        } else {
+            android.util.Log.w(TAG, "账号令牌未能加密落盘，登录未完成");
+        }
+        return stored;
     }
 
     // ---------- 设备绑定 ----------

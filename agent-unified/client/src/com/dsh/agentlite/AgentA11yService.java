@@ -113,6 +113,22 @@ public class AgentA11yService extends AccessibilityService {
     public static android.graphics.Rect activeWinBounds() { return sActiveWinBounds; }
 
     /**
+     * 当前前台窗口的包名（取不到返回空串）。
+     *
+     * <p>用于**最小完成复验**（SPEC-UX-001 §7）：引擎不看模型自报，而是核对
+     * 「打开应用/设置页」之后前台是不是真的换成了目标应用。
+     */
+    public String activePackage() {
+        try {
+            AccessibilityNodeInfo root = getRootInActiveWindow();
+            if (root == null || root.getPackageName() == null) return "";
+            return root.getPackageName().toString();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /**
      * 感知当前屏幕全部应用窗口（合并多窗口：主窗口 + 弹窗/权限对话框），
      * 并排除本助手自己的界面/覆盖层——防止模型看到并误触自家胶囊/面板/卡片。
      */
