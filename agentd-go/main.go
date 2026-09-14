@@ -6,10 +6,13 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -39,21 +42,28 @@ func init() {
 }
 
 type App struct {
-	mu     sync.Mutex
-	cfg    *config.Config
+	mu      sync.Mutex
+	cfg     *config.Config
 	cfgPath string
-	dir    string
+	dir     string
+	// apiToken 是 `/api/*` 的访问令牌（见 auth.go）。只有本机 root/shell
+	// 读得到令牌文件，同机其他 App 拿不到。
+	apiToken string
+	// port 是启动时的监听端口，用于 Host/Origin 白名单比对。
+	port string
+	// taskCancel 取消当前任务的模型请求与循环（见 handleStop / Runner.Ctx）。
+	taskCancel context.CancelFunc
 
-	running   atomic.Bool
-	stopped   atomic.Bool
-	task      string
-	lastStep  int
+	running    atomic.Bool
+	stopped    atomic.Bool
+	task       string
+	lastStep   int
 	lastAction string
-	lastNodes []semantics.Node
-	lastTapX  int
-	lastTapY  int
-	lastTapAt time.Time
-	logs      []string
+	lastNodes  []semantics.Node
+	lastTapX   int
+	lastTapY   int
+	lastTapAt  time.Time
+	logs       []string
 }
 
 func (a *App) logf(format string, args ...interface{}) {
@@ -74,11 +84,17 @@ func (a *App) paths() (string, string, string) {
 		filepath.Join(a.dir, "screen.png")
 }
 
-func maskKey(k string) string {
-	if len(k) <= 8 {
-		return "***"
-	}
-	return k[:4] + "..." + k[len(k)-4:]
+// asrFilenames 是 /api/asr 允许的音频格式白名单（format → multipart 文件名）。
+//
+// format 直接被拼进上传文件名，任意字符串等于把文件名与扩展名交给上游
+// （手册 §15.2-5）；只认下面这几个明确值。
+var asrFilenames = map[string]string{
+	"":     "audio.wav",
+	"wav":  "audio.wav",
+	"mp3":  "audio.mp3",
+	"m4a":  "audio.m4a",
+	"webm": "audio.webm",
+	"ogg":  "audio.ogg",
 }
 
 // ---- HTTP handlers ----
@@ -93,58 +109,58 @@ func (a *App) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	masked := *a.cfg
-	masked.APIKey = maskKey(a.cfg.APIKey)
+	// 真实 Key 不回流到浏览器：只回哨兵，提交哨兵即表示「保持不变」。
+	// 这样即使有人在本机打开页面、或页面被别的进程读到，也拿不到 Key。
+	if a.cfg.APIKey != "" {
+		masked.APIKey = config.MaskSentinel
+	}
 	writeJSON(w, masked)
 }
 
 func (a *App) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	var in config.Config
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+	// 限制请求体：配置项很小，超大 body 只可能是误用或攻击。
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&in); err != nil {
 		http.Error(w, "bad json: "+err.Error(), 400)
 		return
 	}
+
+	// 锁内合并成不可变快照：并发保存时，落盘的必须是本次提交的那一份，
+	// 而不是「锁外再读 a.cfg」拿到的、可能已被另一个请求替换的对象。
 	a.mu.Lock()
-	// preserve key when the masked placeholder is submitted unchanged
-	if strings.Contains(in.APIKey, "...") && a.cfg != nil {
-		in.APIKey = a.cfg.APIKey
+	merged := in.Merge(a.cfg)
+	if err := merged.Validate(); err != nil {
+		a.mu.Unlock()
+		http.Error(w, "配置非法: "+err.Error(), http.StatusBadRequest)
+		return
 	}
-	if in.BaseURL == "" {
-		in.BaseURL = "https://open.bigmodel.cn/api/paas/v4"
-	}
-	if in.Model == "" {
-		in.Model = "glm-4.6"
-	}
-	if in.Port == "" {
-		in.Port = a.cfg.Port
-	}
-	if in.MaxSteps <= 0 {
-		in.MaxSteps = a.cfg.MaxSteps
-	}
-	if in.SystemPrompt == "" {
-		in.SystemPrompt = a.cfg.SystemPrompt
-	}
-	a.cfg = &in
-	cfgPath, _, _ := a.paths()
+	prev := a.cfg
+	a.cfg = merged
 	a.mu.Unlock()
 
-	if err := a.cfg.Save(cfgPath); err != nil {
+	if err := merged.Save(a.cfgPath); err != nil {
+		// 落盘失败就回滚内存，避免出现「界面显示新配置、磁盘还是旧配置」
+		// 这种重启后行为突变的假象。
+		a.mu.Lock()
+		a.cfg = prev
+		a.mu.Unlock()
 		a.logf("保存配置失败: %v", err)
 		http.Error(w, "save failed: "+err.Error(), 500)
 		return
 	}
-	a.logf("配置已保存 (model=%s base=%s)", a.cfg.Model, a.cfg.BaseURL)
+	a.logf("配置已保存 (model=%s base=%s)", merged.Model, merged.BaseURL)
+	if merged.Port != a.port {
+		// 监听端口在启动时确定，热改配置不会换端口——说清楚，别让用户干等。
+		a.logf("注意：port 变更（%s → %s）需重启 agentd 才生效", a.port, merged.Port)
+	}
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
 func (a *App) handleTask(w http.ResponseWriter, r *http.Request) {
-	if a.running.Load() {
-		http.Error(w, "已有任务在运行", 409)
-		return
-	}
 	var in struct {
 		Task string `json:"task"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil || strings.TrimSpace(in.Task) == "" {
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&in); err != nil || strings.TrimSpace(in.Task) == "" {
 		http.Error(w, "task 字段不能为空", 400)
 		return
 	}
@@ -153,7 +169,15 @@ func (a *App) handleTask(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
 	cfg := *a.cfg
 	a.mu.Unlock()
+	if cfg.APIKey == "" {
+		http.Error(w, "尚未配置 API Key（请先在配置区保存）", http.StatusConflict)
+		return
+	}
 	_, dumpPath, screenPath := a.paths()
+
+	// 任务级上下文：停止时取消它，进行中的模型请求会立刻断开，
+	// 不必等最长 180 秒的读超时（手册 §15.2-2）。
+	taskCtx, cancelTask := context.WithCancel(context.Background())
 
 	client := &llm.Client{BaseURL: cfg.BaseURL, APIKey: cfg.APIKey, Model: cfg.Model}
 	runner := &agent.Runner{
@@ -162,6 +186,7 @@ func (a *App) handleTask(w http.ResponseWriter, r *http.Request) {
 		ScreenPath: screenPath,
 		Client:     client,
 		Stopped:    &a.stopped,
+		Ctx:        taskCtx,
 		Log:        func(s string) { a.logf("%s", s) },
 		OnStep: func(step int, action string, nodes []semantics.Node) {
 			a.mu.Lock()
@@ -177,16 +202,35 @@ func (a *App) handleTask(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	a.running.Store(true)
+	// 「检查 + 占位」必须是一步：先 Load 再 Store 之间存在窗口，两个并发
+	// 请求会同时通过检查、同时启动 Runner，争用输入、截图与日志
+	// （手册 §15.2-1）。CompareAndSwap 让只有一个请求能占住运行位。
+	if !a.running.CompareAndSwap(false, true) {
+		// 没拿到运行位就把刚建的 context 释放掉，别留下永不取消的句柄
+		cancelTask()
+		http.Error(w, "已有任务在运行", http.StatusConflict)
+		return
+	}
+	// 占位成功之后不再有失败分支，运行位的释放统一交给 goroutine 的 defer。
 	a.stopped.Store(false)
 	a.mu.Lock()
+	a.taskCancel = cancelTask
 	a.task = task
+	a.lastStep = 0
+	a.lastAction = ""
+	a.lastNodes = nil
 	a.logs = nil
 	a.mu.Unlock()
 	a.logf("任务启动: %s (model=%s)", task, cfg.Model)
 
 	go func() {
 		defer a.running.Store(false)
+		defer cancelTask()
+		defer func() {
+			a.mu.Lock()
+			a.taskCancel = nil
+			a.mu.Unlock()
+		}()
 		summary, err := runner.Run(task)
 		if err != nil {
 			a.logf("任务失败: %v", err)
@@ -199,6 +243,14 @@ func (a *App) handleTask(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) handleStop(w http.ResponseWriter, r *http.Request) {
 	a.stopped.Store(true)
+	// 只置标志位时，任务要等当前模型请求读完（最长 180 秒）才停；
+	// 取消 context 会让请求立刻断开（手册 §15.2-2）。
+	a.mu.Lock()
+	cancel := a.taskCancel
+	a.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 	a.logf("收到停止请求")
 	writeJSON(w, map[string]string{"status": "stopping"})
 }
@@ -211,13 +263,13 @@ func (a *App) handleStatus(w http.ResponseWriter, r *http.Request) {
 		tap = map[string]int{"x": a.lastTapX, "y": a.lastTapY}
 	}
 	writeJSON(w, map[string]interface{}{
-		"running":    a.running.Load(),
-		"task":       a.task,
-		"step":       a.lastStep,
+		"running":     a.running.Load(),
+		"task":        a.task,
+		"step":        a.lastStep,
 		"last_action": a.lastAction,
-		"logs":       a.logs,
-		"nodes":      a.lastNodes,
-		"last_tap":   tap,
+		"logs":        a.logs,
+		"nodes":       a.lastNodes,
+		"last_tap":    tap,
 	})
 }
 
@@ -244,9 +296,10 @@ func (a *App) handleAsr(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
 	cfg := *a.cfg
 	a.mu.Unlock()
-	filename := "audio.wav"
-	if in.Format != "" && in.Format != "wav" {
-		filename = "audio." + in.Format
+	filename, ok := asrFilenames[strings.ToLower(strings.TrimSpace(in.Format))]
+	if !ok {
+		http.Error(w, "format 仅支持 wav/mp3/m4a/webm/ogg", 400)
+		return
 	}
 	client := &llm.Client{BaseURL: cfg.BaseURL, APIKey: cfg.APIKey, Model: cfg.Model}
 	text, err := client.Transcribe(raw, filename, cfg.AsrModel)
@@ -304,7 +357,20 @@ func main() {
 		os.Exit(1)
 	}
 
-	app := &App{cfg: cfg, cfgPath: cfgPath, dir: dir}
+	// 配置来自设备本地文件，可能被手工改坏；先校验再进内存，
+	// 免得非法 base_url / port 一路带到 root 进程的网络与监听逻辑里。
+	if err := cfg.Validate(); err != nil {
+		fmt.Fprintf(os.Stderr, "配置非法（%s）：%v\n", cfgPath, err)
+		os.Exit(1)
+	}
+
+	token, tokenPath, err := loadOrCreateToken(dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		os.Exit(1)
+	}
+
+	app := &App{cfg: cfg, cfgPath: cfgPath, dir: dir, apiToken: token, port: cfg.Port}
 	if err := app.cfg.Save(cfgPath); err != nil {
 		fmt.Fprintf(os.Stderr, "init config: %v\n", err)
 		os.Exit(1)
@@ -318,26 +384,39 @@ func main() {
 		fmt.Println("a11y service ensured (com.dsh.agentd/.AgentA11yService)")
 	}
 
+	// 所有 `/api/*` 都过 guard：令牌 + 方法 + Host/Origin + Content-Type。
+	g := &guard{token: app.apiToken, port: cfg.Port}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", app.handleIndex)
-	mux.HandleFunc("/api/config", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost {
-			app.handleSetConfig(w, r)
-			return
-		}
-		app.handleGetConfig(w, r)
-	})
-	mux.HandleFunc("/api/task", app.handleTask)
-	mux.HandleFunc("/api/stop", app.handleStop)
-	mux.HandleFunc("/api/status", app.handleStatus)
-	mux.HandleFunc("/api/screen", app.handleScreen)
-	mux.HandleFunc("/api/test", app.handleTest)
-	mux.HandleFunc("/api/asr", app.handleAsr)
+	mux.HandleFunc("/api/config", g.protect(
+		[]string{http.MethodGet, http.MethodPost},
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPost {
+				app.handleSetConfig(w, r)
+				return
+			}
+			app.handleGetConfig(w, r)
+		}))
+	mux.HandleFunc("/api/task", g.protect([]string{http.MethodPost}, app.handleTask))
+	mux.HandleFunc("/api/stop", g.protect([]string{http.MethodPost}, app.handleStop))
+	mux.HandleFunc("/api/status", g.protect([]string{http.MethodGet}, app.handleStatus))
+	mux.HandleFunc("/api/screen", g.protect([]string{http.MethodGet}, app.handleScreen))
+	// /api/test 会真的抓一次屏幕并 dump 节点树，属于有副作用的动作：只收 POST。
+	mux.HandleFunc("/api/test", g.protect([]string{http.MethodPost}, app.handleTest))
+	mux.HandleFunc("/api/asr", g.protect([]string{http.MethodPost}, app.handleAsr))
 
-	addr := ":" + cfg.Port
-	fmt.Printf("agentd listening on http://127.0.0.1%s  (data dir %s)\n", addr, dir)
-	app.logf("agentd 已启动，端口 %s", cfg.Port)
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	// 显式绑定回环。此前的 `":"+port` 等价于 0.0.0.0——局域网内任何设备
+	// 都能直连这个拥有 root 能力的 API（手册 §15.1 P0-1）。
+	addr := net.JoinHostPort(localHostIP, cfg.Port)
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	fmt.Printf("agentd listening on http://%s  (data dir %s)\n", addr, dir)
+	fmt.Printf("WebUI 访问令牌：cat %s（0600，仅本机 root/shell 可读）\n", tokenPath)
+	app.logf("agentd 已启动，端口 %s（仅回环 + 令牌鉴权）", cfg.Port)
+	if err := srv.ListenAndServe(); err != nil {
 		fmt.Fprintf(os.Stderr, "server: %v\n", err)
 		os.Exit(1)
 	}

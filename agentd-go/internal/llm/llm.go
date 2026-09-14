@@ -172,6 +172,14 @@ func hostPortOf(base string) (string, string, error) {
 
 // Chat sends one chat-completion request and returns the assistant text.
 func (c *Client) Chat(messages []Message) (string, error) {
+	return c.ChatCtx(context.Background(), messages)
+}
+
+// ChatCtx is Chat under a caller-supplied context.
+//
+// 取消 ctx 会立即中断进行中的请求：否则用户点「停止」后还要等最长 180 秒的
+// 客户端超时（手册 §15.2-2），期间任务看起来毫无反应。
+func (c *Client) ChatCtx(ctx context.Context, messages []Message) (string, error) {
 	if c.HC == nil {
 		if err := c.init(); err != nil {
 			return "", err
@@ -187,7 +195,7 @@ func (c *Client) Chat(messages []Message) (string, error) {
 	}
 	// BaseURL carries the full API prefix (e.g. .../api/paas/v4 or .../v1).
 	endpoint := strings.TrimRight(c.BaseURL, "/") + "/chat/completions"
-	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(data))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(data))
 	if err != nil {
 		return "", err
 	}

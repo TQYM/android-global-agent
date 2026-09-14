@@ -4,6 +4,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -57,6 +58,9 @@ type Runner struct {
 	OnStep   func(step int, action string, nodes []semantics.Node)
 	OnTap    func(x, y int, label string) // tap marker for the WebUI
 	Stopped  *atomic.Bool
+	// Ctx 取消时会立刻中断进行中的模型请求与循环（nil = 不可取消）。
+	// 只有 Stopped 标志时，停止要等最长 180 秒的读超时才生效（手册 §15.2-2）。
+	Ctx context.Context
 
 	curNodes []semantics.Node // last perceived nodes, for index taps
 }
@@ -310,19 +314,27 @@ func (r *Runner) waitForChange(prev []semantics.Node) {
 	}
 }
 
-const a11yServiceURL = "http://127.0.0.1:8081/nodes"
-
 var a11yClient = &http.Client{Timeout: 4 * time.Second}
 
 // senseViaService reads the node tree from the on-device AccessibilityService
 // APK — a first-class a11y connection that survives ColorOS killing the
 // uiautomator instrumentation bridge.
+//
+// 8081 现在要求桥接令牌（手册 §15.1 P0-1）：令牌由 APK 写在自己的私有目录，
+// 只有 root 读得到，同机其他 App 无法借此读屏。
 func (r *Runner) senseViaService() ([]semantics.Node, error) {
-	resp, err := a11yClient.Get(a11yServiceURL)
+	req, err := device.NewBridgeRequest(http.MethodGet, "/nodes", "", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := a11yClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, fmt.Errorf("a11y 桥鉴权失败：agentd-apk 与 agentd 版本不一致（bridge token 缺失）")
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("a11y service status %d", resp.StatusCode)
 	}
@@ -337,6 +349,14 @@ func (r *Runner) senseViaService() ([]semantics.Node, error) {
 		nodes[i].HasBounds = true // the service always reports centers
 	}
 	return nodes, nil
+}
+
+// ctx 返回运行上下文（未设置时用 Background，保持旧调用方行为不变）。
+func (r *Runner) ctx() context.Context {
+	if r.Ctx != nil {
+		return r.Ctx
+	}
+	return context.Background()
 }
 
 // Run executes the task loop and returns a completion summary.
@@ -355,6 +375,9 @@ func (r *Runner) Run(task string) (string, error) {
 
 	for step := 1; step <= r.Cfg.MaxSteps; step++ {
 		if r.Stopped != nil && r.Stopped.Load() {
+			return "", fmt.Errorf("任务已被用户停止")
+		}
+		if err := r.ctx().Err(); err != nil {
 			return "", fmt.Errorf("任务已被用户停止")
 		}
 
@@ -403,8 +426,12 @@ func (r *Runner) Run(task string) (string, error) {
 		}
 
 		messages = append(messages, r.perceptionMessage(prompt))
-		reply, err := r.Client.Chat(messages)
+		reply, err := r.Client.ChatCtx(r.ctx(), messages)
 		if err != nil {
+			// ctx 取消 = 用户停止（或进程收尾），不是模型/网络故障，别报成调用失败
+			if r.ctx().Err() != nil {
+				return "", fmt.Errorf("任务已被用户停止")
+			}
 			return "", fmt.Errorf("LLM 调用失败: %v", err)
 		}
 		action, err := parseAction(reply)

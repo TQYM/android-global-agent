@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -79,6 +80,69 @@ func Text(s string) error {
 
 const a11yBase = "http://127.0.0.1:8081"
 
+// bridgeTokenHeader 与 agentd-apk/src/com/dsh/agentd/AgentA11yService.java 约定一致。
+const bridgeTokenHeader = "X-Agentd-Bridge"
+
+// bridgeTokenPaths 是 agentd-apk（AccessibilityService）写下的桥接令牌位置。
+//
+// 第一个路径是 APK 的应用私有目录——只有它自己与 root（agentd）读得到，
+// 所以同机其他 App 无法通过 8081 读屏或注入文本（手册 §15.1 P0-1）。
+// 第二个是手工部署位置，留着兼容。
+var bridgeTokenPaths = []string{
+	"/data/data/com.dsh.agentd/files/bridge.token",
+	"/data/local/tmp/agentd/bridge.token",
+}
+
+var (
+	bridgeTokenOnce sync.Once
+	bridgeTokenVal  string
+)
+
+// BridgeToken 返回 a11y 桥接令牌。
+//
+// 读不到（旧版 APK、或 root 读不到 APK 私有目录）时返回空串：此时请求不带
+// 令牌，由服务端按「仅回环 + 方法白名单」模式放行——加固是渐进增强，绝不
+// 因为读不到令牌就让感知/输入通道整体失效。
+func BridgeToken() string {
+	bridgeTokenOnce.Do(func() {
+		for _, p := range bridgeTokenPaths {
+			data, err := os.ReadFile(p)
+			if err != nil {
+				continue
+			}
+			if t := strings.TrimSpace(string(data)); len(t) >= 32 {
+				bridgeTokenVal = t
+				return
+			}
+		}
+	})
+	return bridgeTokenVal
+}
+
+// applyBridgeAuth 给发往 8081 的请求带上桥接令牌（有则带）。
+func applyBridgeAuth(req *http.Request) {
+	if t := BridgeToken(); t != "" {
+		req.Header.Set(bridgeTokenHeader, t)
+	}
+}
+
+// NewBridgeRequest 构造一个带桥接令牌的 8081 请求（跨包共用，agent 包读节点树时也用）。
+func NewBridgeRequest(method, path, contentType string, body []byte) (*http.Request, error) {
+	var rdr io.Reader
+	if body != nil {
+		rdr = bytes.NewReader(body)
+	}
+	req, err := http.NewRequest(method, a11yBase+path, rdr)
+	if err != nil {
+		return nil, err
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	applyBridgeAuth(req)
+	return req, nil
+}
+
 var a11yHTTP = &http.Client{Timeout: 5 * time.Second}
 
 // SetTextViaA11y delivers text to the focused editable node through the
@@ -89,12 +153,18 @@ func SetTextViaA11y(text string, appendMode bool) error {
 	body, _ := json.Marshal(map[string]interface{}{
 		"text": text, "append": appendMode,
 	})
-	resp, err := a11yHTTP.Post(a11yBase+"/settext", "application/json",
-		bytes.NewReader(body))
+	req, err := NewBridgeRequest(http.MethodPost, "/settext", "application/json", body)
+	if err != nil {
+		return err
+	}
+	resp, err := a11yHTTP.Do(req)
 	if err != nil {
 		return fmt.Errorf("a11y 服务不可达（agentd-apk 未运行？）: %w", err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("a11y 桥鉴权失败（bridge token 不匹配，请把 agentd-apk 与 agentd 升级到同一版本）")
+	}
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
 	var r struct {
 		OK    bool   `json:"ok"`

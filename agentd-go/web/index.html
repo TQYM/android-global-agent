@@ -44,6 +44,8 @@ th { color:var(--dim); font-weight:600; }
   <h1>agentd</h1>
   <span class="badge" id="badge">空闲</span>
   <span style="flex:1"></span>
+  <input id="token" type="password" placeholder="访问令牌" style="width:200px">
+  <button id="saveToken" class="secondary" style="width:auto">保存令牌</button>
   <span class="badge" id="testBadge"></span>
 </header>
 
@@ -111,11 +113,45 @@ th { color:var(--dim); font-weight:600; }
 const $ = id => document.getElementById(id);
 let pollTimer = null;
 
+// ---- 访问令牌 ----
+// 服务端每个 /api/* 都要令牌（见 agentd-go/auth.go）：agentd 以 root 运行，
+// loopback 不是安全边界，同机其他 App 也能访问本机端口，所以必须有凭证。
+// 令牌只存在本机浏览器的 localStorage 里，不进页面源码、不进 URL。
+let TOKEN = localStorage.getItem('agentd_token') || '';
+
+function authHeaders(extra) {
+  const h = Object.assign({}, extra || {});
+  if (TOKEN) h['X-Agentd-Token'] = TOKEN;
+  return h;
+}
+
+async function api(path, opts) {
+  opts = opts || {};
+  opts.headers = authHeaders(opts.headers);
+  const r = await fetch(path, opts);
+  if (r.status === 401) {
+    appendLog('✗ 访问令牌缺失或错误：在设备上执行 cat /data/local/tmp/agentd/api.token，'
+      + '把内容填到右上角「访问令牌」再点保存');
+  }
+  return r;
+}
+
+$('saveToken').onclick = () => {
+  TOKEN = $('token').value.trim();
+  localStorage.setItem('agentd_token', TOKEN);
+  appendLog(TOKEN ? '✓ 令牌已保存' : '令牌已清空');
+  loadConfig();
+};
+
 async function loadConfig() {
-  const r = await fetch('/api/config');
+  const r = await api('/api/config');
+  if (!r.ok) return;
   const c = await r.json();
   $('base_url').value = c.base_url || '';
-  $('api_key').value = c.api_key || '';
+  // 服务端只回哨兵，不回真值：留空表示「保持原 Key 不变」。
+  const k = c.api_key || '';
+  $('api_key').value = (k === '__AGENTD_KEEP__') ? '' : k;
+  $('api_key').placeholder = (k === '__AGENTD_KEEP__') ? '已配置（留空即保持不变）' : 'sk-...';
   $('model').value = c.model || '';
   $('asr_model').value = c.asr_model || 'glm-asr-2512';
   $('max_steps').value = c.max_steps || 20;
@@ -131,29 +167,31 @@ $('saveCfg').onclick = async () => {
     max_steps: parseInt($('max_steps').value) || 20,
     vision: $('vision').checked,
   };
-  const r = await fetch('/api/config', {
+  const r = await api('/api/config', {
     method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify(body),
   });
-  appendLog(r.ok ? '✓ 配置已保存' : '✗ 配置保存失败: ' + await r.text());
+  if (r.ok) { appendLog('✓ 配置已保存'); loadConfig(); return; }
+  appendLog('✗ 配置保存失败: ' + await r.text());
 };
 
 $('run').onclick = async () => {
   const task = $('task').value.trim();
   if (!task) { appendLog('请输入任务'); return; }
-  const r = await fetch('/api/task', {
+  const r = await api('/api/task', {
     method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({task}),
   });
   if (r.status === 409) { appendLog('已有任务在运行'); return; }
-  appendLog('▶ 任务已启动');
+  appendLog(r.ok ? '▶ 任务已启动' : '✗ 启动失败：' + await r.text());
 };
 
-$('stop').onclick = async () => { await fetch('/api/stop', {method:'POST'}); };
+$('stop').onclick = async () => { await api('/api/stop', {method:'POST'}); };
 
 $('testBtn').onclick = async () => {
   $('testBadge').textContent = '测试中…';
-  const r = await fetch('/api/test');
+  const r = await api('/api/test', {method:'POST'});
+  if (!r.ok) { $('testBadge').textContent = '感知 ✗'; return; }
   const j = await r.json();
   $('testBadge').textContent = j.ok ? `感知 ✓ ${j.nodes} 节点` : '感知 ✗';
   appendLog(j.ok ? `测试：感知到 ${j.nodes} 个节点` : `测试失败：${j.error}`);
@@ -209,7 +247,7 @@ async function onRecStop() {
     const blob = new Blob(recChunks, {type: mediaRec.mimeType || 'audio/webm'});
     const wav = await blobToWav16k(blob);
     const b64 = arrayToB64(wav);
-    const r = await fetch('/api/asr', {
+    const r = await api('/api/asr', {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({audio_b64: b64, format: 'wav'}),
     });
@@ -297,21 +335,42 @@ function showTap(tap) {
 
 async function poll() {
   try {
-    const r = await fetch('/api/status');
-    const s = await r.json();
-    $('badge').textContent = s.running ? '运行中 · 第 ' + s.step + ' 步' : '空闲';
-    $('badge').className = 'badge' + (s.running ? ' run' : '');
-    $('run').disabled = s.running;
-    $('stop').disabled = !s.running;
-    $('logs').textContent = (s.logs || []).join('\n');
-    if (s.logs && s.logs.length) $('logs').scrollTop = $('logs').scrollHeight;
-    renderNodes(s.nodes);
-    showTap(s.last_tap);
+    const r = await api('/api/status');
+    if (r.ok) {
+      const s = await r.json();
+      $('badge').textContent = s.running ? '运行中 · 第 ' + s.step + ' 步' : '空闲';
+      $('badge').className = 'badge' + (s.running ? ' run' : '');
+      $('run').disabled = s.running;
+      $('stop').disabled = !s.running;
+      $('logs').textContent = (s.logs || []).join('\n');
+      if (s.logs && s.logs.length) $('logs').scrollTop = $('logs').scrollHeight;
+      renderNodes(s.nodes);
+      showTap(s.last_tap);
+    }
   } catch (e) {}
-  const img = $('screen');
-  img.src = '/api/screen?t=' + Date.now();
+  refreshScreen();
 }
 
+// <img src> 无法携带自定义请求头，所以截图必须走 fetch + blob URL。
+async function refreshScreen() {
+  try {
+    const r = await api('/api/screen?t=' + Date.now());
+    if (!r.ok) return;
+    const blob = await r.blob();
+    const img = $('screen');
+    const url = URL.createObjectURL(blob);
+    const old = img.dataset.objurl;
+    img.onload = () => { if (old) URL.revokeObjectURL(old); };
+    img.dataset.objurl = url;
+    img.src = url;
+  } catch (e) {}
+}
+
+$('token').value = TOKEN;
+if (!TOKEN) {
+  appendLog('提示：本机 API 需要访问令牌。设备上执行 cat /data/local/tmp/agentd/api.token，'
+    + '把内容填到右上角「访问令牌」并保存。');
+}
 loadConfig();
 poll();
 pollTimer = setInterval(poll, 1500);

@@ -57,14 +57,44 @@ enabled_accessibility_services ""` 后再写回 `com.dsh.agentd/.AgentA11yServic
 
 ## 使用
 
-1. 手机浏览器打开 `http://127.0.0.1:8080`
-2. 「LLM API 配置」填 Base URL / API Key / 模型 → 保存
+1. **取访问令牌**（2026-09-14 起 `/api/*` 全部需要令牌）：
+
+   ```sh
+   adb shell su -c 'cat /data/local/tmp/agentd/api.token'
+   ```
+
+   没有 adb 时用手机上的 root 终端（Termux `su -c cat …` 等）同样命令。
+   令牌在首次启动时随机生成，`0600` 落在数据目录里，重启复用；要轮换就
+   删掉该文件再重启 agentd。
+
+2. 手机浏览器打开 `http://127.0.0.1:8080`，把令牌填进右上角「访问令牌」→
+   保存（只存在本机浏览器的 localStorage，不进页面源码、不进 URL）
+3. 「LLM API 配置」填 Base URL / API Key / 模型 → 保存
    - 智谱：`https://open.bigmodel.cn/api/paas/v4`，模型如 `glm-4.6`
    - 其他 OpenAI 兼容网关：Base URL 填到 `/v1` 前缀
-3. 输入任务 → 运行；也可以点「🎤 语音输入」说话（录 16kHz WAV 走
+   - **Base URL 必须是 `https`**（仅 `127.0.0.1`/`localhost` 允许明文 http）：
+     否则 API Key 会以明文 Bearer 头送出。API Key 只以哨兵形式回显，
+     留空保存即「保持不变」，真值不回浏览器
+4. 输入任务 → 运行；也可以点「🎤 语音输入」说话（录 16kHz WAV 走
    `/api/asr` → 智谱 glm-asr 识别，识别模型可在配置里改）
-4. 实时看日志 / 屏幕截图 / 语义节点表；agent 每次点击会在截图上显示
+5. 实时看日志 / 屏幕截图 / 语义节点表；agent 每次点击会在截图上显示
    蓝色脉冲标记；「测试感知」可独立自检感知通道
+
+### 本机 API 的安全边界（2026-09-14 加固）
+
+agentd 以 **root** 运行，所以它的 HTTP 面等于「本机 root 遥控器」。此前它
+监听 `0.0.0.0` 且接口无鉴权——同一 Wi-Fi 下任何设备（甚至同机任意 App）
+都能读 API Key、读屏、提交任务。现在：
+
+- 只绑 `127.0.0.1`（不再对局域网暴露）；
+- `/api/*` 一律要求令牌（头 `X-Agentd-Token` 或 `Authorization: Bearer`），
+  常量时间比较；`/` 首页本身不含任何密钥，可无令牌加载；
+- 校验 `Host` 必须指向回环（挡 DNS 重绑定）、`Origin` 必须是本机 WebUI
+  （挡浏览器 CSRF）、方法只收白名单（`/api/test`、`/api/asr` 等有副作用的
+  动作只收 POST）、POST 必须是 `application/json`；
+- 8081 a11y 桥同样收紧：`agentd-apk` 的 AccessibilityService 只绑回环，并
+  要求 `X-Agentd-Bridge` 令牌（令牌在 APK 私有目录，同机其他 App 读不到），
+  agentd 作为 root 读取并携带。
 
 ### 动作空间（v2）
 
