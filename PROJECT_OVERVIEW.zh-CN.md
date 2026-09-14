@@ -675,6 +675,56 @@ T2 验收：20 个任务中记录动作序列；“打开计算器”不得出�
 - 每次只改一个行为主题；改动前后都运行 `make check`，然后再做真机任务；禁止只看 APK 大小或编译退出码。
 - 记录“模型看到的快照”和“引擎实际执行的动作”，否则无法区分模型错、感知错和执行错。
 
+### 16.10 设备失联期间的实施记录（2026-09-15 06:30–08:20）
+
+真机在 06:29 起失联（`adb devices` 为空），因此本轮只做**不需要设备、且可自证**的部分；
+需要真机的项（UX-1、20 任务基线、纯视觉/旋转/分屏/进程恢复）留给设备回来后执行。
+
+**T2 提示词与动作优先级（已落地）**
+
+- 提示词新增 6–9 条守则：打开应用只用 `app`、**严禁**进商店搜索/安装、包名不确定先 `list_apps`、
+  启动后先确认前台已是目标应用、同一动作连续两次无变化第三次必须换思路、低风险任务不要 `ask`。
+- **引擎硬防线**（不依赖模型自觉，§16.9 实施约束首条）：`isAppStoreForeground()` + `taskAllowsStore()`——
+  当前台是应用商店（`vending`/`market`/`qqdownloader`/…）而任务并未要求安装/搜索应用时，
+  **直接拒绝该动作并回灌**，模型只能改用 `app`/`setting`/`open_url` 或如实 `fail`。
+
+**T3 完成复验扩展（已落地）**
+
+- 新增「弱期望」验收器：`expectEffect` + `NodeInfo.fingerprint`。`open_url`、`open_api`、
+  纯视觉坐标点击（`tap` 不带 `index`）执行后，若下一步感知到的屏幕指纹与前台包名**都没有变化**，
+  回灌「上一步可能没有生效，请换方式重试」。`text` 由无障碍层返回值保证；`remote` 是跨设备，本机屏幕
+  本就不该变化，两者都不登记弱期望（避免误判）。
+
+**T1 行为基线工具（就绪，待真机）**
+
+- `tests/task_baseline.py`：固定 20 个低风险任务（打开各应用/设置页），逐条采集
+  任务文本、动作序列、步数、耗时、终态、前台包名、商店误跳、最大重复次数，追加写入
+  `tests/results-baseline.jsonl`（已在 .gitignore），并汇总成功率/误跳率/重复率/平均步数/平均耗时。
+- 解析器带 `--selftest`（无需设备）：覆盖 done / fail / timeout / store_hit / repeat 五类判定。
+- 使用：`python3 tests/task_baseline.py`（设备回来后直接跑）。
+
+**协议统一（决策已定）**
+
+- `agent-lite` 是**唯一真身**；`agent-unified/client` 只由 `sync-sources.sh` 生成。
+- `agent-client` **冻结维护**：其动作集合必须是 lite 真身的子集，已由新门禁
+  `tests/action_schema_guard.py` 强制（当前 19 个动作全部在 lite 词表内；
+  已显式记录它缺少 `list_apps` / `open_api` / `remote`，不再演进）。
+- 门禁同时检查「提示词承诺的动作 ⊆ 注册表」「注册的动作 ⊆ exec() 分支」「exec() 分支 ⊆ 注册表」
+  （后者专门防止再次出现 `back`/`home` 那样的隐藏动作）。
+
+**发布整理（已完成）**
+
+- 7 个分层提交（门禁 / agentd / 服务端 / 客户端 / 同步副本+apk / agent-client / 文档），工作区干净。
+- 打本地 annotated tag **`v0.6.0-zerofriction`** 作为可发布基线（对应 §16.4 零门槛与 §16.8 DeepSeek 接入）。
+- 提交后复验：`make check` 全绿（契约 26 / SPEC-UX-001 17 / 动作词表 8 / JVM 47+20）。
+
+**仍未闭环（必须真机，设备回来后按此顺序）**
+
+1. `tests/task_baseline.py` 跑 20 任务基线 → 用 `store_hit_rate` 与 `repeat_action_rate` 判断 T2 是否见效；
+2. 五分钟首成功（UX-1）：清数据 → 登录 → 一句话 → 完成，记录耗时/点击数/权限次数/是否出现技术术语；
+3. 真机安全回归：纯视觉、旋转分屏、敏感条款暂停、用户停止、进程死亡恢复、无障碍重连。
+
+
 
 ### 2026-09-13 00:54 +08 · 会话 33f50b22 · 新建 project-work-log skill
 - 00:52 考察 skill 机制：~/.dsh/skills 为安装目录、workspace skills/ 为源副本（源:命令:diff/ls）
@@ -977,3 +1027,15 @@ T2 验收：20 个任务中记录动作序列；“打开计算器”不得出�
 - 03:10 真机切到 DeepSeek 并跑通多步任务（未死循环、空节点进纯视觉降级）；跑「打开计算器」时点到应用商店，记为模型质量问题待调提示词（源:文件:/sdcard/Android/data/com.dsh.agentlite/files/engine.log）
 - 03:20 make check 全绿（契约 26 / UX 15 / JVM 47+20）；手册 §16.8 记录接入过程，§16.7 阻塞项标记已解决（源:命令:make check）
 - 03:20 终态: done
+
+### 2026-09-15 06:30 +08 · 项目:agent-lite · 会话:8db3ace6 · 设备失联期：T2/T3/协议统一/发布整理
+- 06:30 读手册 §16.9，确认设备已失联（adb devices 空），把工作范围收敛为「不需要设备且可自证」的部分（源:文件:PROJECT_OVERVIEW.zh-CN.md:633-677）
+- 06:40 T2 落地：提示词补 6-9 条（app 优先/禁进商店/list_apps/失败必换策略/低风险不 ask）+ 引擎硬防线 isAppStoreForeground（源:文件:agent-lite/src/com/dsh/agentlite/AgentEngine.java）
+- 06:50 T3 落地：open_url/open_api/纯视觉坐标点击的屏幕指纹弱期望验收器（expectEffect + NodeInfo.fingerprint）（源:文件:同上）
+- 07:00 新增 tests/action_schema_guard.py：词表↔提示词↔exec↔agent-client 四方一致门禁；实测 8 通过/1 警告（agent-client 缺 list_apps/open_api/remote，已显式记录）（源:命令:python3 tests/action_schema_guard.py）
+- 07:15 协议统一决策：lite 为唯一真身、agent-client 冻结为子集并纳入门禁（源:文件:tests/action_schema_guard.py）
+- 07:40 T1 工具就绪：tests/task_baseline.py（20 任务 + 五类判定解析器 + --selftest 免设备自测通过）（源:命令:python3 tests/task_baseline.py --selftest）
+- 08:00 门禁扩展后全量复验：SPEC-UX-001 17 通过、动作词表 8 通过、契约 26、JVM 47+20 全绿（源:命令:make check）
+- 08:10 发布整理：7 个分层提交、工作区干净、打 tag v0.6.0-zerofriction 作可发布基线（源:命令:git log/tag）
+- 08:20 手册 §16.10 记录本轮与未闭环项（源:文件:PROJECT_OVERVIEW.zh-CN.md）
+- 08:20 终态: done（待真机：20 任务基线、UX-1 五分钟首成功、纯视觉/旋转/进程恢复回归）
