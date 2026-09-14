@@ -28,8 +28,6 @@ import java.util.Locale;
 
 /** 原生主界面：任务输入 / 语音 / 日志 / 屏幕回显 / 动作调试台。 */
 public class MainActivity extends Activity implements AgentEngine.Listener {
-    private static MainActivity sInstance;
-    static android.app.Application appStatic() { return sInstance.getApplication(); }
 
     private final Handler ui = new Handler(Looper.getMainLooper());
     private Prefs prefs;
@@ -51,7 +49,6 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
-        sInstance = this;
         setContentView(R.layout.activity_main);
         prefs = new Prefs(this);
         engine = AgentEngine.get(this);
@@ -71,6 +68,19 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
         requestPermissions(new String[]{
                 Manifest.permission.RECORD_AUDIO,
                 Manifest.permission.POST_NOTIFICATIONS}, 1);
+    }
+
+    /**
+     * 生命周期收尾（P0-4 修复）。
+     * 引擎是进程级单例、活得比 Activity 长，若不在销毁时摘掉监听器，它会一直持有本 Activity
+     * → 整个视图树泄漏（原先还多一个 static sInstance，泄漏两份）。
+     * 日志落盘能力已搬到 AgentEngine.sAppCtx（不依赖界面），所以这里摘掉监听器不会丢日志。
+     */
+    @Override
+    protected void onDestroy() {
+        engine.setListener(null);
+        if (recorder != null && recorder.isRecording()) recorder.stopToWav();   // 不要在后台继续占麦克风
+        super.onDestroy();
     }
 
     private void bind() {

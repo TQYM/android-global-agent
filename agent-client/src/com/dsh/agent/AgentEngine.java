@@ -38,10 +38,29 @@ public class AgentEngine {
 
     private static final String TAG = "AgentEngine";
     private static AgentEngine sInstance;
+    /**
+     * 应用级 Context 缓存（P0-4 修复 2026-09-13）。
+     * 原先 staticLog 走 MainActivity 的静态 Activity 引用取 Application，有两个问题：
+     * 1) Activity 销毁后该引用仍在（泄漏），而取 Application 时若引用为 null 直接 NPE，
+     *    异常被 catch 吞掉 → 后台/重进页面路径下日志静默全丢；
+     * 2) 日志能力不该依赖任何界面生命周期。
+     * 现在改为引擎自持 Application，谁先启动都能用，且与 Activity 完全解耦。
+     */
+    private static volatile android.app.Application sAppCtx;
 
     public static synchronized AgentEngine get(Context ctx) {
-        if (sInstance == null) sInstance = new AgentEngine(ctx.getApplicationContext());
+        cacheAppContext(ctx);
+        if (sInstance == null) {
+            sInstance = new AgentEngine(sAppCtx != null ? (Context) sAppCtx : ctx.getApplicationContext());
+        }
         return sInstance;
+    }
+
+    /** 幂等缓存应用级 Context；只能存 Application，绝不放 Activity（否则又变回泄漏）。 */
+    public static void cacheAppContext(Context ctx) {
+        if (sAppCtx != null || ctx == null) return;
+        Context c = ctx.getApplicationContext();
+        if (c instanceof android.app.Application) sAppCtx = (android.app.Application) c;
     }
 
     private final Context app;
@@ -55,6 +74,7 @@ public class AgentEngine {
     private boolean clipPending;   // 剪贴板已写入，引导下一步点「粘贴」
     private String rootPasteDone;  // 已用 keyevent279 粘过的文本（防同文死循环）
     private String borrowedIme;    // 任务中临时借用的输入法（任务结束归还）
+    private boolean clipboardDirty; // 本引擎写过剪贴板（只有写过才允许清，避免误删用户自己的剪贴板）
 
     private AgentEngine(Context ctx) { app = ctx; }
 
@@ -62,16 +82,23 @@ public class AgentEngine {
 
     public void setListener(Listener l) { listener = l; }
 
-    /** 静态版日志：供 Activity 等非引擎处落盘排障。 */
+    /** 静态版日志：供 Activity 等非引擎处落盘排障。不再依赖 Activity 实例。 */
     public static void staticLog(String msg) {
+        android.app.Application a = sAppCtx;
+        if (a == null) {
+            // 以前这里是 catch(ignored)：日志丢了还查不出为什么。丢日志本身要留痕。
+            Log.w(TAG, "staticLog 无应用上下文，已丢弃：" + msg);
+            return;
+        }
         try {
-            android.app.Application app = MainActivity.appStatic();
             java.io.FileWriter w = new java.io.FileWriter(
-                    new java.io.File(app.getExternalFilesDir(null), "engine.log"), true);
+                    new java.io.File(a.getExternalFilesDir(null), "engine.log"), true);
             w.write(new java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.US)
                     .format(new java.util.Date()) + " " + msg + "\n");
             w.close();
-        } catch (Exception ignored) { }
+        } catch (Exception e) {
+            Log.w(TAG, "staticLog 写入失败", e);
+        }
     }
 
     private void log(String s) {
@@ -102,6 +129,9 @@ public class AgentEngine {
         running = true;
         step = 0;
         KeepAliveService.start(app);
+        // P1-7 修复：updateState() 原先全仓无调用 = 死代码，状态栏圆点永远停在绿色「待命」。
+        // 任务开始/结束各推一次，红/绿才与实际状态一致。
+        KeepAliveService.updateState(app, true);
         thread = new Thread(() -> {
             try {
                 runLoop(task);
@@ -109,6 +139,7 @@ public class AgentEngine {
                 log("任务异常终止: " + t);
             } finally {
                 running = false;
+                KeepAliveService.updateState(app, false);   // 回到绿点「待命」
                 status();
             }
         }, "agent-loop");
@@ -242,6 +273,11 @@ public class AgentEngine {
         boolean visionOn = vision;
         lastApp = null;
         visionOnly = false;
+        // P3-1 修复：这几个是「跨步」状态，原先不在任务开始时重置 → 上一轮任务残留会污染下一轮。
+        // clipPending 残留时，新任务第一步就会收到「文字已写入剪贴板，请点粘贴」的假提示（明明没写）。
+        // rootPasteDone 残留时，新任务里同样的文本会被跳过 keyevent 279 直接走长按菜单。
+        clipPending = false;
+        rootPasteDone = null;
         boolean prevFailed = false;
 
         try {
@@ -428,9 +464,29 @@ public class AgentEngine {
             status();
         }
         } finally {
-            restoreIme();   // 归还借用的输入法
+            restoreIme();       // 归还借用的输入法
+            clearClipboard();   // P0-3：清掉任务期间写入的剪贴板内容（密码/验证码不得留在系统剪贴板）
         }
         log("达到最大步数 " + maxSteps + "，任务未确认完成");
+    }
+
+    /**
+     * 清空本应用写入的剪贴板内容（P0-3 修复）。
+     * 注入路径（injectViaClipboard / 剪贴板降级）会把待输入文本——包括密码、验证码——
+     * 留在系统剪贴板里，任务结束后任何应用都能读。这里在任务终态统一抹掉。
+     * ★ 只在 clipboardDirty 为真时清：用户自己复制的东西不是我们的垃圾，误删是数据损失。
+     *   用 clearPrimaryClip 而非写空串：后者会在剪贴板历史里留下一条空记录。
+     */
+    private void clearClipboard() {
+        if (!clipboardDirty) return;
+        try {
+            android.content.ClipboardManager cm = (android.content.ClipboardManager)
+                    app.getSystemService(Context.CLIPBOARD_SERVICE);
+            if (cm != null && cm.hasPrimaryClip()) cm.clearPrimaryClip();
+            clipboardDirty = false;
+        } catch (Throwable t) {
+            Log.w(TAG, "清理剪贴板失败（不影响任务结论）", t);
+        }
     }
 
     private void pushScreen(Bitmap bmp) {
@@ -800,6 +856,7 @@ public class AgentEngine {
                     (android.content.ClipboardManager) app.getSystemService(android.content.Context.CLIPBOARD_SERVICE);
             if (cm == null) return false;
             cm.setPrimaryClip(android.content.ClipData.newPlainText("agent", text));
+            clipboardDirty = true;   // 标记「剪贴板里是我们的东西」，任务终态才允许清
             int[] xy = null;
             try { xy = resolvePoint(svc, a); } catch (Exception ignored) { }
             if (RootShell.available(app) && !text.equals(rootPasteDone)) {
