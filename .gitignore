@@ -63,3 +63,8 @@ ios/.build/
 # iOS App 的本地联调证书与构建产物（由 scripts/prepare-resources.sh 现场生成）
 ios/App/Resources/
 ios/App/build/
+
+# DSH 环境脚本与外部工具目录：属于 ~/.dsh 环境维护（项目 dsh-env），不是本 Android 仓库的产物
+/apply.sh
+/rollback.sh
+/.workbuddy/
