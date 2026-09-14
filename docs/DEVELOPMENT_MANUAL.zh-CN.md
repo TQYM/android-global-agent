@@ -1,5 +1,9 @@
 # 开发手册（Development Manual）
 
+> **所属项目**：**`agentlite-server`**（服务器侧）。本工作区还有 `agent-client` / `agent-lite` /
+> `ios` / `agent-unified` / `agentd` / `harmony-agent` 等其他项目——
+> **项目清单与会话标注约定见 [`PROJECTS.zh-CN.md`](PROJECTS.zh-CN.md)**；改别的项目请读它自己的手册。
+>
 > **面向对象**：接手本项目的**其他对话 / 智能体 / 人类开发者**。
 > **目的**：在一个文件里拿到「项目专用服务器」的连接方式与线上事实，直接开始功能实现，不必考古。
 >

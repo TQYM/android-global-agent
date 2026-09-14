@@ -215,7 +215,8 @@ For the historical security review, see [`SECURITY_REVIEW_2026-09-05.zh-CN.md`](
 
 ## Documentation
 
-- [`docs/DEVELOPMENT_MANUAL.zh-CN.md`](docs/DEVELOPMENT_MANUAL.zh-CN.md): **development manual — how to reach the project's dedicated server** (SSH alias `aliyun-ecs`, service endpoints, deploy and ops, API list); read this first when picking up development;
+- [`docs/PROJECTS.zh-CN.md`](docs/PROJECTS.zh-CN.md): **project registry and separation rules** — which sub-projects live in this workspace, which one a path belongs to, and how a session declares its project ID; read this first when opening a new session;
+- [`docs/DEVELOPMENT_MANUAL.zh-CN.md`](docs/DEVELOPMENT_MANUAL.zh-CN.md): **development manual — how to reach the project's dedicated server** (SSH alias `aliyun-ecs`, service endpoints, deploy and ops, API list); belongs to `agentlite-server`;
 - [`PROJECT_OVERVIEW.zh-CN.md`](PROJECT_OVERVIEW.zh-CN.md): project architecture, technical decisions, and current status;
 - [`agent-lite/COMPATIBILITY.zh-CN.md`](agent-lite/COMPATIBILITY.zh-CN.md): Android 11+ compatibility and installation notes;
 - [`docs/DOUBAO_SPEC_ADAPTATION.zh-CN.md`](docs/DOUBAO_SPEC_ADAPTATION.zh-CN.md): Agent Lite interaction-spec implementation;

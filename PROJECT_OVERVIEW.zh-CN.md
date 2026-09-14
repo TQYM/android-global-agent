@@ -369,7 +369,312 @@ App 源码已对 **iOS 模拟器 SDK 类型检查通过**，工程与测试就�
 
 ---
 
-## 工作日志
+## 15. 当前项目问题分析（2026-09-14）
+
+> 本节是基于当前工作区源码、既有体检报告、构建记录与 `git status` 的现状判断。优先级含义：P0=发布阻塞或可直接导致设备/凭据失控；P1=启用前应修复；P2=工程完备性与可维护性问题。证据以当前源码为准，历史报告中已修复的 P0 不重复当作现存问题。
+
+### 15.1 P0/P1：必须优先收敛
+
+1. **agentd-go 本地 HTTP 接口仍是 root 高危裸奔面（P0）**
+   - 现象：`/api/config`、`/api/task`、`/api/stop`、`/api/screen`、`/api/asr` 等路由未统一鉴权，进程监听 `":"+cfg.Port`；同时 a11y 桥使用 `127.0.0.1:8081`。
+   - 根因：代码只打印「监听 127.0.0.1」，但 `ListenAndServe(":port")` 实际绑定所有地址；且 Android 的 loopback 不是应用级安全边界，任意 App 可能访问本机端口。该进程又拥有 root 能力，攻击者可窃取配置中的 Key、读取屏幕或提交任务。
+   - 最小修复：默认绑定 `127.0.0.1`；启动时用 `crypto/rand` 生成并以 `0600` 保存随机 token；所有 `/api/*` 与 8081 桥统一校验 token、HTTP 方法、JSON Content-Type 和 Origin/Host；更稳妥的方案是改用 Unix domain socket。
+
+2. **agent-lite 账号令牌仍明文存储（P1）**
+   - 现象：`Prefs.java` 直接把 `account_token` 写入普通 `SharedPreferences`。
+   - 根因：凭据体系只有内购侧 `AkStore` 使用 Android Keystore，账号令牌尚未迁移。
+   - 最小修复：新增 `TokenStore`，复用 `AkStore` 的 Keystore AES-GCM 模式；迁移期间兼容读取旧值，成功迁移后删除明文；同时关闭不必要的备份导出并增加升级迁移测试。
+
+3. **DashScope/上游密钥必须轮换（P1，用户动作）**
+   - 现象：历史构建产物与对话记录曾出现真实 Key。
+   - 根因：历史构建脚本曾把 `dev.local` 密钥注入 APK；当前文件已清理且构建已 fail-closed，但清理文件不能撤销历史暴露。
+   - 最小修复：立即在百炼控制台吊销旧 Key、生成新 Key；新 Key 只经本地忽略文件或安全环境变量使用，禁止进入命令回显、日志、手册和 APK。
+
+4. **双份客户端源码仍需持续防漂移（P1）**
+   - 现状：`agent-lite/` 是客户端真身，`agent-unified/client/` 是同步副本；契约门禁曾因未同步而失败，当前已通过 `sync-sources.sh` 恢复 26/26。
+   - 风险：后续直接改副本会被覆盖，或构建旧代码；内购、配置和协议变化尤其容易出现行为不一致。
+   - 最小修复：将同步作为构建前强制步骤；门禁失败不得发布；在贡献指南明确只改真身，并在 CI 校验来源 HEAD 与副本差异。
+
+### 15.2 软件功能与运行时问题（本节重点）
+
+1. **任务并发启动竞态（P1）**：`agentd-go/main.go:139-143` 先检查 `a.running`，到 `180` 才置位，两个并发请求可能同时启动 Runner，争用输入、截图和日志。应使用 `CompareAndSwap(false, true)`，并在统一 `defer` 中释放状态。
+2. **停止任务不够即时（P1）**：`agent-lite/LlmClient.java:268-301` 网络读取最长 120 秒，`AgentEngine.stop()` 只设置标志，无法中断当前连接或阻塞 IPC。应建立任务取消句柄，停止时 `disconnect()`/中断线程，并在所有阻塞点检查取消状态。
+3. **HTTP 资源释放不完整（P1）**：`LlmClient.postOnce()` 在 `readAll()` 或 JSON 解析异常时可能跳过 `disconnect()`，流也没有统一 `finally` 关闭。长任务网络异常后可能耗尽连接和文件描述符。应统一 try/finally，并限制响应体大小。
+4. **配置保存存在竞争与覆盖错误（P1）**：`agentd-go` 在锁外保存共享 `a.cfg`，并发保存可能覆盖新配置；`strings.Contains(in.APIKey, "...")` 也会误判真实 Key。应锁内生成不可变快照、原子落盘，并使用独立掩码哨兵。
+5. **URL 与输入协议校验不足（P1）**：`LlmClient` 直接拼接 `base + path`，没有统一限制 HTTPS、host 和异常端口；`agentd-go` 的 ASR `format` 也未采用有限枚举。应在配置保存时校验 URL，ASR 格式仅允许 `wav` 等明确值。
+6. **两套客户端动作协议漂移（P1）**：`agent-lite` 和 `agent-client` 的 `SCHEMA`/执行分支不一致，部分动作只在一端存在；依赖提示词而非统一协议版本和严格字段校验。应抽共享 `protocol` 包，增加 `SCHEMA_VERSION`，未知动作明确回灌并有限重试。
+7. **动作完成过度依赖模型自报（P1）**：`done` 主要由模型输出，启动应用、打开链接和设置跳转缺统一状态复验，容易出现“看似完成、实际未完成”。应为每类动作定义前台包名、节点文本、页面状态或屏幕变化等验收条件。
+8. **节点编号和感知快照可能失效（P1）**：页面异步刷新、旋转、分屏或弹窗出现时，旧节点编号可能指向错误控件，截图和节点树也可能不同步。应绑定快照 ID、窗口 bounds、旋转和时间戳，执行前校验快照有效性。
+9. **日志同步 IO 影响任务与审计（P2）**：引擎每条日志都同步打开、追加、关闭文件，异常被静默吞掉；长任务会增加延迟，失败时也无法确认是否落盘。应使用后台日志队列、轮转、脱敏和丢弃计数。
+10. **资源边界与异常恢复不足（P2）**：音频、模型响应、节点树、消息历史和日志存在累计增长风险；空 choices、空文本、非 JSON 和超限响应的恢复策略不统一。应为请求/响应、历史、节点数和任务时长设硬上限，并输出可理解的失败原因。
+
+### 15.3 P2：应纳入下一迭代
+
+- **测试缺少统一入口**：Go 服务端核心账本/订单状态机/PBKDF2/限流仍缺表驱动单测；现有 JVM、Python、契约门禁各自执行，缺少 `make check`/等价聚合命令与 CI 门禁。
+- **构建结果自证不足**：APK 体积可能相同而内容不同，不能用字节数判断是否重建；应输出并校验 APK/dex SHA-256，并让脚本在管道中保留真实退出码。
+- **凭据与配置边界不统一**：账号令牌、用户 API Key、服务端配置的存储和白名单分散在多个类；应建立统一 `CredentialStore`/配置白名单，所有 URL 强制 HTTPS（本地例外显式限定）。
+- **协议层重复维护**：`agent-client` 与 `agent-lite` 重复实现 `SCHEMA`、`ActionParser`、节点模型和看门狗，修复容易只落一端；应抽成纯 Java `protocol/` 共享包并加入版本常量。
+- **主线程与生命周期风险**：旧体检仍列出 HTTP 无取消、节点遍历/Root 探测可能阻塞、录音线程直接 `performClick()`、回调注销不完整等问题；应以 StrictMode、LeakCanary、取消通道和真实任务回归逐项闭环。
+- **设备与兼容性验证不足**：当前真机验证受手机不在线、有效 RAM AK 缺失影响，充值闭环尚未端到端验证；分屏/旋转/多显示与 HarmonyOS NEXT 仍有明确能力边界，不能用编译通过替代设备验证。
+- **文档存在多轨漂移**：`PROJECT_OVERVIEW`、各子项目 README、开发手册和体检报告更新节奏不同；应维护文档地图、事实来源和每次接口/架构变更的同步清单。
+
+### 15.3 推荐执行顺序
+
+1. 先关闭或鉴权 `agentd-go` 的 root API，并完成密钥轮换。
+2. 将账号令牌迁移到 Keystore，补迁移/备份/失效场景测试。
+3. 固化 `agent-lite` 为源码真身，构建前强制同步 unified 副本，门禁失败即停止。
+4. 建立 `make check` 聚合门禁，补 Go 核心逻辑单测与 SHA-256 产物自证。
+5. 最后做真机矩阵回归：冷启、进程死亡恢复、无障碍重绑、充值创建/校验/回滚、分屏旋转和跨设备同步。
+
+### 15.4 修复实施记录（2026-09-14 · 项目 agentd +agent-lite）
+
+**已落地**（每项都带验证证据；**粗体**为对应的 §15 编号）：
+
+1. **P0-1 agentd-go 本机 API 收敛**：新增 `agentd-go/auth.go`——随机令牌（32 字节 hex，`0600` 落 `<dir>/api.token`，重启复用，可用 `AGENTD_TOKEN` 覆盖）+ 常量时间比较 + `Host` 必须回环（挡 DNS 重绑定）+ `Origin` 必须同源（挡 CSRF）+ 方法白名单 + POST 强制 JSON（415），令牌为空时 fail-closed；`main.go` 监听显式绑 `127.0.0.1`（原 `":"+port` ＝ `0.0.0.0`）；WebUI 增加令牌输入（存 localStorage）、所有请求走统一封装，截图改 `fetch`+blob URL（`<img src>` 带不了自定义头）。
+   *验证*：宿主二进制端到端——无令牌 401 / 错令牌 401 / Bearer 200 / `Host: evil.com` 403 / 跨源 Origin 403 / PUT 405 / 非 JSON 415 / 外网 `http://` base_url 400 / 哨兵保留 Key；`lsof` 确认只监听 `127.0.0.1`。新增 `auth_test.go`、`internal/config/config_test.go`（agentd Go 单测从 0 到 22 项）。
+2. **P0-1 8081 a11y 桥**：`agentd-apk` 的 AccessibilityService 改为绑定回环（原来 `new ServerSocket(PORT)` ＝ `0.0.0.0`，**局域网可直连读屏/注入文本**），并要求 `X-Agentd-Bridge` 令牌（令牌写在 APK 私有目录 `files/bridge.token`，同机其他 App 读不到）；`agentd-go` 侧 `device.BridgeToken()/NewBridgeRequest()` 由 root 读取并携带，读不到时**降级为仅回环**（旧 APK 不会被打破）。
+   *待真机验证*：root 能否读 `/data/data/com.dsh.agentd/files/bridge.token`（读不到则退化为仅回环，不影响功能）。
+3. **P1-2 账号令牌 Keystore 化**：新增 `agent-lite/.../TokenStore.java`（AES-256-GCM，Keystore 别名 `agentlite_account_token_v1`，与 AK 别名分离，进程内缓存）；`Prefs.accountToken()` 首次读取执行一次「加密落盘 → 删除明文」，**只有加密成功才删**；`saveAccount` 改返回 `boolean`，`LoginActivity` 在 Keystore 不可用时明确报错（绝不退化成明文）；`clearAccount` 同时清密文、Keystore 别名与缓存；`AndroidManifest` 关闭备份导出（`allowBackup=false` + `fullBackupContent=false`）。
+   *验证*：`agent-lite/build-mac.sh` 构建通过；`sync-sources.sh` 同步副本后契约门禁 26/26。
+4. **§15.2-1 任务并发竞态**：`running` 改用 `CompareAndSwap(false, true)` 一步占位，运行位释放统一交给 goroutine 的 `defer`；顺带 fail-fast（未配置 API Key 时不占位、返回 409）。
+5. **§15.2-4 配置保存竞争**：锁内 `Merge` 出不可变快照、锁外原子落盘（临时文件 + `fsync` + `rename`），落盘失败回滚内存；掩码判据从 `strings.Contains(key, "...")` 换成显式哨兵 `__AGENTD_KEEP__`，且**真实 Key 不再回流浏览器**（只回哨兵）。
+6. **§15.2-5 输入校验（部分）**：`base_url` 强制 HTTPS（`127.0.0.1`/`localhost` 例外）、拒绝内联凭证与越界端口；`port` 限 1..65535（空值不再拼成 `":"`）；`/api/asr` 的 `format` 改白名单（wav/mp3/m4a/webm/ogg）。
+7. **§15.2-2 停止任务即时性**：agent-lite `LlmClient` 新增 `cancel()`（断开进行中的连接）与 `CancelledException`——取消不再触发网关回退、不再被误报成「模型调用失败」，`AgentEngine.stop()` 随即断开，并把「用户停止」与「引擎内部异常」分开收尾（不打失败卡片）；agentd `Runner` 接入任务级 context，`/api/stop` 取消后模型请求立刻断开，不必再等最长 180 秒读超时（`llm.ChatCtx` + `Runner.Ctx`）。
+   *验证*：`internal/llm/llm_test.go` 断言「已取消的 ctx 立即失败」「请求进行中取消 5 秒内被中断」；`TestHandleStopCancelsTaskContext` 断言停止请求确实取消了任务上下文。
+8. **§15.2-3 HTTP 资源释放**：`LlmClient.postOnce` 的**所有**路径（含 402 抛出、JSON 解析失败、取消）都走 `finally` 断开连接，输出流显式关闭；响应体设 1MB 上限。
+9. **§15.3 P2-1 测试统一入口**：新增根 `Makefile`——`make check` 聚合 Go 单测（agentd + agentlite-server）、契约门禁、UI 文案/控件守卫、桌面 JVM 回归（AliyunV3Signer/PurchaseFlow）。实跑全绿。
+
+### 15.5 真机验证记录（2026-09-14 · OnePlus 13T / ColorOS 16 / Android 16）
+
+> 设备 `PKX110`（Android 16，KernelSU 可用）；**客户端验证全程走零 root 路径**（仅用 adb shell + App 自身能力，root 只用于读取验证证据）。
+
+**通过项**
+
+1. **覆盖升级 + 令牌迁移**：升级前 `agent_prefs.xml` 里 `account_token` 为 43 字符**明文**；覆盖安装新版后启动 App，明文键被删除、`agentlite_cred.xml` 出现 `account_token_enc`（96 字符 = Base64(12 IV + 43 令牌 + 16 GCM tag)，长度吻合），App 界面仍显示「账号：tqym」——说明密文可正常解密、登录态未丢。
+2. **零 root 任务链路**：`setting wifi` 直达 WLAN（约 5 秒完成）、多步 `About phone` 任务正常；无障碍服务处于绑定状态。
+3. **停止语义**：日志为「任务已被用户停止」，不再误报「引擎内部异常/模型调用失败」。
+4. **网关回退**：线上网关不可达时日志明确记录「额度网关不可用，回退直连」，随后用用户自备 Key 正常完成任务。
+
+**真机抓到的两个缺陷（均已修）**
+
+1. **Keystore 加密必失败**：`InvalidAlgorithmParameterException`——Android Keystore 生成的密钥默认 `randomizedEncryptionRequired=true`，**拒绝调用方自带的 IV**。原实现手工造 IV 并传给 `Cipher.init`，在真机上必然抛异常（迁移因此首次失败、明文按设计保留）。修复：加密不传 IV，改用 `cipher.getIV()` 取 Keystore 生成的随机 IV；`AkStore`（内购 AK 存储）是同源代码，**同样的问题也从没在真机成功过**，一并修掉。
+   *教训*：桌面单测覆盖不到 Keystore 行为；这类代码必须在真机上验证，任何"看起来和 AkStore 一样"的复用都要警惕。
+2. **停止后仍要等满 connect 超时**：黑洞地址场景实测——20:36:09 点停止，20:36:22 才结束（**13 秒**）。原因：`HttpURLConnection.disconnect()` 只能中断**已建立连接**的请求，连接阶段不响应；任务因此要等满 15 秒 connect 超时。修复：请求交给网络线程执行，主循环每 200ms 轮询结果并检查取消标志（`chatCancellable`），规划请求也登记 `activeLlm`。复测同一场景：**13 秒 → 约 1 秒**。
+
+**环境阻塞（已解决）**
+
+设备到 `8.133.225.105:18443` 被服务器 **firewalld** 拒绝（public zone 只放行 `20,21,22,80,443,8888,39000-40000`），真机上账号同步/额度刷新/兑换码全部不可用；服务端进程本身正常（`systemctl is-active` = active、服务器本机 `curl -k https://127.0.0.1:18443/health` = 200），所以问题纯在网络层。经授权已执行：
+
+```sh
+firewall-cmd --permanent --add-port=18443/tcp --add-port=18444/tcp && firewall-cmd --reload
+```
+
+放行后逐层复验：服务器本机 `health=200` → 本机 `https://8.133.225.105:18443/health=200` → 设备侧 `nc 18443` = OPEN。注意 `18444` 虽已放行，但**服务端并未监听该端口**（`ss -lntp` 只有 18443），局域网直连通道当前是关闭状态，需要时另行开启。
+
+**令牌迁移的端到端确认**：放行后设备侧触发同步与「刷新额度」，服务端日志显示来自设备出口 IP 的全部请求 **200**（`POST /api/v1/sync/push`、`GET /api/v1/sync/pull`、`GET /api/v1/device/commands`、`GET /api/v1/account/me`）。这是「Keystore 密文可解密、解密出的令牌能通过服务端鉴权」的最强证据——若解密失败或迁移出错，这里会是 401。
+
+**仍待办**：§15.2-6 两客户端动作协议漂移（抽 `protocol/` 包 + `SCHEMA_VERSION`）、§15.2-7/8 动作复验与快照 ID、§15.2-9/10 日志异步化与资源硬上限、§15.3 其余 P2、**§15.1 P1-3 密钥轮换（用户动作）**、真机矩阵回归（含 agentd 令牌流程与 8081 桥 token 的实机确认）。
+
+## 16. 「极大降低技术门槛」守则与 DeepSeek 4.1 Flash 指导（2026-09-14）
+
+### 16.1 审查结论：当前只降低了操作门槛，没有消除技术门槛
+
+项目已经做到自然语言下达任务、语音输入、无障碍自动执行、API 优先、失败看门狗和多层输入降级；但“极大降低技术门槛”目前仍是口号，不是可验收的产品守则。首要问题是：新用户仍可能被要求理解 API Key、Base URL、模型名、RAM 子账号、资源包匹配和无障碍设置；这等于把使用门槛从“写代码”转移成“懂云服务”。
+
+### 16.2 P0：违反低门槛宗旨的问题
+
+1. **默认首跑可能必然失败**：构建脚本为安全而不内置 Key 是正确的，但用户不登录、不填 Key 直接运行时，系统才在模型请求后报“检查 API 配置”。应在点击运行前判断凭据状态，不发无效请求，展示唯一下一步：登录/领取试用额度或选择“我已有 API 配置”。
+2. **授权能力存在承诺与实现不一致**：授权入口和文案让用户以为可管理应用权限，但 `requestAuth()` 仍可能没有真实调用链；自动同意服务条款也可能替用户作出不可逆授权。应接通真实授权状态机；协议、付费、权限条款必须暂停交给用户，不得自动代点。
+3. **充值流程把云平台凭据前置给普通用户**：AccessKeyId/Secret、RAM 权限和模型资源包是高级运维概念，不应成为默认成功路径。应优先提供登录赠送额度/兑换码/托管额度；自带 Key 放入“高级设置”，录入前先解释风险、权限范围和撤销方式。
+4. **失败没有可执行的下一步**：失败文本若只写网络、API 配置、额度或异常类名，用户无法恢复。每个失败终态必须提供一个主按钮（重试、开启无障碍、登录、修复网络、缩小任务、手动完成）和一个“为什么”入口。
+5. **生态策略可能不持久**：若设置保存后又被初始化逻辑清理，用户看到的“受限/登录后/自动”选择不会真正生效。所有用户设置必须冷启动、进程死亡和升级后保持，并有回归测试。
+
+### 16.3 P1：用户旅程中的主要门槛
+
+- 首次启动不应同时请求录音、通知、无障碍、登录等多件事；当前应改为“先理解用途 → 用户输入第一条任务 → 需要时再请求对应权限”，录音权限延迟到第一次点击语音。
+- 首屏设置项过多；默认只呈现任务输入、语音、运行、登录状态和无障碍状态，Base URL/API Key/模型/同步/Token 等归入“高级设置”并折叠。
+- 无障碍开启应提供图示三步引导、实时检测、失败时明确说明“系统设置里点哪里”，而不是让用户自行查文档。
+- 账号恢复不能只依赖“不可找回”的账号密钥；应有安全备份/恢复或明确可承受的额度迁移方案。
+- 设备和助手状态必须可见：任务中、等待用户、网络失败、无障碍断开、已完成和已停止使用不同颜色与动作按钮；“用户停止”不应显示为“任务失败”。
+- 自动化必须让用户知道数据去向、当前控制对象和停止方式；跨设备任务要在执行前明确提示目标设备，并在目标设备重新确认敏感操作。
+- 任务完成不能只采信模型 `done`；至少验证前台应用、关键节点、页面状态或屏幕变化。否则“降低操作门槛”会变成“降低正确性门槛”。
+
+### 16.4 SPEC-UX-001：零门槛守则（后续纳入 `make check`）
+
+1. **五分钟首成功**：全新用户不查文档、不输入 Base URL/API Key/模型名，五分钟内完成一项“打开应用/打开设置”的安全任务。
+2. **首屏零技术词**：首屏和首轮引导不得出现 API、Base URL、endpoint、模型名、RAM、token 等词；高级页可以出现并解释。
+3. **无效请求前置拦截**：无凭据时禁止向模型发请求，改为一张可操作的解决卡。
+4. **每个失败可恢复**：失败必须包含人话原因、下一步动作和可重试入口；禁止把 Java/HTTP/云厂商原始错误直接展示给普通用户。
+5. **权限渐进申请**：只在功能真正需要时申请权限；一次只解释一类权限；拒绝后提供可用降级路径。
+6. **状态可解释**：任何自动动作显示“正在做什么、操作哪个应用、如何停止”；敏感操作显示暂停并等待用户。
+7. **结果可证明**：`done` 必须有动作对应的最小验收证据；无法证明时只能继续复验或 `fail`。
+8. **设置可恢复**：用户配置冷启动、进程死亡、升级后保持；危险设置可撤销，清理必须版本化迁移。
+9. **低端/受限设备可用**：无截图、无障碍被屏蔽、网络不稳定时，必须给出降级路径或清晰失败原因，不得让模型无限重试。
+10. **副本和模型同源**：动作词表、执行分支、友好文案和测试必须有单一事实源，并带 `SCHEMA_VERSION`。
+
+### 16.5 DeepSeek 4.1 Flash 实施指导
+
+将 DeepSeek 4.1 Flash 定位为“快速、低成本的决策模型”，而不是可靠的业务规则引擎。安全、权限、金额、协议和完成判定必须由引擎硬编码，不能只依赖提示词。不同供应商是否支持 JSON Schema/结构化输出必须先以实际网关文档和探测结果确认；项目应保留纯 JSON 文本解析兜底，不要假定所有兼容接口行为一致。可参考 [DeepSeek API 文档](https://api-docs.deepseek.com/quick_start/pricing/)，但不能把第三方模型页面当作协议事实源。
+
+**提示词原则**：
+
+- system 只保留角色、动作契约、环境态、敏感红线和终态规则；把冗长教程移到代码规则或短格式帮助，减少每步输入成本。
+- 每轮只给“当前任务、完成判据、最新快照、可用动作、最近一次失败原因”；不要把大量历史日志和重复规则塞给 Flash。
+- 明确要求只输出一个 JSON 对象；字段用有限枚举；禁止编造包名、节点编号、坐标和不存在的动作。
+- 给每个任务写清完成判据；例如“打开应用”=目标包在前台，而不是“已发送 startActivity”。
+- 把敏感操作、权限条款、发送、支付、删除等设置为引擎不可绕过的 `ask`/人工接管，不要让 Flash 自己判断是否可以越过。
+
+**推荐动作契约**：
+
+```json
+{"action":"tap","index":3,"snapshot_id":"s42"}
+```
+
+引擎必须校验 `action`、字段类型/范围、`snapshot_id`、节点编号和当前窗口；不合法动作只允许一次短错误回灌，随后走降级或失败。模型不得输出自由文本解释。
+
+**任务拆分与实施顺序**：
+
+1. 先建立 SPEC-UX-001、门槛指标和测试夹具。
+2. 加入 `SCHEMA_VERSION`，清理 `exec()` 中未注册的 `back/home`，统一两客户端词表、设置页枚举和等待常量。
+3. 实现无凭据前置守卫、明确登录/试用/自带 Key 三条路径。
+4. 修正自动同意、授权状态机和 A11y 守护抖动；敏感协议必须人工确认。
+5. 统一人话错误归因、失败卡片和重试/修复按钮。
+6. 为 `app`、`setting`、`open_api` 先做最小完成复验，再扩展到复杂任务。
+7. 最后做真实设备五分钟首成功、网络断开、空节点纯视觉、旋转分屏、进程死亡和敏感操作回归。
+
+**DeepSeek 4.1 Flash 每次实施任务的工作协议**：
+
+- 只改一个明确范围，优先一文件一验证；不得顺手重构。
+- 开工前读取 `PROJECT_OVERVIEW.zh-CN.md`、`docs/INTERACTION_LOGIC_SPEC.zh-CN.md`、目标子项目 README 和 `Makefile`。
+- 只修改 `agent-lite/` 真身；完成后运行 `sync-sources.sh`，禁止直接编辑 `agent-unified/client/`。
+- 输出分为：证据（文件与行号）、改动、验证真实结果、未验证项与风险、下一步（最多三条）。禁止用“编译通过”代替真机验证。
+- 每次必须回答：无凭据时怎么办？空节点/纯视觉时怎么办？模型输出非法动作时怎么办？用户如何停止？完成如何证明？
+- 任何不确定的模型能力、API 字段或第三方协议都标记“未确认”，先做最小探测，不得猜测。
+
+### 16.7 实施记录（2026-09-14/15 · 项目 agent-lite）
+
+按 §16.6 优先级与 §16.5 实施顺序落地，每项都给出证据与验证方式。
+
+1. **SPEC-UX-001 落盘并入门禁**：`docs/SPEC_UX_001.zh-CN.md`（10 条 + 逐条验收方式 + 三条凭据路径）；
+   门禁 `tests/spec_ux_001_guard.py` 已并入 `make check`，当前 **14 通过 / 0 失败 / 1 需真机**。
+   门禁只做能真伪判定的静态断言（源码级），需要真机的条款标 `MANUAL` 并提示，不假装通过。
+2. **P0-1 首跑无凭据前置拦截**：`MainActivity` 新增 `hasUsableCredential()`（三条路径：账号登录 / 自带 Key / 未登录但已填 Key）与 `showCredentialCard()`（人话说明 + 主按钮「登录 / 领取额度」+「打开设置」+「稍后」）。
+   *真机验证*：临时清空 api_key 并置 `use_own_key=true` 后点运行——**未发出任何模型请求**（日志「任务启动」计数 0），弹出解决卡；测后配置已完整还原。
+3. **P0-4 失败可恢复**：`UiText.nextStep(归因)` 给出 8 类可执行下一步；`OverlayController.showFail(人话归因, 原始细节)` 卡片改为三段式（归因 → 下一步 → 「重试一次 / 为什么 / 关闭」），原始技术细节只在用户主动点「为什么」时展开；`AgentEngine.lastTask()` 支撑重试。
+4. **上游错误分类归因**：`LlmClient.UpstreamRejectedException` + `classifyUpstream()` 识别欠费 / 密钥失效 / 无权限 / 模型不存在；并带**通道标识**（账号额度网关 or 用户自备配置），两者都失败时合并说明。
+   *真机实测输出*：「任务失败——两条模型通道都不可用：接口账号余额不足（欠费），模型无法调用；备用通道同样不可用：…」，技术原文只进日志。
+5. **自带 Key 失效自动改用账号额度**：`LlmClient.forPrefs` 在自备 Key 路径上把账号额度登记为备用通道，上游拒绝且「换通道可能有用」时自动切换（402 额度耗尽仍不回退，避免绕过额度）。
+   *真机日志*：「上游拒绝（接口账号余额不足（欠费）），改用备用通道」。
+6. **UX-10 单一事实源**：新增 `ActionSchema.java`——`SCHEMA_VERSION = 2026-09-14.1`、22 个执行动作 + 3 个终态动作、`isRegistered()` 校验；**把 `back`/`home` 注册进词表**（此前 `exec()` 已实现却从没告诉模型，属隐藏动作）；未注册动作只回灌一次、连续 3 次即终态。词表版本同时写进给模型看的提示词，排障时能对齐「模型看到的词表」与「设备跑的代码」。
+7. **UX-5 权限渐进申请**：启动期不再一次性索要录音 + 通知权限（门禁 `UX-5` 会因此变红，已修）；录音权限在第一次点「语音」时申请，通知权限在第一次真正跑任务时申请且只问一次。
+8. **UX-7 done 最小复验**：`AgentA11yService.activePackage()` + 引擎的期望包名（`app` → 目标包、`setting` → 设置应用片段）+ 「前台应用是否变化」证据；`done` 缺少证据时**追问一次**（只一次，第二次直接接受，避免把用户卡在循环里）；`app`/`setting` 未生效时回灌「上一步似乎没有生效」并要求换策略。
+9. **§15.2-9 日志异步化**：新增 `EngineLog.java`——入队即返回（不再每条日志开关一次文件）、队列满时丢弃并**记录丢弃条数**、单文件 1 MB 轮转（`engine.log.1`）、落盘前**脱敏**（`sk-…`/`LTAI…`/`Bearer …`/`api_key=…`）、引擎与守护共用一个写入者，落盘失败只记异常类型并重试。
+10. **§15.2-10 资源硬上限**：对话历史裁剪移到**每步开头**统一执行（原先只在循环末尾裁剪，多条 `continue` 分支会绕过它导致上下文膨胀）；单任务 20 分钟硬上限；模型空 `choices`/空内容统一为可理解错误；录音 30 秒上限并自动收尾（`VoiceRecorder.MAX_PCM_BYTES` + `setOnAutoStop`）。
+
+11. **P0-2 引擎不再替用户同意协议**：删除 `autoAgreeTerms()` 的代点逻辑（它会在识别到条款/隐私政策弹窗后替用户点「同意并继续」、代勾「已阅读并同意」——那是替用户作出不可逆的法律授权），改为 `isTermsDialog()` 只做检测 + `enterPause()` **暂停并把控制权交还用户**，用户自行确认后点「交还 AI」继续。门禁新增静态断言：检测方法体内不得出现任何点击调用，且方法定义已不存在。
+12. **P2 透明提示**：首次说明弹窗按「数据去哪 / 谁在控制 / 怎么停」三段重写——明确屏幕内容与截图会发给你配置的模型服务（登录时走账号额度网关）、光晕与胶囊的语义、停止与接管的区别。
+
+**真机回归（OnePlus 13T / ColorOS 16 / Android 16，客户端零 root）**：安装升级 + 令牌迁移保持登录、无凭据守卫零请求、失败归因准确、账号与配置在升级与进程重启后保持、无障碍服务在绑。**未验证**：五分钟首成功、空节点纯视野、旋转分屏、敏感操作暂停——其中「五分钟首成功」被下述阻塞项直接阻断。
+
+**⚠️ 上线阻塞项（2026-09-15 已解决，处置见 §16.8）**：当时两条模型通道的上游都欠费——
+账号额度网关的上游是服务器上的 dashscope Key（`AGENTLITE_UPSTREAM_KEY`），用户自备的 dashscope Key 同样欠费（`Arrearage`）。
+现象：任何任务都会在第一步失败（归因已能准确说明是"两条通道都不可用"）。
+
+### 16.8 模型通道切换：接入 DeepSeek（2026-09-15）
+
+**背景**：dashscope 侧两条通道的上游都欠费（§16.7 阻塞项），产品在真机上完全不可用。
+处置：把额度网关的上游切到 DeepSeek API，模型用 `deepseek-flash`（DeepSeek-V4.1-Flash）。
+
+**改动（服务端 `agentlite-server`）**
+
+1. 新增 `-upstream-model` 参数 / `AGENTLITE_UPSTREAM_MODEL` 环境变量；`gatewayConfig` 增加 `upstreamModel` 字段。
+2. 新增 `gatewayConfig.adaptRequest(body, model) ([]byte, string)`，转发前做两件事：
+   - **模型名映射**：`upstreamModel` 非空时改写请求体的 `model`。换上游后客户端配置里的
+     `qwen3.5-omni-plus` 在上游并不存在，映射放服务端 → **用户端零改动**（手册 §16「降低技术门槛」）。
+   - **关闭思考链**：上游为 DeepSeek 时注入 `{"thinking":{"type":"disabled"}}`。
+     *实测结论（2026-09-15，api.deepseek.com/v1）*：`thinking.type=disabled` ✅ 有效、
+     `reasoning_effort:"none"` ✅ 同样有效、`enable_thinking:false` ❌ 无效、
+     `chat_template_kwargs.enable_thinking` ❌ 无效。不关闭时思考会吃满 `max_tokens`，
+     `content` 返回空串（UI Agent 的「只输出一个 JSON 动作」会直接失效）。
+   解析失败一律原样转发（适配绝不把请求弄坏）；计费与日志用**映射后**的模型名。
+
+**改动（客户端 `agent-lite`）**：`LlmClient.chatOnce` 的关思考条件加入 `deepseek`，直连 DeepSeek 时同样关闭思考链；
+经网关时 URL 不含上游域名，由服务端注入。
+
+**部署与配置**
+
+- 服务器 `/etc/agentlite-server/env`（0600）：`AGENTLITE_UPSTREAM_URL=https://api.deepseek.com/v1`、
+  `AGENTLITE_UPSTREAM_KEY=<DeepSeek Key>`、`AGENTLITE_UPSTREAM_MODEL=deepseek-flash`；旧 env 已备份为 `env.bak-*`。
+- 二进制切换：旧版备份为 `/usr/local/bin/agentlite-server.bak-20260914`，新版就位后 `systemctl restart`。
+
+**验证证据**
+
+| 层级 | 结果 |
+|---|---|
+| 服务端启动日志 | 「额度网关已启用 → https://api.deepseek.com/v1」 |
+| 本机端到端（服务器上） | 客户端发 `model=qwen3.5-omni-plus` → 响应 `model=deepseek-flash`、`content` 直接是 `{"action":"done",...}`（`finish_reason=stop`、无 `reasoning_content`） |
+| 计费 | `gateway charged account=… model=deepseek-flash tokens=27 units=1 balance=499` |
+| 真机（OnePlus 13T） | 任务启动 `model=deepseek-flash +vision`、规划简报就绪、多步执行且**未死循环**、空节点时进入纯视觉降级 |
+
+**风险与遗留**
+
+- 该 Key 曾出现在对话记录里，**建议上线后轮换一次**；它只落在服务器 0600 env 与设备本地 prefs，未进仓库。
+- `deepseek-flash` 在「打开计算器」这类任务上会一路点到应用商店（模型决策质量问题，非通道问题）。
+  建议后续：提示词里补「不得通过应用商店搜索/安装应用」红线，或给这类任务加 `app` 兜底动作优先级。
+- 服务器上留有一个冒烟测试账号（`ops-smoke-*`），可随时删除。
+
+### 16.6 当前优先级
+
+1. P0：建立 SPEC-UX-001 并加入门禁；修复首跑无凭据路径、真实授权/协议人工确认、生态配置持久化。
+2. P1：失败卡片与权限渐进申请；设置页分层；完成 `done` 最小验收和 `snapshot_id`。
+3. P1：统一两客户端动作协议，加入 `SCHEMA_VERSION`，清除隐藏动作和提示词失配。
+4. P2：补齐设备矩阵与五分钟首成功指标，建立“数据去哪/如何停止/谁在控制”的透明提示。
+
+### 16.9 最新进程与下一阶段指导（2026-09-15 06:23）
+
+#### 当前已经完成
+
+- **低门槛规范已落盘**：`docs/SPEC_UX_001.zh-CN.md` 已建立，`tests/spec_ux_001_guard.py` 已接入 `make check`；当前免设备门禁为 **15 通过 / 0 失败 / 1 项需真机**。因此“低门槛”已从口号进入可检查阶段，但 UX-1 五分钟首成功仍不能仅凭静态门禁宣称完成。
+- **首跑路径已改善**：无凭据会在运行前拦截，不再发无效模型请求；失败卡片、下一步按钮、上游错误分类、权限渐进申请和透明提示已实现。
+- **交互协议已开始收敛**：新增 `ActionSchema` 和 `SCHEMA_VERSION=2026-09-14.1`，隐藏的 `back/home` 已注册，未知动作限制回灌次数；`done` 对 `app/setting` 已增加最小复验；条款弹窗改为暂停交还用户，不再自动代点。
+- **工程稳定性已改善**：agentd-go 已具备鉴权、任务取消、配置原子保存、输入白名单；客户端账号令牌已迁移到 Keystore；日志异步化、响应/历史/任务时长上限已加入；`make check` 全部通过。
+- **DeepSeek 通道已接入**：服务端可把客户端模型映射为 `deepseek-flash`，并关闭思考链；本机端到端和 OnePlus 真机已完成多步执行、规划、纯视觉降级验证。两条原 DashScope 通道欠费的阻塞已解除。
+
+#### 当前仍未完成或需要重新确认
+
+1. **UX-1 五分钟首成功仍是唯一正式门禁中的真机项**：需要清数据/新用户路径验证“登录 → 一句话 → 打开应用或设置”，并记录耗时、请求次数、最终状态；不能用 `make check` 代替。
+2. **DeepSeek 任务成功率还不足以发布**：已出现“打开计算器却一路进入应用商店”的错误策略。应先补充“禁止通过应用商店搜索/安装应用、优先使用 `app` 直达”的规则，再做至少 20 个固定任务回归，记录完成率、误触率、平均步数和失败归因。
+3. **协议统一仍未完成**：`agent-lite` 与 `agent-client` 的动作集合和等待/降级行为仍可能不同；`ActionSchema` 当前主要覆盖 lite。下一步应以 lite 为真身，生成或校验 unified 副本，并决定 `agent-client` 是同步协议还是冻结维护。
+4. **完成复验覆盖面有限**：目前主要覆盖 `app/setting`；`open_api`、`open_url`、搜索、拨号、跨设备等动作仍需定义验收条件，不能只接受模型 `done`。
+5. **真机安全回归未闭环**：仍需验证空节点纯视觉、旋转/分屏、敏感条款暂停、用户停止、进程死亡恢复和无障碍重连；这些是低门槛体验的关键，不是可选测试。
+6. **配置和发布状态需整理**：工作区存在大量未提交改动，且最新功能尚未形成与 release tag 对齐的发布包；在继续扩大功能前应先生成变更清单、提交分层 commit，并标记可发布版本。
+
+#### 面向 DeepSeek 4.1 Flash 的下一轮实施顺序
+
+**T1：先做模型行为基线，不改代码。** 固定 20 个低风险任务（打开常用 App、打开 Wi-Fi 设置、打开蓝牙设置、打开系统设置、打开计算器等），统一设备、截图、模型和 `max_steps`，保存每次的任务文本、动作序列、完成证据、步数和失败原因。目标是区分“通道问题”和“模型决策问题”。
+
+**T2：只修提示词和动作优先级。** 在 `agent-lite` 真身中加入：
+
+- “打开应用”必须优先 `app`，禁止打开应用商店、搜索并安装；
+- 包名不确定先 `list_apps`，禁止猜包名；
+- 任务完成必须等待并验证前台包名；
+- 每次只输出一个动作，失败后切换策略，不原样重试；
+- 低风险任务不要额外 `ask`，支付、转账、发送、删除和协议授权必须暂停。
+
+T2 验收：20 个任务中记录动作序列；“打开计算器”不得出现商店相关动作；非法 JSON/未知动作不超过一次回灌。
+
+**T3：再扩展完成复验。** 为 `open_api`、`open_url` 和 `remote` 分别增加最小验收器；验收器失败时回灌“未完成原因 + 可用替代动作”，而不是直接失败或接受 `done`。
+
+**T4：最后做真机低门槛回归。** 清数据后从普通用户视角执行；禁止开发者手工修改配置或通过 adb 注入凭据。记录首屏到首成功的时间、权限次数、用户点击数和是否出现技术术语。未满足 UX-1 就不能把版本称为“零门槛”。
+
+#### DeepSeek 4.1 Flash 实施约束
+
+- 把安全规则、动作字段校验、完成复验和敏感暂停放在引擎，不放在模型自觉中。
+- `thinking` 关闭后仍要保留简短、结构化的失败反馈；不要用增加 `max_tokens` 掩盖决策错误。
+- 规划模型与执行模型先统一为同一 `deepseek-flash` 基线，避免多个模型名导致资源和行为不可解释；确认稳定后再引入专用规划模型。
+- 每次只改一个行为主题；改动前后都运行 `make check`，然后再做真机任务；禁止只看 APK 大小或编译退出码。
+- 记录“模型看到的快照”和“引擎实际执行的动作”，否则无法区分模型错、感知错和执行错。
+
 
 ### 2026-09-13 00:54 +08 · 会话 33f50b22 · 新建 project-work-log skill
 - 00:52 考察 skill 机制：~/.dsh/skills 为安装目录、workspace skills/ 为源副本（源:命令:diff/ls）
@@ -601,3 +906,74 @@ App 源码已对 **iOS 模拟器 SDK 类型检查通过**，工程与测试就�
 - 12:19 补三处发现入口：PROJECT_OVERVIEW 顶部提示块、DEVELOPMENT_MANUAL 标注所属项目、中英 README 文档导航（源:步骤2）
 - 12:20 并发实证：本次追加前日志尾已被并行会话写到 12:22，而本机时钟为 12:20——同一文件内时间戳非单调（源:命令:date+读尾）
 - 12:20 终态: done
+
+### 2026-09-14 20:07 +08 · 项目:repo · 会话:local · 当前项目问题分析入册
+- 20:02 首次运行检查：读取项目清单、手册、体检报告、Debug 报告与工作日志尾，确认本次改动属于共享文档项目（源:文件:docs/PROJECTS.zh-CN.md）
+- 20:05 复核当前源码：确认 agentd-go 仍使用全地址监听且 API 无统一鉴权，agent-lite 账号令牌仍写入明文 SharedPreferences（源:文件:agentd-go/main.go:321-340；文件:agent-lite/src/com/dsh/agentlite/Prefs.java:257-293）
+- 20:07 将 P0/P1/P2 问题、根因、最小修复与执行顺序写入本手册 §15（源:文件:PROJECT_OVERVIEW.zh-CN.md:372-431）
+- 20:07 终态: done
+
+### 2026-09-14 20:16 +08 · 项目:agentd +agent-lite · 会话:8db3ace6 · 按手册 §15 修复 P0/P1
+- 20:16 首次运行检查：读手册 §15 与日志尾，确认按「P0 鉴权 → P1 令牌 → 门禁」顺序修复（源:文件:PROJECT_OVERVIEW.zh-CN.md:421-427）
+- 20:18 P0：agentd-go 新增 auth.go（0600 随机令牌/常量时间比较/Host+Origin+方法+JSON 白名单），监听改绑 127.0.0.1（源:文件:agentd-go/auth.go）
+- 20:19 WebUI 适配令牌：统一 fetch 封装、截图改 blob URL、/api/test 改 POST（源:步骤2）
+- 20:20 验证：新增 Go 单测 22 项全绿；宿主端到端 401/403/405/415/400，lsof 确认仅监听 127.0.0.1（源:测试）
+- 20:21 收口 §15.2-1/4/5：CAS 占位、配置锁内快照+原子落盘+哨兵、URL/端口/ASR 白名单（源:文件:agentd-go/main.go）
+- 20:22 8081 桥：agentd-apk 绑回环 + bridge token，agentd-go 读取携带、读不到自动降级（源:文件:agentd-apk/src/com/dsh/agentd/AgentA11yService.java）
+- 20:23 P1：新增 TokenStore（Keystore AES-GCM）+ Prefs 一次性迁移 + 登录失败不降级明文 + 关闭备份导出（源:文件:agent-lite/src/com/dsh/agentlite/TokenStore.java）
+- 20:24 构建与门禁：agent-lite/agentd-apk 构建通过、sync-sources 已同步、make check 全绿（契约 26/26）（源:命令:make check）
+- 20:24 手册新增 §15.4 修复实施记录与剩余待办（源:文件:PROJECT_OVERVIEW.zh-CN.md:429）
+- 20:26 §15.2-2/3：LlmClient.cancel 断开进行中请求（取消不触发回退、不误报失败）+ Runner 任务级 context + postOnce 全路径 finally（源:文件:agent-lite/src/com/dsh/agentlite/LlmClient.java）
+- 20:28 复验：APK 重建、副本再同步、make check 全绿（Go 取消测试 / 契约 26-26 / JVM 67 项）；CHANGELOG 与手册 §15.4 更新（源:命令:make check）
+- 20:29 冒烟复核抓到并修掉一处真缺陷：无请求体的 POST（/api/stop）被 Content-Type 规则误拒 415，改为「仅有 body 才要求 JSON」并补用例（源:命令:curl 冒烟）
+- 20:31 真机接入（PKX110 / Android 16，客户端全程零 root）：覆盖安装后令牌明文→Keystore 迁移成功（密文 96 字符、明文键已删），App 保持登录（源:命令:adb+su 读 shared_prefs）
+- 20:33 真机抓到缺陷①：Keystore 加密必抛 InvalidAlgorithmParameterException（默认拒绝调用方 IV）→ 改为 Keystore 生成 IV，AkStore 同源缺陷一并修（源:文件:agent-lite/src/com/dsh/agentlite/TokenStore.java）
+- 20:37 真机抓到缺陷②：点停止后仍等满 15s connect 超时（disconnect 只对已建连接有效）→ 网络线程+200ms 轮询取消，复测 13s→约 1s（源:文件:agent-lite/src/com/dsh/agentlite/LlmClient.java）
+- 20:38 零 root 回归：setting 直达 WLAN 5 秒完成、多步任务正常、网关不可达自动回退直连生效、停止文案正确（源:测试）
+- 20:40 定位环境阻塞：服务器 firewalld 未放行 18443/18444，真机账号功能不可用（服务端进程 health=200 正常）；已写入手册 §15.5（源:命令:ssh aliyun-ecs）
+- 20:41 真机记录入册 §15.5，CHANGELOG 补两条 Fixed（源:文件:PROJECT_OVERVIEW.zh-CN.md:445）
+- 20:42 授权后放行服务器 firewalld 18443/18444；逐层复验本机与设备均可达（18444 已放行但服务端未监听）（源:命令:ssh firewall-cmd）
+- 20:42 端到端确认：设备侧同步/额度请求在服务端全部 200（含 /account/me），证明 Keystore 密文解密后的令牌可正常鉴权（源:命令:ssh journalctl）
+- 20:42 终态: done
+
+### 2026-09-14 20:33 +08 · 项目:agent-lite · 会话:local · 充值页布局改版
+- 20:33 首次运行检查：读清单与日志尾，确认并发会话 8db3ace6 已 20:29 终态 done，可接手界面（源:文件:PROJECT_OVERVIEW.zh-CN.md:688）
+- 20:34 定位缺口：activity_purchase.xml 是全 App 唯一 0 令牌布局（其余 6 页 28–205 处）（源:命令:grep @dimen/@color）
+- 20:35 先读门禁口径再动手：字号 ≥12sp、触控 ≥44dp、对比度 AA ≥4.5:1（源:文件:tests/apk_readability.py:12）
+- 20:36 重排为任务流分区（说明→①AccessKey→②单模型→③官方页购买→状态），拆开「兑换码框+两按钮」同行挤压（源:文件:agent-lite/res/layout/activity_purchase.xml）
+- 20:37 修孤儿标题缺陷：旧链路「订单记录」标题无 id，Java 只隐藏 tvOrders → 改包 orderArea 一并隐藏（源:文件:agent-lite/src/com/dsh/agentlite/PurchaseActivity.java）
+- 20:38 新建 bg_card_inner：嵌套卡片与外层同色看不出边界（档位卡片在③卡片内部）（源:文件:agent-lite/res/drawable/bg_card_inner.xml）
+- 20:39 补克制动效：按压 0.97/120ms、状态淡入 180ms、曲线 cubic-bezier(.23,1,.32,1)，并尊重 ANIMATOR_DURATION_SCALE（源:文件:PurchaseActivity.java）
+- 20:41 首构建暴露 PathInterpolator 包名写错（android.view.animation）；★ `| tail` 把退出码吃成 0、失败看似通过，改重定向取 $?（源:命令:sh build-mac.sh）
+- 20:43 复构建通过（APK 203478B）；sync-sources + 契约 26/26 + make ui 全绿；apk_readability 字号/触控/对比度达标，硬编码色仅剩 1 处（assist 页，非本次）（源:命令:make ui）
+- 20:44 发现真机在线（PKX110），但其时设备正被并发会话 8db3ace6 的零 root 回归占用，等到 20:42 它终态后才动设备（源:命令:adb devices+dumpsys）
+- 20:46 充值页 exported=false 无法 am start（正确设计，不为验证而放开）→ 改走 App 内导航；几何体检 0 越界/裁字/重叠（源:命令:python3 tests/ui_layout_check.py）
+- 20:48 ★ 真机抓到两处静态门禁查不到的缺陷：主题把按钮英文转全大写（「保存 ACCESSKEY」）、字体放大档位下 hint 被截断 → 补 textAllCaps=false + 把 hint 挪成可换行说明（源:文件:agent-lite/res/layout/activity_purchase.xml）
+- 20:54 三改三验（重建→装机→截图比对）：大小写正确、hint 完整、几何 0 问题；契约与 make ui 复跑全绿（源:命令:make ui）
+- 20:55 两类真机缺陷入 Hindsight（静态门禁盲区），供后续页面复用（源:记忆）
+
+### 2026-09-14 23:24 +08 · 项目:repo · 会话:local · 低门槛守则与模型指导
+- 23:24 复核当前用户旅程、动作协议、权限与模型配置，确认“极大降低技术门槛”尚未形成可验收守则（源:文件:agent-lite/README.md；文件:agent-lite/src/com/dsh/agentlite/AgentEngine.java）
+- 23:24 将低门槛审查、SPEC-UX-001、P0/P1 缺口与 DeepSeek 4.1 Flash 实施协议写入手册 §16（源:文件:PROJECT_OVERVIEW.zh-CN.md:478）
+- 23:24 终态: done
+
+### 2026-09-14 23:33 +08 · 项目:agent-lite · 会话:8db3ace6 · 按手册 §16 落地零门槛守则与 P0 修复
+- 23:36 读手册 §16 与交互规范，确认按 §16.6 优先级 + §16.5 实施顺序推进（源:文件:PROJECT_OVERVIEW.zh-CN.md:478-559）
+- 23:50 §15.2-9/10：新增 EngineLog（异步/丢弃计数/轮转/脱敏）+ 历史裁剪每步统一 + 任务 20 分钟与录音 30 秒上限（源:文件:agent-lite/src/com/dsh/agentlite/EngineLog.java）
+- 00:10 SPEC-UX-001 落盘并入门禁；首次运行即暴露 UX-5/7/10 三项 FAIL（源:文件:docs/SPEC_UX_001.zh-CN.md）
+- 00:20 P0-1：无凭据前置守卫 + 解决卡；真机实测零模型请求（源:文件:agent-lite/src/com/dsh/agentlite/MainActivity.java）
+- 00:35 UX-10/UX-5：ActionSchema（SCHEMA_VERSION + back/home 注册 + 未注册动作回灌）与权限渐进申请（源:文件:agent-lite/src/com/dsh/agentlite/ActionSchema.java）
+- 00:45 UX-7：done 最小复验（activePackage + 期望包名 + 前台变化证据，缺证据追问一次）（源:文件:agent-lite/src/com/dsh/agentlite/AgentEngine.java）
+- 00:55 上游归因分通道 + 自备 Key 欠费自动改用账号额度；真机日志实证「改用备用通道」（源:命令:adb logcat）
+- 01:20 P0-2：移除条款代点，改为暂停交还用户；门禁新增「条款不得代点」断言（源:文件:agent-lite/src/com/dsh/agentlite/AgentEngine.java）
+- 01:35 首次说明补「数据去哪/谁在控制/怎么停」；真机回归通过、make check 全绿（26 契约 / 15 UX / 47+20 JVM）（源:命令:make check）
+- 01:47 最终版装机：无崩溃、登录态保持、明文令牌键 0（仍在 Keystore）（源:命令:adb install）
+- 01:47 终态: done（⚠ 上线阻塞：两条模型通道上游均欠费，详见 §16.7）
+- 02:20 诊断通道欠费：网关上游与自备 Key 均为 dashscope 且都欠费（Arrearage），产品在真机不可用（源:命令:ssh journalctl）
+- 02:35 探测 DeepSeek API：`deepseek-flash` 可用；默认吐 reasoning_content 导致 content 为空，实测仅 `thinking.type=disabled` 与 `reasoning_effort:none` 能关闭（源:命令:curl 参数矩阵）
+- 02:50 服务端加 `-upstream-model` 与 `adaptRequest()`（模型映射 + 关思考），客户端 LlmClient 同步支持 deepseek（源:文件:agentlite-server/gateway.go）
+- 02:55 部署：env 切 `api.deepseek.com/v1` + `deepseek-flash`，二进制备份后切换并重启；日志「额度网关已启用 → https://api.deepseek.com/v1」（源:命令:ssh systemctl restart）
+- 03:00 网关端到端验证：客户端发 qwen3.5-omni-plus → 响应 model=deepseek-flash、content 直接为 JSON、计费 charged tokens=27 units=1（源:命令:curl 网关）
+- 03:10 真机切到 DeepSeek 并跑通多步任务（未死循环、空节点进纯视觉降级）；跑「打开计算器」时点到应用商店，记为模型质量问题待调提示词（源:文件:/sdcard/Android/data/com.dsh.agentlite/files/engine.log）
+- 03:20 make check 全绿（契约 26 / UX 15 / JVM 47+20）；手册 §16.8 记录接入过程，§16.7 阻塞项标记已解决（源:命令:make check）
+- 03:20 终态: done

@@ -4,7 +4,80 @@
 
 ## [Unreleased]
 
+### Changed（模型通道切换，2026-09-15）
+
+- **额度网关上游切换到 DeepSeek**（dashscope 两条通道上游均欠费导致产品不可用）：服务端新增
+  `-upstream-model` / `AGENTLITE_UPSTREAM_MODEL`，并在转发前用 `gatewayConfig.adaptRequest()` 做两件事——
+  **模型名映射**（客户端仍填 `qwen3.5-omni-plus`，服务端改写为 `deepseek-flash`，用户端零改动）与
+  **关闭思考链**（上游为 DeepSeek 时注入 `{"thinking":{"type":"disabled"}}`）。
+  实测：`thinking.type=disabled` 与 `reasoning_effort:"none"` 有效，`enable_thinking:false` /
+  `chat_template_kwargs` 无效；不关闭时思考会吃满 `max_tokens` 导致 `content` 为空串。
+  客户端 `LlmClient` 在 `base_url` 含 `deepseek` 时同样关闭思考（直连场景）。
+
+### Security
+
+- **引擎不再替用户同意服务条款/隐私政策（2026-09-15，手册 §16.2 P0-2）**：删除 `autoAgreeTerms()` 的代点逻辑
+  （识别到条款弹窗后替用户点「同意并继续」、代勾「已阅读并同意」＝替用户作出不可逆授权），改为只检测并把控制权
+  暂停交还用户，由用户自行确认；SPEC-UX-001 门禁新增「条款不得代点」断言。
+- **首屏不再索取权限（SPEC-UX-001 §5）**：启动期不再一次性申请录音 + 通知权限；录音权限延迟到第一次点「语音」、
+  通知权限延迟到第一次真正跑任务，且各只问一次。
+
+### Added（续）
+
+- **SPEC-UX-001 零门槛守则 + 门禁**：`docs/SPEC_UX_001.zh-CN.md`（10 条 + 验收方式 + 三条凭据路径），
+  `tests/spec_ux_001_guard.py` 并入 `make check`（当前 15 通过 / 0 失败 / 1 需真机）。
+- **动作词表单一事实源**：`ActionSchema.java`（`SCHEMA_VERSION = 2026-09-14.1`、22 执行动作 + 3 终态动作），
+  把此前「exec 已实现但词表没写」的 `back`/`home` 注册进词表；未注册动作只回灌一次、连续 3 次即终态。
+- **失败可恢复**：`UiText.nextStep()` + 失败卡片三段式（人话归因 → 下一步 → 重试 / 为什么 / 关闭）。
+- **无凭据前置拦截**：无可用凭据时**不发模型请求**，弹出解决卡（登录 / 打开设置 / 稍后）。
+- **done 最小复验**：核对 `app`/`setting` 是否真的把前台换成了目标应用；缺证据时追问一次；
+  `app`/`setting` 未生效即回灌要求换策略。
+- **日志异步化**：`EngineLog.java`（非阻塞入队、丢弃计数、1 MB 轮转、凭据脱敏、多写入者共享）。
+- **资源硬上限**：对话历史每步统一裁剪（原先多条 `continue` 分支会绕过）、任务 20 分钟上限、录音 30 秒上限。
+
+### Fixed（续）
+
+- **上游错误归因分通道**：欠费/密钥失效/无权限/模型不存在分别归因，并区分「账号额度网关」与「自备配置」；
+  两条通道都失败时合并说明（真机实测输出「两条模型通道都不可用：…」），技术原文只进日志。
+- **自备 Key 失效自动改用账号额度**：自备配置被上游拒绝且换通道有意义时自动切换（402 额度耗尽仍不回退）。
+
+- **agentd 本机 API 与 8081 a11y 桥全面收敛（2026-09-14，手册 §15.1 P0-1）**：agentd 改为**只绑 `127.0.0.1`**
+  （原 `":"+port` 等价于 `0.0.0.0`——同一局域网内任何设备都能读配置里的 API Key、读屏、提交任务），`/api/*` 统一要求
+  随机令牌（`0600` 落盘、常量时间比较、令牌为空时 fail-closed），并校验 `Host` 必须指向回环（挡 DNS 重绑定）、
+  `Origin` 必须同源（挡浏览器 CSRF）、方法白名单（`/api/test`、`/api/asr` 等有副作用的只收 POST）、POST 强制
+  `application/json`；WebUI 增加「访问令牌」输入（只存 localStorage）并统一封装请求，截图改 `fetch`+blob（`<img src>`
+  无法携带请求头）。`agentd-apk` 的 AccessibilityService 同样从 `0.0.0.0` 收到回环，并新增 `X-Agentd-Bridge` 令牌
+  （令牌写在 APK 私有目录，同机其他 App 读不到），agentd 以 root 读取携带、读不到时降级为仅回环（不破坏旧 APK）。
+- **agent-lite 账号令牌改为 Keystore 加密存储（手册 §15.1 P1-2）**：新增 `TokenStore`（AES-256-GCM，Keystore 别名与
+  AK 分离，进程内缓存），`Prefs.accountToken()` 首次读取执行「加密落盘 → 删除明文」一次性迁移（**只有加密成功才删**，
+  失败则保留旧值下次重试）；`saveAccount` 改返回成败，`LoginActivity` 在安全存储不可用时明确报错（绝不明文降级）；
+  `AndroidManifest` 关闭备份导出（`allowBackup=false` + `fullBackupContent=false`）。
+
+### Fixed
+
+- **agentd 任务并发与配置保存（手册 §15.2-1/4）**：运行位改用 `CompareAndSwap(false, true)` 一步占位（并发请求不再
+  同时启动 Runner 争用输入/截图/日志），释放统一交给 `defer`；未配置 API Key 时 fail-fast；配置保存改为**锁内**生成
+  不可变快照、锁外临时文件 `fsync`+`rename` 原子落盘，落盘失败回滚内存；「保持原 Key」判据从
+  `strings.Contains(key, "...")` 换成显式哨兵 `__AGENTD_KEEP__`，且真实 Key 不再回流浏览器。
+- **停止任务即时生效（手册 §15.2-2）**：agent-lite `LlmClient` 新增 `cancel()`——断开进行中的连接并置取消标志，
+  取消不再触发网关回退、不再被误报成「模型调用失败」（新增 `CancelledException`），`AgentEngine.stop()` 随即断开；
+  agentd `Runner` 接入任务级 context，`/api/stop` 取消后进行中的模型请求立刻断开，不必再等最长 180 秒读超时。
+- **HTTP 资源释放与响应上限（手册 §15.2-3）**：`LlmClient.postOnce` 的所有路径（含 402、JSON 解析失败、取消）都走
+  `finally` 断开连接，输出流显式关闭；响应体设 1MB 上限，避免异常上游耗尽内存与 fd。
+- **配置与输入校验（手册 §15.2-5）**：`base_url` 强制 HTTPS（仅 `127.0.0.1`/`localhost` 允许明文）、拒绝内联凭证与
+  越界端口；`port` 限 1..65535（空值不再拼成 `":"`）；`/api/asr` 的 `format` 改白名单（wav/mp3/m4a/webm/ogg）。
+
+### Fixed（真机验证发现，2026-09-14）
+
+- **Keystore 加密在真机上必然失败**：Android Keystore 生成的密钥默认 `randomizedEncryptionRequired=true`，**拒绝调用方自带的 IV**，原实现手工造 IV 传入 `Cipher.init` 会抛 `InvalidAlgorithmParameterException`（令牌迁移因此在真机首次失败）。修复：加密不传 IV，改用 `cipher.getIV()` 取 Keystore 生成的随机 IV；`AkStore`（内购 AK 存储）是同源代码，一并修掉。
+- **停止任务仍要等满 connect 超时**：`HttpURLConnection.disconnect()` 只能中断**已建立连接**的请求，连接阶段（地址不可达/DNS 慢）不响应——黑洞地址实测点停止后仍等 13 秒才结束。修复：模型请求交给网络线程执行，主循环每 200ms 轮询结果并检查取消标志，规划请求同样登记可取消；同一场景复测 13 秒 → 约 1 秒。
+
 ### Added
+
+- **`make check` 免设备聚合门禁（2026-09-14，手册 §15.3 P2-1）**：根 `Makefile` 一条命令跑 Go 单测（agentd +
+  agentlite-server）、两端契约门禁、UI 文案/控件守卫与桌面 JVM 回归（AliyunV3Signer / PurchaseFlow），实跑全绿；
+  agentd 首次有单测（鉴权矩阵、Host/Origin/方法/Content-Type、令牌文件权限与复用、配置合并与原子落盘、停止取消、
+  `ChatCtx` 取消即时性）。
 - **项目全面体检（2026-09-13）**：`docs/PROJECT_REVIEW_2026-09-13.zh-CN.md` ——构建矩阵（三 APK + 两 Go 服务实测）、
   git 工程卫生、密钥审计（源码扫描 + APK 复扫）、各组件 P0–P3 发现（含 file:line 与最小修复）；改进路线摘录入
   `PROJECT_OVERVIEW.zh-CN.md` §13；开发手册 §7 补录套餐/订单 5 条路由（本地代码为准，标注待线上确认）、§11 收录体检报告。

@@ -229,7 +229,8 @@ GOOS=android GOARCH=arm64 CGO_ENABLED=0 \
 
 ## 文档导航
 
-- [`docs/DEVELOPMENT_MANUAL.zh-CN.md`](docs/DEVELOPMENT_MANUAL.zh-CN.md)：**开发手册——项目专用服务器连接方式**（SSH 别名 `aliyun-ecs`、服务端点、部署与运维、接口清单），接手开发先读这份；
+- [`docs/PROJECTS.zh-CN.md`](docs/PROJECTS.zh-CN.md)：**项目清单与分离约定**——本工作区有哪些子项目、改哪里属于哪个项目、会话如何标注项目 ID，**开新会话先读这份**；
+- [`docs/DEVELOPMENT_MANUAL.zh-CN.md`](docs/DEVELOPMENT_MANUAL.zh-CN.md)：**开发手册——项目专用服务器连接方式**（SSH 别名 `aliyun-ecs`、服务端点、部署与运维、接口清单），属 `agentlite-server`；
 - [`PROJECT_OVERVIEW.zh-CN.md`](PROJECT_OVERVIEW.zh-CN.md)：项目架构、技术决策和当前状态；
 - [`agent-lite/COMPATIBILITY.zh-CN.md`](agent-lite/COMPATIBILITY.zh-CN.md)：Android 11+ 兼容性和装机说明；
 - [`docs/DOUBAO_SPEC_ADAPTATION.zh-CN.md`](docs/DOUBAO_SPEC_ADAPTATION.zh-CN.md)：Agent Lite 交互规格实现；
