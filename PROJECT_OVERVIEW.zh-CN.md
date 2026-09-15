@@ -1059,3 +1059,19 @@ T2 验收：20 个任务中记录动作序列；“打开计算器”不得出�
 - 22:12 服务端 P0-S2 赠送额度 500 → 100 units（注册零验证 + 每 IP 限流可绕，50 万 tokens 足以盗刷）（源:文件:agentlite-server/quota.go）
 - 22:15 服务端 P0-S3 并发闸门（每账号 2 / 全局 16）：5 并发实测恰好 2×200 + 3×429，超支由"无上限"变为有界（源:命令:ssh 并发 curl）
 - 22:18 终态: done（未做：P1 若干——api_key/lan_key 迁 Keystore、ActionValidator、ask 超时视为拒绝、IME 权限升 signature、锁屏通知 VISIBILITY_SECRET、剪贴板清理、agent-client 关 allowBackup）
+
+### 2026-09-15 18:00 +08 · 项目:agent-lite +agentlite-server · 会话:8db3ace6 · 双端/连接测试 + 手表与跨设备
+- 18:05 默认上游改 DeepSeek（用户决策）：dev.local / build-mac.sh 默认改 api.deepseek.com + deepseek-flash；
+  Prefs.useOwnKey() 默认 true（填了 Key 就走自备）；forPrefs 收紧为「有 Key 才走自备」（源:文件:agent-lite/src/com/dsh/agentlite/LlmClient.java）
+- 18:15 双端门禁全绿：契约 26/26、副本一致、SPEC-UX-001 17/0/1、动作词表 8/1/0、agentd Go 单测、JVM 47/47（源:命令:make check）
+- 18:25 服务端 15 项接口冒烟全通过（含未绑定设备 403、未知路由 404、无令牌 401）；计费与闸门复验通过（源:命令:ssh curl）
+- 18:35 真机↔服务端连接测试：18443 OPEN、额度刷新 0/-3 与服务端一致、服务端日志见 sync/push+pull+commands+account/me 全 200（源:命令:ssh journalctl）
+- 18:45 手表（OWW261 / Android 11 / 466x466）接入：装上最新 APK、开启无障碍（adb settings 写入，服务已绑定）、
+  手表版极简布局正常；手机端以 wm density 模拟手表形态同样进入手表版布局（源:命令:adb）
+- 19:00 跨设备链路（服务端层）双向验证通过：手表→手机下发、手机拉取、ack 回执、给自己下发 400、跨账号 403、
+  限流第 11 条被拒、5 分钟过期（源:命令:ssh curl 脚本）
+- 19:30 ⚠ **真机跨设备测出产品级缺陷**：手机登录测试账号后，我用 curl 以同账号再登录取令牌 →
+  服务端每次登录都**轮换令牌**（`account.go` LoginAccount：`delete(s.acctByToken, a.TokenHash)` + 换新 hash），
+  于是手机的令牌立刻失效，轮询持续报 `HTTP 401: invalid_token`，跨设备指令永远收不到。
+  → **同账号第二台设备登录会踢掉第一台**，而跨设备要求同账号 ⇒ 当前令牌模型下跨设备不可用（源:文件:agentlite-server/account.go:42-51；源:命令:adb logcat AgentLiteRemote）
+- 19:45 终态: done（待办：令牌模型改造——多令牌/设备令牌 + 吊销入口；手表切账号后再做真机双向）
