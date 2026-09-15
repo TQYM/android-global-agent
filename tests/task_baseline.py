@@ -12,8 +12,10 @@
 采集内容（每个任务一行 JSON，追加写入 tests/results-baseline.jsonl）：
   任务文本 · 动作序列 · 步数 · 耗时 · 终态 · 完成证据 · 前台包名 · 商店误跳 · 重复动作
 
-设计约束：**只读设备**——不改配置、不注入凭据、不用 root；任务全部是「打开 X」这类
-低风险动作（§16.9 T1：固定 20 个低风险任务）。
+设计约束：**不改业务配置、不注入凭据、不用 root**；任务全部是「打开 X」这类
+低风险动作（§16.9 T1：固定 20 个低风险任务）。唯一写入的一项是**无障碍绑定**
+（`settings put secure enabled_accessibility_services`）——`am force-stop` 会清掉它，
+不补回来每条任务都会在「感知不到节点」下空跑，把环境故障记成模型失败（2026-09-15 实测）。
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ OUT = ROOT / "tests" / "results-baseline.jsonl"
 DEVICE_LOG = "/sdcard/Android/data/com.dsh.agentlite/files/engine.log"
 PKG = "com.dsh.agentlite"
 ACTIVITY = f"{PKG}/.MainActivity"
+A11Y_SVC = f"{PKG}/com.dsh.agentlite.AgentA11yService"
 
 #: 固定任务集（英文，因为 `adb shell input text` 不支持中文）。
 #: 全部是「打开某个应用 / 某个设置页」——低风险、无副作用、结果可肉眼核对。
@@ -133,6 +136,27 @@ def require_device() -> str:
     return lines[0].split()[0]
 
 
+def a11y_enabled(serial: str) -> bool:
+    cur = adb("-s", serial, "shell", "settings get secure enabled_accessibility_services")
+    return "com.dsh.agentlite" in cur
+
+
+def ensure_a11y(serial: str) -> bool:
+    """保证无障碍服务已绑定。返回 True 表示本来就好、无需修复。
+
+    为什么必须做（手册 §9 坑表 + 2026-09-15 实测）：`am force-stop` 会让 ColorOS/MagicOS
+    清空 `enabled_accessibility_services`，之后每条任务都在「感知不到节点」的状态下跑，
+    表现为假性 timeout（旧批次 20 条里有 2 条死于此），会把环境故障误记成模型失败。
+    `settings put secure` 是标准 adb 做法，不需要 root。
+    """
+    if a11y_enabled(serial):
+        return True
+    adb("-s", serial, "shell", "settings put secure enabled_accessibility_services", A11Y_SVC)
+    adb("-s", serial, "shell", "settings put secure accessibility_enabled", "1")
+    time.sleep(2)
+    return False
+
+
 def foreground(serial: str) -> str:
     out = adb("-s", serial, "shell", "dumpsys activity activities")
     for line in out.splitlines():
@@ -143,9 +167,31 @@ def foreground(serial: str) -> str:
     return ""
 
 
-def run_task(serial: str, task: str, timeout_s: int = 90) -> dict:
+def classify(res: dict) -> str:
+    """把失败归因到「环境 / 通道 / 模型决策 / 未收终态」，供 T1 区分问题来源。"""
+    if res["status"] == "done":
+        return "ok"
+    if res["status"] == "stopped":
+        return "user_stop"
+    if res["status"] == "env_a11y":
+        return "env:a11y"
+    summary = res.get("summary", "")
+    if "模型调用失败" in summary or "通道" in summary or "额度" in summary:
+        return "channel"
+    if res["status"] == "timeout":
+        return "no_action" if res.get("steps", 0) == 0 else "no_terminal"
+    return "model_or_env"
+
+
+def run_task(serial: str, task: str, timeout_s: int = 90, batch: str = "") -> dict:
     adb("-s", serial, "shell", f"rm -f {DEVICE_LOG}")
     adb("-s", serial, "shell", "am force-stop", PKG)
+    healthy = ensure_a11y(serial)          # force-stop 会清掉绑定，每条任务后必须补
+    if not a11y_enabled(serial):
+        return {"status": "env_a11y", "summary": "无障碍服务无法绑定（环境故障，非模型问题）",
+                "steps": 0, "actions": [], "max_repeat": 0, "store_hit": False,
+                "task": task, "elapsed_s": 0.0, "foreground": "", "batch": batch,
+                "a11y_recovered": not healthy}
     adb("-s", serial, "shell", "input", "keyevent", "3")   # 回桌面
     time.sleep(1)
     adb("-s", serial, "shell", "am start", "-n", ACTIVITY)
@@ -163,7 +209,9 @@ def run_task(serial: str, task: str, timeout_s: int = 90) -> dict:
     dump = adb("-s", serial, "shell", "uiautomator dump /sdcard/_bl.xml && cat /sdcard/_bl.xml")
     m = re.search(r'resource-id="[^"]*btnRun"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', dump)
     if not m:
-        return {"status": "error", "summary": "找不到运行按钮", "steps": 0, "actions": []}
+        return {"status": "error", "summary": "找不到运行按钮", "steps": 0, "actions": [],
+                "task": task, "batch": batch, "a11y_recovered": not healthy}
+
     x = (int(m.group(1)) + int(m.group(3))) // 2
     y = (int(m.group(2)) + int(m.group(4))) // 2
 
@@ -178,12 +226,14 @@ def run_task(serial: str, task: str, timeout_s: int = 90) -> dict:
     elapsed = time.time() - t0
 
     res = parse_log(log)
-    res.update({"task": task, "elapsed_s": round(elapsed, 1), "foreground": foreground(serial)})
+    res.update({"task": task, "elapsed_s": round(elapsed, 1), "foreground": foreground(serial),
+                "batch": batch, "a11y_recovered": not healthy})
     # 前台应用就是商店 → 也算误跳
     if any(mk in res["foreground"].lower() for mk in STORE_MARKERS):
         res["store_hit"] = True
     if res["status"] == "timeout":
         adb("-s", serial, "shell", "am force-stop", PKG)   # 超时兜底：别让它继续动
+    res["cause"] = classify(res)
     return res
 
 
@@ -194,6 +244,10 @@ def summarize(rows: list[dict]) -> dict:
     ok = sum(1 for r in rows if r["status"] == "done")
     store = sum(1 for r in rows if r.get("store_hit"))
     rep = sum(1 for r in rows if r.get("max_repeat", 0) >= 3)
+    causes: dict[str, int] = {}
+    for r in rows:
+        c = r.get("cause") or classify(r)
+        causes[c] = causes.get(c, 0) + 1
     return {
         "tasks": n,
         "success_rate": round(ok / n, 3),
@@ -201,6 +255,8 @@ def summarize(rows: list[dict]) -> dict:
         "repeat_action_rate": round(rep / n, 3),
         "avg_steps": round(sum(r.get("steps", 0) for r in rows) / n, 1),
         "avg_elapsed_s": round(sum(r.get("elapsed_s", 0) for r in rows) / n, 1),
+        "a11y_recovered": sum(1 for r in rows if r.get("a11y_recovered")),
+        "causes": causes,
     }
 
 
@@ -238,7 +294,22 @@ def selftest() -> int:
     timeout = parse_log("09-15 06:00:01 任务启动: x\n09-15 06:00:03 第 1 步：感知到 0 个节点")
     assert timeout["status"] == "timeout", timeout
 
-    print("✓ 解析器自测通过（done/fail/timeout/store_hit/repeat 五类判定）")
+    # 归因分类：done 之外要能指认「环境 / 通道 / 模型」三类
+    assert classify({"status": "done"}) == "ok"
+    assert classify({"status": "env_a11y"}) == "env:a11y"
+    assert classify({"status": "fail", "summary": "模型调用失败——请检查网络与 API 配置后重试"}) == "channel"
+    assert classify({"status": "timeout", "steps": 0}) == "no_action"
+    assert classify({"status": "timeout", "steps": 4}) == "no_terminal"
+    assert classify({"status": "fail", "summary": "无法打开目标应用"}) == "model_or_env"
+
+    s = summarize([
+        {"status": "done", "steps": 2, "elapsed_s": 8.0, "a11y_recovered": True},
+        {"status": "env_a11y", "steps": 0, "elapsed_s": 0.0, "cause": "env:a11y"},
+    ])
+    assert s["success_rate"] == 0.5 and s["a11y_recovered"] == 1, s
+    assert s["causes"] == {"ok": 1, "env:a11y": 1}, s
+
+    print("✓ 解析器自测通过（done/fail/timeout/store_hit/repeat 五类判定 + 失败归因）")
     print(f"任务集共 {len(TASKS)} 个（手册 §16.9 T1 要求 20 个低风险任务）")
     return 0
 
@@ -254,14 +325,17 @@ def main() -> int:
         return selftest()
 
     serial = require_device()
+    if not ensure_a11y(serial):
+        print("· 无障碍绑定缺失，已用 adb 重新绑定（force-stop 会清掉它，属已知环境坑）")
+    batch = time.strftime("%m-%d %H:%M")
     tasks = TASKS[: args.only] if args.only else TASKS
-    print(f"设备 {serial} · 任务数 {len(tasks)} · 结果写入 {OUT.relative_to(ROOT)}")
+    print(f"设备 {serial} · 批次 {batch} · 任务数 {len(tasks)} · 结果写入 {OUT.relative_to(ROOT)}")
     rows = []
     for i, task in enumerate(tasks, 1):
         print(f"[{i}/{len(tasks)}] {task} … ", end="", flush=True)
-        r = run_task(serial, task, args.timeout)
+        r = run_task(serial, task, args.timeout, batch)
         rows.append(r)
-        print(f"{r['status']} 步数={r.get('steps')} 耗时={r.get('elapsed_s')}s "
+        print(f"{r['status']}({r.get('cause','?')}) 步数={r.get('steps')} 耗时={r.get('elapsed_s')}s "
               f"前台={r.get('foreground','')} 商店={r.get('store_hit')}")
         with OUT.open("a", encoding="utf-8") as f:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
