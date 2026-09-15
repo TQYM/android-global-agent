@@ -54,6 +54,44 @@ func newGateway(baseURL, apiKey, upstreamModel string) *gatewayConfig {
 
 func (g *gatewayConfig) enabled() bool { return g != nil && g.apiKey != "" && g.baseURL != "" }
 
+// 网关并发上限：每账号 + 全局。数值小是刻意的——UI Agent 一次只跑一个任务，
+// 正常用户不会撞上限；而盗刷者要么被每账号闸门卡住，要么被全局闸门拖慢。
+const (
+	maxInflightPerAccount = 2
+	maxInflightGlobal     = 16
+)
+
+// acquireGatewaySlot 申请一个在飞名额；满则返回 false（调用方回 429）。
+func (s *server) acquireGatewaySlot(accountID string) bool {
+	s.gwMu.Lock()
+	defer s.gwMu.Unlock()
+	if s.gwInflightGlobal >= maxInflightGlobal {
+		return false
+	}
+	if s.gwInflight == nil {
+		s.gwInflight = make(map[string]int)
+	}
+	if s.gwInflight[accountID] >= maxInflightPerAccount {
+		return false
+	}
+	s.gwInflightGlobal++
+	s.gwInflight[accountID]++
+	return true
+}
+
+func (s *server) releaseGatewaySlot(accountID string) {
+	s.gwMu.Lock()
+	defer s.gwMu.Unlock()
+	if s.gwInflightGlobal > 0 {
+		s.gwInflightGlobal--
+	}
+	if n := s.gwInflight[accountID]; n > 1 {
+		s.gwInflight[accountID] = n - 1
+	} else {
+		delete(s.gwInflight, accountID)
+	}
+}
+
 // handleChatCompletions 转发 OpenAI 兼容的对话补全请求并按用量扣额度。
 func (s *server) handleChatCompletions(w http.ResponseWriter, r *http.Request, a *Account) {
 	if !s.gateway.enabled() {
@@ -66,6 +104,16 @@ func (s *server) handleChatCompletions(w http.ResponseWriter, r *http.Request, a
 			"额度不足，请在应用内使用兑换码充值")
 		return
 	}
+
+	// 并发闸门（安全审查 2026-09-15 P0-S3）：额度是"先检查、后扣减"，两者之间若允许
+	// 无限并发，超支就是 N × 单次上游成本且 N 无上限。限制同时在飞的请求数，
+	// 让超支有明确上界（每账号 2 + 全局 16）。
+	if !s.acquireGatewaySlot(a.AccountID) {
+		writeErr(w, http.StatusTooManyRequests, "too_many_requests",
+			"同一账号同时在跑的请求过多，请稍后重试")
+		return
+	}
+	defer s.releaseGatewaySlot(a.AccountID)
 
 	// 长连接流式响应需要放宽写期限，否则会被 http.Server 的 WriteTimeout 掐断
 	rc := http.NewResponseController(w)
@@ -244,8 +292,12 @@ func ensureIncludeUsage(body []byte) []byte {
 	if raw, ok := m["stream_options"]; ok {
 		var opts map[string]json.RawMessage
 		if err := json.Unmarshal(raw, &opts); err == nil {
-			if _, has := opts["include_usage"]; has {
-				return body
+			// **强制 true，不尊重调用方的选择**（安全审查 2026-09-15 P0-S1）：
+			// 此前"若调用方已显式指定 include_usage 则尊重"，等于把计费开关交给客户端——
+			// 只要带 {"stream_options":{"include_usage":false}}，网关拿不到 usage，
+			// 流式调用就近乎免费。计费依据不能由被计费方关闭。
+			if opts == nil { // `"stream_options": null` 会解出 nil map，赋值即 panic（P1-1）
+				opts = map[string]json.RawMessage{}
 			}
 			opts["include_usage"] = json.RawMessage("true")
 			if b, err := json.Marshal(opts); err == nil {

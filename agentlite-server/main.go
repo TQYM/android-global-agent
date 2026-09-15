@@ -35,6 +35,11 @@ type server struct {
 
 	// 额度网关（见 gateway.go）：账号额度在此被真实消费
 	gateway *gatewayConfig
+
+	// 网关并发闸门（安全审查 P0-S3）：余额"先检查后扣减"，必须给在飞请求数设上界
+	gwMu             sync.Mutex
+	gwInflight       map[string]int
+	gwInflightGlobal int
 }
 
 func envOr(key, def string) string {

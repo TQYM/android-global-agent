@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// AgentLite 同步服务 — 额度账本与兑换码
+// # AgentLite 同步服务 — 额度账本与兑换码
 //
 // 记账单位：1 unit = 1000 tokens（整数记账，避免浮点误差）。
 // 额度只在两处变动：兑换码核销（+）与网关转发后的用量扣减（-）。
@@ -18,9 +18,14 @@ import (
 	"time"
 )
 
-// 新账号赠送额度（unit = 1000 tokens）。让用户注册后能立刻试跑，
-// 而不是先被"去兑换"卡住；额度耗尽后自然引导到兑换码。
-const newAccountGrant = 500 // = 50 万 tokens
+// 新账号赠送额度（unit = 1000 tokens）。
+//
+// 让用户注册后能立刻试跑，而不是先被"去兑换"卡住；额度耗尽后自然引导到兑换码。
+//
+// **2026-09-15 从 500 收紧到 100**（安全审查 P0-S2）：注册只需一个名字+口令、
+// 每 IP 限流又可被 IPv6/代理池绕过，500 units（50 万 tokens）足以规模化盗刷上游付费 Key。
+// 100 units（10 万 tokens）够新用户跑几十条真实任务，把"零门槛试用"与"被盗刷风险"平衡开。
+const newAccountGrant = 100
 
 var (
 	ErrCodeNotFound = errors.New("兑换码不存在")

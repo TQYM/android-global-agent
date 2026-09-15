@@ -1048,3 +1048,14 @@ T2 验收：20 个任务中记录动作序列；“打开计算器”不得出�
 - 17:50 修复①：402 额度耗尽时改用**用户自配接口**（原设计刻意不回退会把用户卡死）；真机验证日志「账号额度不足，改用你自己配置的接口」→ 任务完成（源:文件:agent-lite/src/com/dsh/agentlite/LlmClient.java）
 - 17:55 修复②：setting 完成复验误判——ColorOS 设置页包名不含 "settings"（com.oplus.battery / com.oplus.wirelesssettings），改为「只要离开本应用即可」；复测不再误报（源:文件:agent-lite/src/com/dsh/agentlite/AgentEngine.java）
 - 17:58 终态: done（未闭环：额度充值、S4/S5/S7 复测、纯视觉/分屏/敏感暂停回归）
+
+### 2026-09-15 21:00 +08 · 项目:agent-lite +agentlite-server · 会话:8db3ace6 · 安全 P0 五项 + 充值改 DeepSeek + 光晕贴合
+- 21:05 修安全审查 P0-A1：导出的 MainActivity 处理外部 task/auto_run → 任意 App 一条 intent 即可驱动无障碍代理；改为**进程内静态通道**，Intent extra 一律忽略（源:文件:agent-lite/src/com/dsh/agentlite/MainActivity.java）
+- 21:20 修 P0-A2：无障碍节点无 isPassword 过滤（密码/验证码明文进提示词）；agent-lite 与 agentd-apk 的 walk() 均掩码 + NodeInfo 出口第二道兜底（源:文件:agent-lite/src/com/dsh/agentlite/AgentA11yService.java）
+- 21:35 屏幕适配定位：Overlay 窗口 `getRoundedCorner()` 取不到值 → 光晕圆角长期走兜底，实测 **83px vs 屏幕真实 154px**（差 71px，即用户说的"不贴合"）（源:命令:截图像素反推 + dumpsys window displays）
+- 21:45 修复：圆角改「系统资源 rounded_corner_radius → 短边 12% 兜底」+ 四角取最大 + 描边同心几何；复测 **83px → 152px**（误差 2px）（源:文件:agent-lite/src/com/dsh/agentlite/ScreenGlowView.java）
+- 22:00 充值改版（用户决策）：默认充值对象由百炼改 **DeepSeek**（top_up + API Keys 引导 + 应用内校验）；DeepSeek 无自动建 Key 接口，故去掉 AK/SK 链路；顺带修掉界面**回显完整 Key**（源:文件:agent-lite/src/com/dsh/agentlite/PurchaseActivity.java）
+- 22:10 服务端 P0-S1 强制计费：客户端带 `stream_options.include_usage:false` 曾可跳过流式计费 → 改为服务端强制 true + 修 null map panic；真机验证恶意请求仍计费（源:文件:agentlite-server/gateway.go）
+- 22:12 服务端 P0-S2 赠送额度 500 → 100 units（注册零验证 + 每 IP 限流可绕，50 万 tokens 足以盗刷）（源:文件:agentlite-server/quota.go）
+- 22:15 服务端 P0-S3 并发闸门（每账号 2 / 全局 16）：5 并发实测恰好 2×200 + 3×429，超支由"无上限"变为有界（源:命令:ssh 并发 curl）
+- 22:18 终态: done（未做：P1 若干——api_key/lan_key 迁 Keystore、ActionValidator、ask 超时视为拒绝、IME 权限升 signature、锁屏通知 VISIBILITY_SECRET、剪贴板清理、agent-client 关 allowBackup）
