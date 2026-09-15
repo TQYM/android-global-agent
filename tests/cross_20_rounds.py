@@ -249,6 +249,7 @@ def wait_terminal(serial: str, base: int, timeout_s: int) -> tuple[str, int]:
 
 
 def steps_of(lines: list[str], base: int) -> int:
+    """base 行之后出现过的最大步数（= 该段目标设备实际执行的步数）。"""
     return max((int(m.group(1)) for m in
                 (re.search(r"第 (\d+) 步", l) for l in lines[base:]) if m), default=0)
 
@@ -315,6 +316,8 @@ def run_a(phone: str, watch: str | None, a_task: str, a_expect: list[str], timeo
         reason = f"手表回报 {ack_status or '（超时无 ack）'}"
     return {"ok": ok, "task": task, "command_id": cid, "phone_remote_line": line,
             "watch_ack": ack_status, "watch_terminal": w_term, "loop": loop,
+            "dispatch_steps": steps_of(read_log(phone), base),          # 发起方走了几步才决定 remote
+            "exec_steps": steps_of(read_log(watch), wbase) if watch else 0,  # 手表实际执行步数
             "reason": reason, "elapsed_s": round(time.time() - t0, 1)}
 
 
@@ -325,6 +328,7 @@ def run_b(phone: str, watch: str | None, b_task: str, b_expect: list[str], timeo
     """
     task = f"Ask the {WATCH_HINT} watch to tell the {PHONE_HINT} phone to {b_task}"
     watch_front(watch)
+    wbase = len(read_log(watch)) if watch else 0
     if not phone_send_task(phone, task):
         return {"ok": False, "reason": "手机端无法进入可运行状态（找不到运行按钮）", "task": task}
 
@@ -376,6 +380,8 @@ def run_b(phone: str, watch: str | None, b_task: str, b_expect: list[str], timeo
     return {"ok": ok, "task": task, "hop1": hop1, "hop1_command_id": cid1,
             "hop2_command_id": hop2_cid, "phone_pickup": pickup, "phone_terminal": terminal,
             "phone_foreground": fg,
+            "relay_steps": steps_of(read_log(watch), wbase) if watch else 0,   # 手表转达与下发所走步数
+            "exec_steps": steps_of(read_log(phone), base),                     # 手机领取后实际执行步数
             "reason": "" if ok else (
                 "手机终态未达成" if "任务完成：" not in (terminal or "") else
                 f"手机前台是 {fg}，不是期望的 {b_expect}"),
@@ -446,7 +452,10 @@ def main() -> int:
         if sub:
             o = sum(1 for s in sub if s.get("ok"))
             avg = sum(s.get("elapsed_s", 0) for s in sub) / len(sub)
-            print(f"  {'A 手机→手表' if tag == 'a' else 'B 手表→手机'}: {o}/{len(sub)} 通过，平均 {avg:.0f}s")
+            st = [s.get("exec_steps", 0) for s in sub if s.get("ok") and s.get("exec_steps")]
+            st_txt = f"，通过段平均 {sum(st)/len(st):.1f} 步" if st else ""
+            print(f"  {'A 手机→手表' if tag == 'a' else 'B 手表→手机'}: {o}/{len(sub)} 通过，"
+                  f"平均 {avg:.0f}s{st_txt}")
     fails = [(r["round"], k, r[k].get("reason", "")) for r in records for k in ("a", "b")
              if k in r and not r[k].get("ok")]
     loops = [(r["round"], r["a"].get("command_id", "")) for r in records
@@ -458,12 +467,15 @@ def main() -> int:
 
     with REPORT.open("a", encoding="utf-8") as f:
         f.write(f"\n## {time.strftime('%Y-%m-%d %H:%M')} · {len(segs)} 段 · 通过 {ok}\n\n")
-        f.write("| 轮 | A 手机→手表 | 指令 | B 手表→手机 | 二跳指令 | 手机前台 |\n|---|---|---|---|---|---|\n")
+        f.write("| 轮 | A 手机→手表 | A 指令 | A 步数 | B 手表→手机 | B 二跳指令 | B 转达步 | B 执行步 | 手机前台 |\n")
+        f.write("|---|---|---|---|---|---|---|---|---|\n")
         for r in records:
             a, b = r.get("a", {}), r.get("b", {})
-            f.write(f"| {r['round']} | {'✓' if a.get('ok') else '✗'} {a.get('watch_ack','')} "
-                    f"| {a.get('command_id','')} | {'✓' if b.get('ok') else '✗'} "
-                    f"| {b.get('hop2_command_id','')} | {b.get('phone_foreground','')} |\n")
+            af = "✓" if a.get("ok") else ("⚠回环" if a.get("loop") else "✗")
+            f.write(f"| {r['round']} | {af} {a.get('watch_ack','')} | {a.get('command_id','')} "
+                    f"| {a.get('exec_steps','')} | {'✓' if b.get('ok') else '✗'} "
+                    f"| {b.get('hop2_command_id','')} | {b.get('relay_steps','')} "
+                    f"| {b.get('exec_steps','')} | {b.get('phone_foreground','')} |\n")
     print(f"\n明细：{OUT.relative_to(ROOT)}  报告：{REPORT.relative_to(ROOT)}")
     return 0 if ok == len(segs) else 1
 
