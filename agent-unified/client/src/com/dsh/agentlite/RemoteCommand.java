@@ -38,6 +38,20 @@ import java.util.concurrent.TimeUnit;
 public final class RemoteCommand {
 
     private static final String TAG = "AgentLiteRemote";
+
+    /**
+     * 跨设备关键事件**同时**写 logcat 与 engine.log。
+     *
+     * <p>为什么必须落 engine.log（2026-09-15 跨设备真机测试教训）：此前跨设备事件只走
+     * {@code android.util.Log}，而测试脚本、用户「调试台」、事后归档读的都是 engine.log。
+     * 结果手机明明下发了指令、手表明明 ack 了 failed，两端 engine.log 里**一行都没有**，
+     * 排障时只能靠翻 logcat 与猜——一度被误判成「指令根本没下发」。
+     * 高频异常（每轮轮询失败）仍只走 logcat，避免刷爆文件。
+     */
+    private static void log(String msg) {
+        android.util.Log.i(TAG, msg);
+        AgentEngine.staticLog("跨设备: " + msg);
+    }
     /** 轮询间隔。太短费电，太长用户等得久；20s 是折中。 */
     private static final long POLL_INTERVAL_MS = 20_000;
     /** 收到指令后给任务文本加的标记：让模型知道这不是本机用户当面下达的。 */
@@ -155,8 +169,7 @@ public final class RemoteCommand {
         JSONObject r = request(ctx, "POST", "/api/v1/device/command", body.toString());
         JSONObject c = r.optJSONObject("command");
         if (c != null) {
-            android.util.Log.i(TAG, "已下发指令 " + c.optString("command_id")
-                    + " → " + toDeviceId + "：" + task);
+            log("已下发指令 " + c.optString("command_id") + " → " + toDeviceId + "：" + task);
         }
         return c == null ? new JSONObject() : c;
     }
@@ -218,7 +231,7 @@ public final class RemoteCommand {
             String[] res = lastTaskResult(ctx);
             String status = "完成".equals(res[0]) ? "done" : "failed";
             ack(ctx, sRunningCommandId, status, res[1]);
-            android.util.Log.i(TAG, "指令 " + sRunningCommandId + " 回报 " + status + "：" + res[1]);
+            log("指令 " + sRunningCommandId + " 回报 " + status + "：" + res[1]);
             sRunningCommandId = null;
             sRunningFromDevice = null;
         }
@@ -244,21 +257,22 @@ public final class RemoteCommand {
             // 无障碍没开：明确回报失败，别让发起方一直等
             if (AgentA11yService.get() == null) {
                 ack(ctx, id, "failed", "目标设备未开启无障碍服务");
+                log("收到指令 " + id + " 但本机无障碍未连接 → 已回报 failed（发起方会看到「目标设备未开启无障碍服务」）");
                 continue;
             }
             // 引擎正忙：**不回报**，留待下轮重试；5 分钟后自然过期
             if (engine.isRunning()) {
-                android.util.Log.i(TAG, "引擎正忙，指令 " + id + " 留待下轮");
+                log("引擎正忙，指令 " + id + " 留待下轮");
                 continue;
             }
             if (!engine.start(REMOTE_PREFIX + task)) {
-                android.util.Log.i(TAG, "指令 " + id + " 启动失败，留待下轮");
+                log("指令 " + id + " 启动失败，留待下轮");
                 continue;
             }
             sRunningCommandId = id;
             sRunningFromDevice = c.optString("from_device", "");
             ack(ctx, id, "running", "目标设备已开始执行");
-            android.util.Log.i(TAG, "开始执行跨设备指令 " + id + "：" + task);
+            log("开始执行跨设备指令 " + id + "（来自 " + sRunningFromDevice + "）：" + task);
             return;   // 一次只跑一条，避免多条指令互相打断
         }
     }
