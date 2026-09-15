@@ -49,7 +49,9 @@ done
 #    更糟的是 BASE_URL 同样可被覆盖——把它指向攻击者域名，等于把密钥主动送出去。
 #    密钥改为运行时录入：App 内「设置 → 配置」手填，或用 tests/push_dev_key.sh 由 adb 推送。
 API_KEY=""
-BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1"; MODEL="qwen3.5-omni-plus"
+# 默认上游改为 DeepSeek（2026-09-15 用户决策）：换上游只需改这一行，
+# 密钥仍由用户运行时录入（绝不内联进 APK）。
+BASE_URL="https://api.deepseek.com/v1"; MODEL="deepseek-flash"
 # 远程信息同步服务（agentlite-server）。自签证书随包打入 assets/agentlite_sync_ca.pem。
 SYNC_URL="https://8.133.225.105:18443"
 if [ -f dev.local ]; then

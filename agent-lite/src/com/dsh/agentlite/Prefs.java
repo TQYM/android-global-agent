@@ -130,7 +130,14 @@ public final class Prefs {
      * 用户既然自己买了 token 资源包，就应当直接用他的 Key，
      * 否则网关会一直顶在前面、写的 Key 根本用不上（`PURCHASE_REDIRECT_DESIGN` 决策 4）。
      */
-    public boolean useOwnKey() { return sp.getBoolean("use_own_key", false); }
+    /**
+     * 是否用「自己的 API 配置」直连（默认 true）。
+     *
+     * <p>2026-09-15 用户决策「直接默认用 DeepSeek」：只要本地有 Key 就优先走自己的
+     * DeepSeek 配置，不再默认依赖账号额度网关——额度为 0 的账号此前会在第一步就 402。
+     * 没填 Key 的用户仍然自动落到账号额度通道（见 LlmClient.forPrefs），零门槛不变。
+     */
+    public boolean useOwnKey() { return sp.getBoolean("use_own_key", true); }
 
     public void setUseOwnKey(boolean on) { sp.edit().putBoolean("use_own_key", on).apply(); }
 

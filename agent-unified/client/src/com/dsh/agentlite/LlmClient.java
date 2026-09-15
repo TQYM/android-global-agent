@@ -181,7 +181,9 @@ public class LlmClient {
         // 官方购买模式：用户自己买了 token 资源包、用自己的 Key。
         // 此时**必须让开网关**——否则网关一直顶在前面，刚写入的那张 Key 永远用不上
         // （PURCHASE_REDIRECT_DESIGN 决策 4：这批用户关闭 use_gateway）。
-        if (p.useOwnKey()) {
+        // 有 Key 才走自己的配置：useOwnKey 默认 true，但**没填 Key 的用户**
+        // 必须自动落到账号额度通道，否则会拿空 Key 去请求（零门槛不能因此破掉）。
+        if (p.useOwnKey() && p.apiKey() != null && !p.apiKey().isEmpty()) {
             LlmClient own = new LlmClient(p.baseUrl(), p.apiKey(), model);
             // 自带 Key 是高级路径，但它一旦欠费/失效，用户会完全用不了——而此时
             // 账号额度往往还可用。把它登记为备用通道：上游拒绝且"换通道可能有用"时自动改用
