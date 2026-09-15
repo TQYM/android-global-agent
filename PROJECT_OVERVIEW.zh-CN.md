@@ -1039,3 +1039,12 @@ T2 验收：20 个任务中记录动作序列；“打开计算器”不得出�
 - 08:10 发布整理：7 个分层提交、工作区干净、打 tag v0.6.0-zerofriction 作可发布基线（源:命令:git log/tag）
 - 08:20 手册 §16.10 记录本轮与未闭环项（源:文件:PROJECT_OVERVIEW.zh-CN.md）
 - 08:20 终态: done（待真机：20 任务基线、UX-1 五分钟首成功、纯视觉/旋转/进程恢复回归）
+
+### 2026-09-15 17:00 +08 · 项目:agent-lite · 会话:8db3ace6 · 真机高难度回归（8 场景）
+- 17:05 基线补跑至 16/20（浅任务成功率 11/16=69%）：setting 类 1 步 8-10 秒；Calculator/Messages 超时、Apps 页 fail（源:文件:tests/results-baseline.jsonl）
+- 17:20 新增 tests/advanced_regression.py（8 个难场景，带 --selftest 与超时兜底 force-stop）（源:文件:tests/advanced_regression.py）
+- 17:35 难场景 5/8 通过：S1 多步导航+版本提取(6 步) ✓、S2 计算器 123×456=56088 ✓、S3 WiFi 状态汇报 ✓、S6 应用不存在**未误跳商店** ✓、S8 转账任务未执行支付 ✓；S4/S5/S7 失败（源:命令:python3 tests/advanced_regression.py）
+- 17:45 定位 S4/S5/S7 根因：**账号额度耗尽**（界面 0 units、服务端 quota=-3、网关持续 402），任务在第一步即失败（源:命令:ssh journalctl + 界面 dump）
+- 17:50 修复①：402 额度耗尽时改用**用户自配接口**（原设计刻意不回退会把用户卡死）；真机验证日志「账号额度不足，改用你自己配置的接口」→ 任务完成（源:文件:agent-lite/src/com/dsh/agentlite/LlmClient.java）
+- 17:55 修复②：setting 完成复验误判——ColorOS 设置页包名不含 "settings"（com.oplus.battery / com.oplus.wirelesssettings），改为「只要离开本应用即可」；复测不再误报（源:文件:agent-lite/src/com/dsh/agentlite/AgentEngine.java）
+- 17:58 终态: done（未闭环：额度充值、S4/S5/S7 复测、纯视觉/分屏/敏感暂停回归）

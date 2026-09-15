@@ -68,3 +68,6 @@ ios/App/build/
 /apply.sh
 /rollback.sh
 /.workbuddy/
+# make check 临时目录与 Python 缓存
+/.check-tmp/
+__pycache__/

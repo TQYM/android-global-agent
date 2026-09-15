@@ -433,6 +433,17 @@ public class LlmClient {
         try {
             return postOnce(baseUrl, apiKey, path, payload, contentType, primaryIsGateway);
         } catch (QuotaExhaustedException q) {
+            // 账号额度耗尽（402）：若用户配置了自己的接口，改用它。
+            //
+            // 原设计刻意不回退，怕"绕过额度"；但那会把用户彻底卡死——他明明有一份
+            // 自己付费的配置，却因为账号额度用完而完全用不了（2026-09-15 真机实测：
+            // 额度归零后所有任务在第一步就 402）。回退消耗的是用户自己的额度，
+            // 不损害服务方计费，符合手册 §16「降低技术门槛」。
+            if (!onFallback && fbBaseUrl != null && !fbBaseUrl.isEmpty()) {
+                android.util.Log.i(TAG, "账号额度不足，改用你自己配置的接口");
+                onFallback = true;
+                return postOnce(fbBaseUrl, fbApiKey, path, payload, contentType, fallbackIsGateway);
+            }
             throw q;
         } catch (CancelledException ce) {
             throw ce;   // 取消不是「网关不可用」，绝不能因此回退到用户自己的 Key

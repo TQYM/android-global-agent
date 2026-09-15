@@ -914,6 +914,12 @@ public class AgentEngine {
         expectPkg = null;
         expectLabel = null;
         if (currentPkg == null || currentPkg.isEmpty()) return null;
+        if (want.isEmpty()) {
+            // 「离开本应用」判定：不同 ROM 的设置页包名各异，只要求不再停在本应用
+            return currentPkg.equals(app.getPackageName())
+                    ? "上一步「" + label + "」似乎没有生效：当前仍停留在助手自己的界面。"
+                    : null;
+        }
         if (currentPkg.contains(want)) return null;
         return "上一步「" + label + "」似乎没有生效：当前前台应用是 " + currentPkg
                 + "，不是预期的 " + want + "。请确认后换一种方式重试（或如实说明失败原因）。";
@@ -1388,9 +1394,11 @@ public class AgentEngine {
                 String intentAction = SETTINGS_PAGES.get(page.toLowerCase());
                 if (intentAction == null) throw new Exception("未知设置页 " + page);
                 startActivity(new Intent(intentAction));
-                // 设置应用的包名因厂商而异（com.android.settings / com.oplus.settings…），
-                // 这里用片段匹配，避免把「已打开但包名不同」误判成失败
-                expectPkg = "settings";
+                // 设置页在不同厂商 ROM 上由**不同包**承载：ColorOS 的 WLAN 是
+                // com.oplus.wirelesssettings、电池是 com.oplus.battery，都不含 "settings"。
+                // 用 "settings" 片段匹配会误报（2026-09-15 真机实测：多花一步回灌）。
+                // 空串 = 「只要前台离开了本应用即可」——这才是 setting 动作的可验证语义。
+                expectPkg = "";
                 expectLabel = "打开设置页 " + page;
                 return "setting " + page;
             }
