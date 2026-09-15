@@ -57,6 +57,12 @@ public final class RemoteCommand {
     /** 收到指令后给任务文本加的标记：让模型知道这不是本机用户当面下达的。 */
     public static final String REMOTE_PREFIX = "[跨设备指令] ";
 
+    /** 当前正在执行的跨设备指令的**发起设备 id**（不在执行跨设备指令时为 null）。
+     *  用于引擎的接收侧防回环检查：不许把别人发来的指令原样转回发起方。 */
+    public static String runningFromDevice() {
+        return sRunningFromDevice;
+    }
+
     private static ScheduledExecutorService sExec;
     private static volatile boolean sPolling;
     /** 正在执行、尚未回报终态的指令 id（跨轮询周期保存）。 */
