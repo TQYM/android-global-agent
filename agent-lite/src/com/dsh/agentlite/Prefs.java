@@ -296,9 +296,15 @@ public final class Prefs {
     public String accountId() { return sp.getString("account_id", ""); }
     public String accountName() { return sp.getString("account_name", ""); }
 
-    /** 是否已登录（令牌与账号 ID 齐备，缺一即视为未登录）。 */
+    /**
+     * 是否已登录（令牌与账号 ID 齐备，且令牌**没有被服务端判失效**）。
+     *
+     * <p>2026-09-15 真机实测的可用性缺陷：令牌失效（401）后本地字符串还在，
+     * 旧实现仍返回 true → LoginActivity 认为"已登录"直接 finish()，用户点
+     * 「重新登录」被弹回失效提示页，**永远无法自救**。令牌已被判定失效就不再算登录态。
+     */
     public boolean loggedIn() {
-        return !accountToken().isEmpty() && !accountId().isEmpty();
+        return !accountToken().isEmpty() && !accountId().isEmpty() && !accountInvalid();
     }
 
     /** 账号令牌被服务端判为失效（401）后置位，UI 据此提示重新登录。 */

@@ -678,8 +678,9 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
         authPrompted = true;
         new android.app.AlertDialog.Builder(this)
                 .setTitle("登录已失效")
-                .setMessage("账号令牌已失效（可能在其他设备重新登录过，旧令牌会立即失效）。\n"
-                        + "重新登录后任务历史与记忆会继续同步。")
+                .setMessage("登录状态已失效，需要重新登录一次。\n"
+                        + "重新登录后任务历史与记忆会继续同步；"
+                        + "同一账号的多台设备（手机 / 手表）现在可同时在线，不会互相挤掉。")
                 .setNegativeButton("稍后", null)
                 .setPositiveButton("重新登录", (d, w) ->
                         startActivity(new Intent(this, LoginActivity.class)))

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// AgentLite 同步服务 — 账号体系与局域网会合
+// # AgentLite 同步服务 — 账号体系与局域网会合
 //
 // 账号模型：
 //   - 账号名 + 账号密钥（本地账号，不涉及手机号/短信，因此无需备案与短信资质）
@@ -53,19 +53,51 @@ var (
 
 // Account 是一个本地账号。
 type Account struct {
-	AccountID   string    `json:"account_id"`
-	Name        string    `json:"name"`
-	KeyHash     string    `json:"key_hash"` // base64(pbkdf2)
-	KeySalt     string    `json:"key_salt"` // base64
-	KeyIter     int       `json:"key_iter"`
-	TokenHash   string    `json:"token_hash"`
-	CreatedAt   time.Time `json:"created_at"`
-	LastLoginAt time.Time `json:"last_login_at"`
-	Disabled    bool      `json:"disabled"`
+	AccountID string `json:"account_id"`
+	Name      string `json:"name"`
+	KeyHash   string `json:"key_hash"` // base64(pbkdf2)
+	KeySalt   string `json:"key_salt"` // base64
+	KeyIter   int    `json:"key_iter"`
+	// TokenHash 是**历史字段**：早期每次登录都换掉这一把唯一令牌，
+	// 直接导致「同账号第二台设备登录把第一台踢下线」，而跨设备恰恰要求两台同时在线
+	// （2026-09-15 真机实测：手机登录后手表一登录，手机立刻 401）。
+	// 现在改为多令牌（Tokens）；此字段只在读取旧数据时用于迁移，写回时清空。
+	TokenHash string `json:"token_hash,omitempty"`
+	// Tokens 是该账号当前有效的所有令牌（每台设备登录一次追加一把）。
+	Tokens      []AccountToken `json:"tokens,omitempty"`
+	CreatedAt   time.Time      `json:"created_at"`
+	LastLoginAt time.Time      `json:"last_login_at"`
+	Disabled    bool           `json:"disabled"`
 
 	// 额度（units = 1000 tokens 的记账单位由网关定义，见 quota.go）
 	Quota     int64 `json:"quota"`
 	QuotaUsed int64 `json:"quota_used"`
+}
+
+// AccountToken 一把账号令牌。多把并存 = 多台设备可同时在线（跨设备的前提）。
+type AccountToken struct {
+	Hash      string    `json:"hash"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// maxTokensPerAccount 单账号令牌上限：超出按创建时间淘汰最旧的一把
+// （避免无限增长，同时满足正常用户的多设备场景）。
+const maxTokensPerAccount = 10
+
+// addTokenLocked 追加一把令牌并维护索引（调用方需持锁）。
+func (s *Store) addTokenLocked(a *Account, token string) {
+	a.Tokens = append(a.Tokens, AccountToken{Hash: hashToken(token), CreatedAt: time.Now().UTC()})
+	evicted := ""
+	if len(a.Tokens) > maxTokensPerAccount {
+		evicted = a.Tokens[0].Hash
+		a.Tokens = a.Tokens[len(a.Tokens)-maxTokensPerAccount:]
+	}
+	for _, tk := range a.Tokens {
+		s.acctByToken[tk.Hash] = a.AccountID
+	}
+	if evicted != "" {
+		delete(s.acctByToken, evicted)
+	}
 }
 
 // LANKeyParams 公布给客户端的局域网密钥派生参数，避免两端参数漂移。
@@ -153,8 +185,13 @@ func (s *Store) loadAccounts() error {
 		a := list[i]
 		s.accounts[a.AccountID] = &a
 		s.acctByName[a.Name] = a.AccountID
+		// 兼容旧数据：早期账号只有单把 TokenHash，读入时并入 Tokens
 		if a.TokenHash != "" {
-			s.acctByToken[a.TokenHash] = a.AccountID
+			a.Tokens = append(a.Tokens, AccountToken{Hash: a.TokenHash, CreatedAt: a.CreatedAt})
+			a.TokenHash = ""
+		}
+		for _, tk := range a.Tokens {
+			s.acctByToken[tk.Hash] = a.AccountID
 		}
 	}
 	return nil
@@ -214,14 +251,13 @@ func (s *Store) RegisterAccount(name, key string) (*Account, string, error) {
 		KeyHash:     base64.StdEncoding.EncodeToString(hash),
 		KeySalt:     base64.StdEncoding.EncodeToString(salt),
 		KeyIter:     acctKeyIterations,
-		TokenHash:   hashToken(token),
 		CreatedAt:   now,
 		LastLoginAt: now,
 		Quota:       newAccountGrant, // 新账号赠送额度，便于开箱试用
 	}
 	s.accounts[id] = a
 	s.acctByName[n] = id
-	s.acctByToken[a.TokenHash] = id
+	s.addTokenLocked(a, token)
 	if err := s.saveAccountsLocked(); err != nil {
 		return nil, "", err
 	}
@@ -275,12 +311,10 @@ func (s *Store) LoginAccount(name, key string) (*Account, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	if a.TokenHash != "" {
-		delete(s.acctByToken, a.TokenHash)
-	}
-	a.TokenHash = hashToken(token)
-	a.LastLoginAt = time.Now().UTC()
-	s.acctByToken[a.TokenHash] = a.AccountID
+	// **追加**一把新令牌，不动其它设备已有的令牌——
+	// 这是跨设备（手机 / 手表同账号同时在线）能工作的前提。
+	// 旧实现是 delete 旧 + 换新，后果是同账号第二台设备一登录就把第一台踢下线。
+	s.addTokenLocked(a, token)
 	if err := s.saveAccountsLocked(); err != nil {
 		return nil, "", err
 	}
@@ -441,6 +475,7 @@ func (s *Store) Accounts() []Account {
 		cp.KeyHash = ""
 		cp.KeySalt = ""
 		cp.TokenHash = ""
+		cp.Tokens = nil
 		out = append(out, cp)
 	}
 	return out
