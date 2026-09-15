@@ -48,6 +48,8 @@ public final class RemoteCommand {
     /** 正在执行、尚未回报终态的指令 id（跨轮询周期保存）。 */
     private static volatile String sRunningCommandId;
     private static volatile String sRunningFromDevice;
+    /** 轮询计数：每 N 轮刷新一次同账号设备列表（见 startPolling）。 */
+    private static volatile int sPollRounds;
 
     private RemoteCommand() { }
 
@@ -176,6 +178,13 @@ public final class RemoteCommand {
         });
         sExec.scheduleWithFixedDelay(() -> {
             try {
+                // 同账号设备列表会变（新设备登录、改名、换机）。不刷新的话
+                // deviceBlock() 注入的列表是空的，模型会说「列表里找不到那台设备」
+                // 而拒绝下发——真机实测（2026-09-15）：refreshDevices 此前**没有任何调用点**，
+                // 缓存永远为空，跨设备因此永远走不通。
+                if (sPollRounds++ % 3 == 0) {
+                    refreshDevices(app);
+                }
                 pollOnce(app);
             } catch (Throwable t) {
                 android.util.Log.i(TAG, "轮询异常（下轮重试）: " + t);
