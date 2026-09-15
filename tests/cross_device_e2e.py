@@ -236,12 +236,61 @@ def watch_to_phone(phone: str, watch: str, timeout_s: int, wait_input_s: int) ->
             "phone_foreground": fg}
 
 
+def relay_via_watch(phone: str, watch: str, timeout_s: int) -> dict:
+    """方向 2 的自动化路径（二级转达）：手机 → 手表 → 手机。
+
+    任务文本同时点名两台设备，于是**两端都走真实 App 路径**，而只需在**手机**上输入
+    （手表端没有可用的 adb 输入通道，见 NOTES）：
+
+      1. 手机看到「Ask the OWW261 watch …」→ 必须 remote 给手表（提示词规则）；
+      2. 手表收到「[跨设备指令] … tell the PKX110 phone to open the Calculator」
+         → 它必须 remote 回 PKX110（同账号另一台设备）；
+      3. 手机领取该指令并执行 → 手机前台 = 计算器。
+
+    第 2 步就是「手表控制手机」，且决策与下发都由手表 App 自己完成。
+    """
+    task = f"Ask the {WATCH_HINT} watch to tell the {PHONE_HINT} phone to open the Calculator"
+    print(f"\n=== 方向 2（二级转达）：手机 → 手表 → 手机 ===\n任务：{task}")
+    new_task(phone, task)
+    if not type_task_phone(phone, task):
+        return {"direction": "relay", "ok": False, "reason": "找不到手机端运行按钮"}
+
+    hop1 = wait_pattern(phone, r"第 \d+ 步：执行 remote", 90)
+    if not hop1:
+        return {"direction": "relay", "ok": False, "reason": "第一跳失败：手机没有 remote 给手表",
+                "phone_log": device_log(phone)[-800:]}
+    print(f"· 第一跳（手机 → 手表）：{hop1}")
+
+    hop2 = wait_pattern(watch, r"第 \d+ 步：执行 remote", 150)
+    if not hop2:
+        return {"direction": "relay", "ok": False, "reason": "第二跳失败：手表没有 remote 回手机",
+                "hop1": hop1, "watch_log": device_log(watch)[-800:]}
+    print(f"· 第二跳（手表 → 手机）：{hop2}")
+
+    pickup = wait_pattern(phone, r"任务启动: \[跨设备指令\]", 120)
+    if not pickup:
+        return {"direction": "relay", "ok": False, "reason": "手机未领取手表下发的指令",
+                "hop1": hop1, "hop2": hop2, "phone_log": device_log(phone)[-800:]}
+    print(f"· 手机已领取手表下发的指令：{pickup}")
+
+    _, terminal = wait_terminal(phone, timeout_s)
+    fg = foreground(phone)
+    ok = bool(terminal) and PHONE_TARGET in fg
+    print(f"· 手机终态：{terminal or '（超时未收终态）'}")
+    print(f"· 手机前台：{fg} → {'✓ 已打开计算器（手表控制手机成功）' if PHONE_TARGET in fg else '✗ 目标应用不在前台'}")
+    return {"direction": "relay", "ok": ok, "task": task, "hop1_phone_remote": hop1,
+            "hop2_watch_remote": hop2, "phone_pickup": pickup, "phone_terminal": terminal,
+            "phone_foreground": fg}
+
+
 # --------------------------------------------------------------------- 入口
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true", help="只做前置自检")
-    ap.add_argument("--dir", choices=["phone2watch", "watch2phone", "both"], default="both")
+    ap.add_argument("--dir", choices=["phone2watch", "watch2phone", "relay", "both"], default="both",
+                    help="phone2watch=手机→手表；relay=手机→手表→手机（自动，验证手表控制手机）；"
+                         "watch2phone=人工在手表输入（真实用户路径）；both=phone2watch+relay")
     ap.add_argument("--timeout", type=int, default=120, help="单任务等待终态的秒数")
     ap.add_argument("--watch-input-wait", type=int, default=300, help="等人工在手表上输入任务的秒数")
     args = ap.parse_args()
@@ -257,7 +306,9 @@ def main() -> int:
     results = []
     if args.dir in ("phone2watch", "both"):
         results.append(phone_to_watch(phone, watch, args.timeout))
-    if args.dir in ("watch2phone", "both"):
+    if args.dir in ("relay", "both"):
+        results.append(relay_via_watch(phone, watch, args.timeout))
+    if args.dir == "watch2phone":
         results.append(watch_to_phone(phone, watch, args.timeout, args.watch_input_wait))
 
     with OUT.open("a", encoding="utf-8") as f:
