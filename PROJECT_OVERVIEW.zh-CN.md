@@ -724,6 +724,44 @@ T2 验收：20 个任务中记录动作序列；“打开计算器”不得出�
 2. 五分钟首成功（UX-1）：清数据 → 登录 → 一句话 → 完成，记录耗时/点击数/权限次数/是否出现技术术语；
 3. 真机安全回归：纯视觉、旋转分屏、敏感条款暂停、用户停止、进程死亡恢复、无障碍重连。
 
+### 16.11 跨设备双向测试（2026-09-15 晚，手机 PKX110 ↔ 手表 OWW261）
+
+> 复跑入口：`python3 tests/cross_device_e2e.py --check` → `python3 tests/cross_device_e2e.py`。
+> 结论只看**可核对的证据**（服务端指令审计 + 两端 engine.log + 目标设备前台包名），不采信模型自述。
+
+**已通过：手机 → 手表（端到端）**
+
+- 手机端下达「Ask the OWW261 watch to open the Calculator」→ 模型**第 1 步**即选 `remote OPPO OWW261`，
+  服务端审计 `POST /api/v1/device/command 200`（指令 `c_1852113485e955ea`）；
+- 手表 19:54:11 领取「[跨设备指令] 打开计算器」→ 19:54:31 执行 `app com.heytap.wearable.calculator2`
+  → 19:54:33「任务完成：计算器已打开」；**手表前台 = 计算器**（决定性证据，非自述）。
+
+**未完成：手表 → 手机**（三层阻塞，按遇到顺序）
+
+1. **手表 a11y 在覆盖安装 / force-stop 后无法自动重绑**：`AgentA11yService.get() == null` 时接收端
+   直接 ack failed（`RemoteCommand.java` 的 a11y 前置检查）；而 ColorOS Watch 上 A11yGuard 的 L1 因
+   `SecurityException` 不可用、L2（拉起主界面）无效、系统详情页显示「无法运行」；用 `settings put` 写入
+   列表与总开关后系统**仍不绑定**。任务发起同样需要 a11y（`AgentEngine.java:163`）。
+2. **手表端没有可用的 adb 文本输入通道**：前台正确、输入框已聚焦（占位符消失）时，`input text` 与
+   `input keyevent` 都不产生字符（偶发只进 1 个字符）；禁用/启用搜狗手表 IME 均无效。
+   → 手表端任务只能**人工输入**，自动化只能覆盖到"下发之后"。
+3. **手表重启会关闭 USB 调试**：为修 a11y 重启手表后 `adb devices` 里再无手表，需人工重插/重开调试。
+
+**本轮据此修掉的两个真实缺陷**（均已提交 + 门禁全绿）
+
+- 跨设备事件（下发/领取/回报/拒绝）此前**只写 logcat、不写 engine.log**，失败零痕迹——手机说"已下发"、
+  手表 ack 了 failed，两端日志却一行没有，一度被误判为「指令根本没下发」。现在关键事件同时落 engine.log
+  （`4de1303`，已同步 `agent-unified/client` 副本）。
+- `task_baseline.py` 每条任务 `am force-stop` 会清掉 ColorOS 的 a11y 绑定，之后的任务在"感知不到节点"
+  状态下空跑成**假性 timeout**（旧批次 20 条里 2 条如此，会被误记成模型失败）。现在每条任务前补写绑定，
+  并新增失败归因（env:a11y / channel / model_or_env）与批次标签（`ab1b658`）。
+
+**新增资产**：`tests/cross_device_e2e.py`（双向验证脚本）、`tests/watch_ui.py`（小屏 UI 原语：
+按 resource-id 实时定位、落点避开底部系统手势区、滚动到位——写死坐标在 466×466 表上必然串位）。
+
+**本轮测试账号**：自建 `xdev09151936`（口令随机生成、只落 `/tmp`、不入库不入仓），手机与手表都登录它。
+手机若要切回自己的账号：App 内「设置 → 登录 / 切换账号」用原口令登录即可。
+
 
 
 ### 2026-09-13 00:54 +08 · 会话 33f50b22 · 新建 project-work-log skill
@@ -1103,3 +1141,17 @@ T2 验收：20 个任务中记录动作序列；“打开计算器”不得出�
   （指令号 c_d45dc301989364f4）」，目标设备侧拉取到该指令（from=手机 device_id）
   ⇒ **双向跨设备链路均已打通**（手表→手机：执行并回报 done；手机→手表：下发并被拉取）（源:命令:adb + ssh curl）
 - 20:00 终态: done
+
+### 2026-09-15 19:33 +08 · 项目:agent-lite +repo · 会话:3340f9c6 · 跨设备双向测试（手表侧受阻）
+- 19:33 首次运行检查：读项目清单/手册 §16.10/日志尾；起 20 任务基线后按用户新指令停掉、让出手机（源:用户请求+文件:PROJECT_OVERVIEW.zh-CN.md）
+- 19:37 修基线假性 timeout 根因：`am force-stop` 会清掉 ColorOS 的 a11y 绑定，后续任务在无节点下空跑；每条任务前补写绑定+失败归因（源:文件:tests/task_baseline.py）
+- 19:40 澄清跨设备前提：手机 prefs 里的 `sync_token` 是遗留明文（真令牌在 Keystore，据此判「失效」是误读）；手表登录的是 tqym，与手机异号（源:命令:adb prefs + ssh accounts.json）
+- 19:50 打通测试前提：自建测试账号 xdev09151936（口令随机、只落 /tmp）；手机 UI 登录；手表无可用 IME 输入 → 装 debuggable 变体 + run-as 写 prefs 登录同账号（源:命令:adb+文件:/tmp/watch_prefs_v2.xml）
+- 19:54 方向 1（手机→手表）**端到端通过**：手机 remote 下发 c_1852113485e955ea → 手表 19:54:11 领取 → 19:54:31 app com.heytap.wearable.calculator2 → 前台=计算器（源:命令:adb+ssh journalctl）
+- 20:00 方向 2（手表→手机）受阻：以手机身份下发指令给手表，两次 ack failed，且两端 engine.log 无任何记录（源:命令:ssh journalctl）
+- 20:05 定位：接收端要求 a11y 已连接否则 ack failed，且跨设备事件只写 logcat；手表 a11y 在覆盖安装后 ColorOS 拒绝重绑（源:文件:agent-lite/.../RemoteCommand.java+命令:dumpsys accessibility）
+- 20:09 修可观测性：跨设备下发/领取/回报/拒绝同时落 engine.log；同步 unified 副本，make check 全绿（源:文件+命令:make check）
+- 20:12 尝试重启手表修复 a11y → 手表重启后 adb 掉线（ColorOS Watch 关 USB 调试），需人工重插（源:命令:adb devices）
+- 20:16 新增 tests/cross_device_e2e.py（双向验证）与 tests/watch_ui.py（小屏 UI 原语）；提交 055c89c/ab1b658/4de1303（源:文件+命令:git）
+- 20:18 结论写入手册 §16.11（证据链、三层阻塞、两个已修缺陷、复跑入口）（源:文件:PROJECT_OVERVIEW.zh-CN.md）
+- 20:18 终态: blocked（方向 1 通过；方向 2 待手表人工重连后跑 `python3 tests/cross_device_e2e.py`）
