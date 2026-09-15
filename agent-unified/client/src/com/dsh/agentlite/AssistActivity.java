@@ -127,10 +127,10 @@ public class AssistActivity extends Activity {
         if (recorder != null && recorder.isRecording()) {
             recorder.stopToWav();
         }
+        // 走**进程内**通道传任务：Intent extra 会暴露给任意应用（安全审查 P0-1）
+        MainActivity.setPendingTask(task);
         Intent it = new Intent(this, MainActivity.class);
         it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-        it.putExtra("task", task);
-        it.putExtra("auto_run", true);
         startActivity(it);
         finish();
     }

@@ -10,6 +10,11 @@ public class NodeInfo {
     public String text = "", desc = "", id = "", cls = "";
     public boolean clickable, scrollable;
     public int cx, cy;
+    /** 密码/验证码框：采集时已置空文本，这里再记一次，供提示词出口做兜底（P0-2）。 */
+    public boolean secret;
+
+    /** 密码框在提示词里的占位符（保留节点、不泄露内容）。 */
+    public static final String SECRET_MASK = "····（密码框，内容不采集）";
 
     public String label() {
         String l = (text + " " + desc).trim();
@@ -51,10 +56,26 @@ public class NodeInfo {
     }
 
     private static void appendLine(StringBuilder b, NodeInfo ni) {
+        // 出网前统一过一遍脱敏（密码框标记 + 验证码形态兜底，P0-2）
+        String label = ni.secret ? SECRET_MASK : sanitizeForPrompt(ni.label());
         b.append('[').append(ni.index).append("] ")
-         .append(ni.label()).append(" @")
+         .append(label).append(" @")
          .append(ni.cx).append(',').append(ni.cy).append(' ')
          .append(ni.id).append('\n');
+    }
+
+    /**
+     * 出网前兜底：把疑似凭据形态的文本换成占位符（P0-2）。
+     *
+     * <p>采集层已经用 {@code isPassword()} 掩码，这里是**第二道**——防止将来新增
+     * 采集路径（别的 Service / 纯视觉 OCR）绕过第一道。宁可让模型看不到验证码，
+     * 也不能把短信验证码送到云端。
+     */
+    public static String sanitizeForPrompt(String s) {
+        if (s == null || s.isEmpty()) return "";
+        // 4~8 位纯数字（短信验证码）与显式密码框标记
+        if (s.matches("^\\d{4,8}$")) return SECRET_MASK;
+        return s;
     }
 
     /** 变化指纹：全节点加权哈希，任何可见内容变化都能被看门狗感知。 */

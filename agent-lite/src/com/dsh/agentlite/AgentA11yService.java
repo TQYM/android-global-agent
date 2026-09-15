@@ -274,14 +274,26 @@ public class AgentA11yService extends AccessibilityService {
         try {
             CharSequence text = n.getText();
             CharSequence desc = n.getContentDescription();
+            // 密码/验证码框：**绝不采集其文本**（安全审查 2026-09-15 P0-2）。
+            // 节点本身必须保留——模型需要知道"这里有个输入框可以点"，
+            // 但内容会被送到模型服务，明文密码/短信验证码一旦出网就无法收回。
+            boolean secret = false;
+            try {
+                secret = n.isPassword();
+            } catch (Exception ignored) { }
+            if (secret) {
+                text = null;
+                desc = null;
+            }
             boolean interesting = n.isClickable() || n.isScrollable()
                     || (text != null && text.toString().trim().length() > 0)
                     || (desc != null && desc.toString().trim().length() > 0);
             if (interesting && out.size() < 400) {
                 NodeInfo ni = new NodeInfo();
                 ni.index = out.size();
-                ni.text = text == null ? "" : text.toString().trim();
+                ni.text = text == null ? (secret ? NodeInfo.SECRET_MASK : "") : text.toString().trim();
                 ni.desc = desc == null ? "" : desc.toString().trim();
+                ni.secret = secret;
                 ni.id = n.getViewIdResourceName() == null ? "" : n.getViewIdResourceName();
                 ni.cls = n.getClassName() == null ? "" : shortName(n.getClassName().toString());
                 ni.clickable = n.isClickable();

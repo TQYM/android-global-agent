@@ -66,13 +66,53 @@ public class ScreenGlowView extends View {
     }
 
     @Override
+    protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+        super.onSizeChanged(w, h, oldw, oldh);
+        resolveCornerRadius(w, h);
+    }
+
+    /**
+     * 解析屏幕物理圆角半径。
+     *
+     * <p><b>为什么不能只靠 WindowInsets</b>：Overlay 窗口（TYPE_ACCESSIBILITY_OVERLAY）拿到的
+     * insets 里 {@code getRoundedCorner()} 常常是 null——真机实测（OnePlus 13T / ColorOS 16）
+     * 光晕圆角只有 ~83px，而系统实际圆角是 **154px**，四角因此明显不贴合屏幕轮廓。
+     *
+     * <p>取值顺序：① 系统资源 {@code android:dimen/rounded_corner_radius}（AOSP 标准名，
+     * 多数 ROM 保留）→ ② 按屏幕短边比例估算（实测本机 154/1216 ≈ 12.7%，取 12% 作通用值）。
+     */
+    private void resolveCornerRadius(int w, int h) {
+        if (cornerRadius > 0 || w <= 0 || h <= 0) return;
+        try {
+            android.content.res.Resources sys = android.content.res.Resources.getSystem();
+            int id = sys.getIdentifier("rounded_corner_radius", "dimen", "android");
+            if (id > 0) {
+                int px = sys.getDimensionPixelSize(id);
+                if (px > 0) {
+                    cornerRadius = px;
+                    return;
+                }
+            }
+        } catch (Throwable ignored) { }
+        cornerRadius = Math.min(w, h) * 0.12f;   // 兜底：短边 12%（本机实测 12.7%）
+    }
+
+    @Override
     public WindowInsets onApplyWindowInsets(WindowInsets insets) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && insets != null) {
             try {
-                RoundedCorner tl = insets.getRoundedCorner(RoundedCorner.POSITION_TOP_LEFT);
-                if (tl != null && tl.getRadius() > 0) {
-                    cornerRadius = tl.getRadius();
+                // 四角都要看：只读左上角时，若该角半径与其它角不同（或系统只上报部分角），
+                // 光晕圆角就会与屏幕轮廓错位。取最大值与屏幕外轮廓对齐最稳。
+                int[] positions = {
+                        RoundedCorner.POSITION_TOP_LEFT, RoundedCorner.POSITION_TOP_RIGHT,
+                        RoundedCorner.POSITION_BOTTOM_LEFT, RoundedCorner.POSITION_BOTTOM_RIGHT,
+                };
+                int best = 0;
+                for (int pos : positions) {
+                    RoundedCorner c = insets.getRoundedCorner(pos);
+                    if (c != null && c.getRadius() > best) best = c.getRadius();
                 }
+                if (best > 0) cornerRadius = best;
             } catch (Throwable ignored) {}
         }
         return super.onApplyWindowInsets(insets);
@@ -100,14 +140,15 @@ public class ScreenGlowView extends View {
         int h = getHeight();
         if (w <= 0 || h <= 0) return;
 
-        // 若系统未返回圆角，自适应默认设备典型圆角（约 34dp）
-        float radius = cornerRadius > 0 ? cornerRadius : dp(34f);
+        resolveCornerRadius(w, h);
+        float radius = cornerRadius > 0 ? cornerRadius : Math.min(w, h) * 0.12f;
 
         if (pausedMode) {
             // 接管/暂停态：仅保留精致全屏素色贴边轮廓，提示任务未终止
             float halfBorder = dp(1.5f);
             rectInner.set(halfBorder, halfBorder, w - halfBorder, h - halfBorder);
-            canvas.drawRoundRect(rectInner, radius, radius, paintBorder);
+            float rPaused = Math.max(0f, radius - halfBorder);
+            canvas.drawRoundRect(rectInner, rPaused, rPaused, paintBorder);
             return;
         }
 
@@ -120,7 +161,10 @@ public class ScreenGlowView extends View {
         paintOuter.setColor((glowColor & 0x00FFFFFF) | (alphaOuter << 24));
         paintOuter.setStrokeWidth(outerStroke);
         rectOuter.set(outerStroke / 2f, outerStroke / 2f, w - outerStroke / 2f, h - outerStroke / 2f);
-        float radiusOuter = Math.max(0f, radius - outerStroke / 4f);
+        // 同心几何：矩形四边各内缩 stroke/2，圆角半径也必须同比减 stroke/2，
+        // 才能与屏幕物理圆角保持平行。原先减 stroke/4，圆角处与屏幕轮廓错位约 3dp
+        // （560dpi ≈ 10px）——真机上就是"特效四角不贴合"（2026-09-15 用户反馈）。
+        float radiusOuter = Math.max(0f, radius - outerStroke / 2f);
         canvas.drawRoundRect(rectOuter, radiusOuter, radiusOuter, paintOuter);
 
         // 内层聚焦光环
@@ -128,7 +172,7 @@ public class ScreenGlowView extends View {
         paintInner.setColor((glowColor & 0x00FFFFFF) | (alphaInner << 24));
         paintInner.setStrokeWidth(innerStroke);
         rectInner.set(innerStroke / 2f, innerStroke / 2f, w - innerStroke / 2f, h - innerStroke / 2f);
-        float radiusInner = Math.max(0f, radius - innerStroke / 4f);
+        float radiusInner = Math.max(0f, radius - innerStroke / 2f);
         canvas.drawRoundRect(rectInner, radiusInner, radiusInner, paintInner);
     }
 }

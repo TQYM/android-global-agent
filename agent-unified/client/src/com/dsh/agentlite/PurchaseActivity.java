@@ -22,7 +22,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 充值页：跳百炼官方购买 → 回来自动创建 API Key。
+ * 充值页：跳 DeepSeek 官方充值 → 控制台创建 API Key → 回本页粘贴校验。
  *
  * <p>设计见 `docs/PURCHASE_REDIRECT_DESIGN.zh-CN.md`。对外表现是
  * **「前台只跳出付款界面，其余全自动」**，用户唯一的手动步骤是在**官方页面**点确认支付。
@@ -43,9 +43,19 @@ import java.util.List;
  */
 public final class PurchaseActivity extends Activity {
 
-    /** 大语言模型推理资源包（token 资源包）的官方购买页商品码。 */
-    private static final String BUY_URL =
-            "https://common-buy.aliyun.com/?commodityCode=sfm_llminference_spn_public_cn";
+    /**
+     * 默认充值对象：**DeepSeek 开放平台**（2026-09-15 用户决策，替换原百炼链路）。
+     *
+     * <p>与百炼的关键差别：DeepSeek **没有**「用 AK/SK 自动创建 API Key」的公开接口，
+     * 所以流程从「自动创建」改为「跳官方充值 → 控制台建 Key → 回本页粘贴 + 应用内校验」。
+     * 少了一步自动化，但少了一整套 AK/SK 凭据（对用户更安全、更少概念）。
+     */
+    private static final String BUY_URL = "https://platform.deepseek.com/top_up";
+    /** 充值后在这里创建 API Key。 */
+    private static final String KEYS_URL = "https://platform.deepseek.com/api_keys";
+    /** DeepSeek 的 OpenAI 兼容入口与默认模型（V4.1 Flash）。 */
+    private static final String DS_BASE_URL = "https://api.deepseek.com/v1";
+    private static final String DS_MODEL = "deepseek-flash";
 
     /**
      * 缓动曲线：cubic-bezier(.23, 1, .32, 1)（emil-design-eng 的 --ease-out）。
@@ -144,9 +154,9 @@ public final class PurchaseActivity extends Activity {
     // ------------------------------------------------------------------
 
     private void renderPacks() {
-        tvPayHint.setText("购买方式：在百炼官方页面自行选择 token 资源包档位并完成支付。"
-                + "\n⚠ 资源包按模型名严格匹配（如 qwen-plus 资源包不抵扣 qwen-max），"
-                + "单模型模式下 App 只用一个模型，才能被同一个资源包抵扣。");
+        tvPayHint.setText("购买方式：在 DeepSeek 官方页面充值（按量计费），"
+                + "然后到「API Keys」页创建一把 Key 并粘贴到上方。"
+                + "\n当前默认模型：deepseek-flash（DeepSeek-V4.1-Flash），充值的余额按实际用量扣减。");
 
         packsContainer.removeAllViews();
         packsContainer.addView(infoCard("选择要在官方页面购买的档位",
@@ -188,7 +198,7 @@ public final class PurchaseActivity extends Activity {
         card.addView(t);
 
         TextView d = new TextView(this);
-        d.setText(note + "　·　点击后跳到百炼官方购买页");
+        d.setText(note + "　·　点击后跳到 DeepSeek 官方充值页");
         d.setTextColor(getColor(R.color.color_on_surface_variant));
         textSize(d, R.dimen.text_caption);
         d.setPadding(0, dimen(R.dimen.space_xs), 0, dimen(R.dimen.space_s));
@@ -236,81 +246,71 @@ public final class PurchaseActivity extends Activity {
 
     private void renderAkSection() {
         swSingleModel.setChecked(prefs.singleModelMode());
-        boolean hasAk = akStore.has();
-        tvAkLabel.setText(hasAk
-                ? "已配置 AccessKey：" + maskAkId(akStore.akId()) + "（仅存本机，Keystore 加密）"
-                : "阿里云 AccessKey（仅存本机，用于自动创建 API Key）");
-        etAkId.setText(hasAk ? akStore.akId() : "");
-        etAkId.setEnabled(!hasAk);
-        etAkId.setAlpha(hasAk ? 0.5f : 1.0f);
-        etCode.setText("");
-        // hint 要短到一屏放得下：字段名已在上方标签里，这里只补「怎么用 / 安不安全」。
-        // 此前 hint 里重复了字段名，在系统字体放大的档位上被截成「AccessKeySecret（只在本机加密」。
-        etCode.setHint(hasAk
-                ? "已保存（要更换请点下方按钮）"
-                : "仅存本机，绝不上传");
-        etCode.setEnabled(!hasAk);
-        etCode.setAlpha(hasAk ? 0.5f : 1.0f);
+        String saved = prefs.apiKey();
+        boolean hasKey = saved != null && !saved.isEmpty();
+        tvAkLabel.setText(hasKey
+                ? "已配置 DeepSeek API Key：" + maskAkId(saved) + "（仅存本机，Keystore 加密）"
+                : "DeepSeek API Key（仅存本机，Keystore 加密）");
+        // **不回显完整 Key**：界面明文显示会让截图/录屏/肩窥直接拿到凭据
+        // （安全审查 2026-09-15 P1-1 同一类问题）。已配置时只显示掩码且不可编辑。
+        etAkId.setText(hasKey ? maskAkId(saved) : "");
+        etAkId.setEnabled(!hasKey);
+        etAkId.setAlpha(hasKey ? 0.5f : 1.0f);
         Button btnSecondary = findViewById(R.id.btnCancel);
-        btnSecondary.setText(hasAk ? "更换 AccessKey" : "保存 AccessKey");
-        // 「录入 ↔ 已配置」切换不硬跳：文案与标签同步淡入
+        btnSecondary.setText(hasKey ? "更换 API Key" : "保存 API Key");
         fadeIn(tvAkLabel);
         fadeIn(btnSecondary);
     }
 
-    /** 只显示前 6 位与后 4 位——AccessKeyId 本身不是秘密，但也没必要整条展示。 */
+    /** 只显示前 6 位与后 4 位——API Key 是凭据，界面上没必要整条展示。 */
     private static String maskAkId(String id) {
         if (id == null || id.length() <= 12) return id == null ? "" : id;
         return id.substring(0, 6) + "……" + id.substring(id.length() - 4);
     }
 
-    /** 次级按钮：未配置时=保存 AccessKey；已配置时=清除后重新录入。 */
+    /** 次级按钮：未配置时=保存 API Key；已配置时=清除后重新录入。 */
     private void onSecondaryAction() {
-        if (akStore.has()) {
-            akStore.clear();
+        if (prefs.apiKey() != null && !prefs.apiKey().isEmpty()) {
+            prefs.setApiKey("");
+            prefs.setUseOwnKey(false);
             renderAkSection();
-            msg("已清除本地 AccessKey，请重新录入", false);
+            msg("已清除本机保存的 API Key", false);
             return;
         }
-        String id = etAkId.getText().toString().trim();
-        char[] secret = etCode.getText().toString().trim().toCharArray();
-        if (id.isEmpty() || secret.length == 0) {
-            msg("请填写 AccessKeyId 与 AccessKeySecret", true);
+        final String key = etAkId.getText().toString().trim();
+        if (key.isEmpty()) {
+            msg("请先粘贴 DeepSeek API Key（在「API Keys」页面创建后复制）", true);
             return;
         }
-        boolean ok = akStore.save(id, secret);
-        AkStore.wipe(secret);
-        etCode.setText("");
-        if (!ok) {
-            msg("保存失败：本机加密不可用，未写入任何明文", true);
-            return;
-        }
-        renderAkSection();
-        msg("AccessKey 已加密保存到本机。建议用 RAM 子账号，且只授予 modelstudio:CreateApiKey。", false);
+        busy = true;
+        msg("正在校验这把 Key…", false);
+        new Thread(() -> {
+            String err = validateKey(DS_BASE_URL, key, DS_MODEL);
+            runOnUiThread(() -> {
+                busy = false;
+                if (err != null) {
+                    msg("这把 Key 不可用：" + err + "\n请确认它来自 DeepSeek 控制台且账号有余额。", true);
+                    return;
+                }
+                prefs.setApiKey(key);
+                prefs.setUseOwnKey(true);      // 网关让路：用用户自己的额度
+                // 同步把直连地址与模型改成 DeepSeek，避免仍指向旧上游
+                prefs.sp.edit().putString("base_url", DS_BASE_URL)
+                        .putString("model", DS_MODEL).apply();
+                renderAkSection();
+                msg("已保存并验证可用：之后任务会用你自己的 DeepSeek 额度。", false);
+                toast("API Key 已启用");
+            });
+        }, "ds-validate-key").start();
     }
 
     // ------------------------------------------------------------------
     // 主流程：打开官方购买页 → 回来比对 → 自动创建
     // ------------------------------------------------------------------
 
+    /** 主流程（DeepSeek）：打开官方充值页 → 控制台创建 Key → 回本页粘贴校验。 */
     private void openOfficialBuyPage() {
-        if (!akStore.has()) {
-            msg("请先填写并保存 AccessKey，否则购买后无法自动创建 API Key", true);
-            return;
-        }
-        // 打开购买页**之前**取快照：这是判定"是否真的新增了 Key"的唯一基线
-        msg("正在记录当前 Key 状态…", false);
-        BailianClient.list(this, new BailianClient.ListCallback() {
-            @Override public void onOk(List<PurchaseFlow.KeyInfo> keys) {
-                pendingSnapshot = new PurchaseFlow.Snapshot(keys, System.currentTimeMillis());
-                launchBuyUrl();
-            }
-            @Override public void onErr(String message, boolean retryable) {
-                // 拿不到基线就**不能**推进：没有基线时的"新增判定"是无意义的
-                msg("无法读取当前 Key 列表（" + message + "）。"
-                        + (retryable ? "请检查网络后重试。" : "请先在设置页确认 AccessKey 有效。"), true);
-            }
-        });
+        launchBuyUrl();
     }
 
     private void launchBuyUrl() {
@@ -318,74 +318,35 @@ public final class PurchaseActivity extends Activity {
             Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(BUY_URL));
             i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             startActivity(i);
-            msg("已打开百炼官方购买页：请自行选择档位并完成支付，付款后返回本页。", false);
+            msg("已打开 DeepSeek 充值页：选择金额完成支付后，回到本页点「去创建 API Key」。", false);
         } catch (Throwable t) {
             msg("无法打开浏览器，请手动访问：" + BUY_URL, true);
         }
     }
 
-    /** 回到本页后：查官方侧是否真的多了 Key。 */
-    private void checkAfterPurchase() {
-        busy = true;
-        msg("正在确认购买结果…", false);
-        BailianClient.list(this, new BailianClient.ListCallback() {
-            @Override public void onOk(List<PurchaseFlow.KeyInfo> keys) {
-                PurchaseFlow.Decision d = PurchaseFlow.evaluate(pendingSnapshot, keys);
-                switch (d.verdict) {
-                    case NEW_KEY_FOUND:
-                        pendingSnapshot = null;
-                        msg("已确认官方侧新增了 API Key，正在启用…", false);
-                        // 列表接口拿不到 Key 明文（只有 id/时间/描述），所以这里显式创建一把，
-                        // 语义明确、结果可预期；代价是账号里会多一把 Key，属可接受取舍。
-                        createKey();
-                        break;
-                    case NO_BASELINE:
-                        busy = false;
-                        pendingSnapshot = null;   // 没有基线，只能重来一轮
-                        msg(d.reason, true);
-                        break;
-                    default:
-                        // 没新增：**不推进**。可能还没付款，也可能刚付完尚未落账。
-                        busy = false;
-                        msg(d.reason + "（如果你已付款，请稍等几秒后点「重新检查」）", false);
-                        break;
-                }
-            }
-            @Override public void onErr(String message, boolean retryable) {
-                // 保留快照：用户可点「重新检查」再比对一次，不必重开购买页
-                busy = false;
-                msg("确认购买结果失败：" + message + (retryable ? "（可点「重新检查」再试）" : ""), true);
-            }
-        });
+    /** 打开 DeepSeek 的 API Keys 页（充值后在这里创建 Key）。 */
+    private void launchKeysUrl() {
+        try {
+            Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(KEYS_URL));
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(i);
+            msg("已打开 DeepSeek 的 API Keys 页：点「创建 API Key」，"
+                    + "复制生成的 sk-… 后回到本页粘贴到上方输入框并保存。", false);
+        } catch (Throwable t) {
+            msg("无法打开浏览器，请手动访问：" + KEYS_URL, true);
+        }
     }
 
-    /**
-     * 调 CreateApiKey → **校验 → 才写入** → 置位官方购买模式。
-     *
-     * <p>顺序是刻意的：**校验在写入之前**。若先写 Prefs 再校验，一旦 Key 不可用，
-     * 客户端就停在一个最坏的中间态——标记为官方购买、网关已让路、但 Key 是废的，
-     * 既不能走我方额度也不能直连。宁可什么都不写。
-     */
-    private void createKey() {
-        msg("正在创建 API Key…", false);
-        BailianClient.create(this, null, new BailianClient.Callback() {
-            @Override public void onOk(BailianClient.CreatedKey key) {
-                // ⚠️ 成功判定已在 BailianClient 内写死：必须 Success==true 且 Key 非空
-                validateThenCommit(key.apiKeyValue);
-            }
-            @Override public void onErr(String message, boolean retryable) {
-                busy = false;
-                msg("创建 API Key 失败：" + message
-                        + (retryable ? "（可重试）" : "（需先修正配置）"), true);
-            }
-        });
+    /** 次按钮「去创建 API Key」：直接引导到控制台建 Key（DeepSeek 无自动创建接口）。 */
+    private void checkAfterPurchase() {
+        launchKeysUrl();
     }
 
     /** 写入前先发一次真实请求验证这把 Key 确实可用。 */
     private void validateThenCommit(final String newKey) {
         msg("正在校验新 Key 是否可用…", false);
-        final String base = prefs.baseUrl();
-        final String model = prefs.model();
+        final String base = DS_BASE_URL;
+        final String model = DS_MODEL;
         new Thread(() -> {
             String err = validateKey(base, newKey, model);
             runOnUiThread(() -> {
@@ -393,8 +354,9 @@ public final class PurchaseActivity extends Activity {
                 if (err == null) {
                     prefs.setApiKey(newKey);
                     prefs.setUseOwnKey(true);      // 网关让路：用户用自己的额度
-                    msg("完成：API Key 已创建并验证可用，已切换到官方购买模式"
-                            + "（使用你自己的百炼额度）。", false);
+                    prefs.sp.edit().putString("base_url", DS_BASE_URL)
+                            .putString("model", DS_MODEL).apply();
+                    msg("完成：API Key 已验证可用，之后任务用你自己的 DeepSeek 额度。", false);
                     toast("API Key 已启用");
                     renderAkSection();
                     showOrderArea();

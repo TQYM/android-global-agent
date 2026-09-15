@@ -344,6 +344,14 @@ public class AgentA11yService extends AccessibilityService {
         }
         String text = cs(n.getText());
         String desc = cs(n.getContentDescription());
+        // 密码/验证码框不采集文本（安全审查 2026-09-15 P0-2，与 agent-lite 同步）。
+        // 节点保留（模型需要知道这里能输入），内容换成占位符。
+        try {
+            if (n.isPassword()) {
+                text = "····（密码框，内容不采集）";
+                desc = "";
+            }
+        } catch (Exception ignored) { }
         boolean clickable = n.isClickable();
         boolean scrollable = n.isScrollable();
         if (clickable || scrollable || !text.isEmpty() || !desc.isEmpty()) {

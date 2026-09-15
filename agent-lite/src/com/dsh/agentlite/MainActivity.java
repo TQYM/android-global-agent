@@ -698,6 +698,21 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
         ui.post(this::showAskDialogIfNeeded);
     }
 
+    /**
+     * 进程内任务传递（AssistActivity → MainActivity）。
+     *
+     * <p><b>为什么不用 Intent extra</b>：本 Activity 是 `exported="true"` 的启动器入口，
+     * 任何已安装应用都能构造 `--es task "…" --ez auto_run true` 让无障碍代理**自动执行**
+     * 一段它指定的任务（安全审查 2026-09-15 P0-1：confused deputy / 本地提权）。
+     * 改成进程内静态通道后，外部 Intent 里即使带 task/auto_run 也不会被采纳。
+     */
+    private static volatile String sPendingTask;
+
+    /** 仅供进程内组件（AssistActivity）调用：登记待执行任务。 */
+    static void setPendingTask(String task) {
+        sPendingTask = task;
+    }
+
     private void handleIntent(android.content.Intent it) {
         if (it == null) return;
         // 复用已在前台的实例（singleTask）时不会走 onResume：这里补一次状态刷新，
@@ -709,14 +724,15 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
                 ui.postDelayed(() -> A11yLauncher.open(this), 600);
             }
         }
-        String task = it.getStringExtra("task");
+        // 任务只从**进程内通道**取；Intent 里的 task/auto_run 一律忽略（P0-1）。
+        // 外部来源即使伪造 extra，也只能启动界面，无法驱动引擎。
+        String task = sPendingTask;
+        sPendingTask = null;
         if (task != null && !task.trim().isEmpty()) {
             etTask.setText(task.trim());
-            if (it.getBooleanExtra("auto_run", false)) {
-                ui.postDelayed(() -> {
-                    if (btnRun != null && !engine.isRunning()) btnRun.performClick();
-                }, 300);
-            }
+            ui.postDelayed(() -> {
+                if (btnRun != null && !engine.isRunning()) btnRun.performClick();
+            }, 300);
         }
     }
 
