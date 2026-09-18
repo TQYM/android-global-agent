@@ -1433,4 +1433,6 @@ ColorOS 也没有可退回的系统识别服务（`voice_recognition_service=nul
   → 加 network_security_config + 路径兼容（源:命令:adb logcat -s AgentUI）
 - 18:38 **端到端打通**：adb 触发录音 → Mac 转写（4.1s 音频 0.63s）→ App 填框并自动执行任务（源:命令:Mac 服务日志+adb logcat）
 - 18:45 提交 8e92b10/21d30ed；§16.14 + §9 坑表入库；`make check` 全绿（源:命令:git+make check）
-- 18:46 终态: done（遗留：设置页无「ASR 端点」输入框；Mac 关机/换网则语音不可用，但不影响任务执行）
+- 18:50 **真机语音验证通过**：Mac 扬声器播 TTS「打开蓝牙设置」→ 手机录音 → 转写（8.7s 音频 0.66s）
+  → App 自动执行并成功打开蓝牙设置页（源:命令:Mac 服务日志+命令:adb logcat）
+- 18:52 终态: done（遗留：设置页无「ASR 端点」输入框；Mac 关机/换网则语音不可用，但不影响任务执行）
