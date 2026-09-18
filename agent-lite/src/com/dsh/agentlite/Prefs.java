@@ -216,6 +216,24 @@ public final class Prefs {
         return v == null ? "" : v;
     }
 
+    /**
+     * 独立 ASR 端点（形如 {@code http://192.168.1.108:18888/v1}），空 = 沿用 LLM 通道。
+     *
+     * <p>存在的原因见 {@code LlmClient#transcribe}：语音曾经复用主模型的音频能力，上游换成
+     * DeepSeek 后该能力消失，语音输入就整条失效且用户毫无提示。独立端点让 ASR 与 LLM 解耦，
+     * 可以指向局域网离线转写服务（{@code tools/asr_server.py}）或任何 OpenAI 兼容 ASR。
+     */
+    public String asrBaseUrl() {
+        String v = sp.getString("asr_base_url", "");
+        return v == null ? "" : v.trim();
+    }
+
+    /** 独立 ASR 密钥；空 = 沿用主 key（局域网离线服务不需要）。 */
+    public String asrApiKey() {
+        String v = sp.getString("asr_api_key", "");
+        return v == null ? "" : v.trim();
+    }
+
     public void setRootMode(String m) { sp.edit().putString("root_mode", m).apply(); }
 
     // ---- 远程信息同步（agentlite-server） ----

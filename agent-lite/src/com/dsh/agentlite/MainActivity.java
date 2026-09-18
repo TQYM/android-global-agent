@@ -483,7 +483,7 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
             new Thread(() -> {
                 try {
                     LlmClient c = new LlmClient(prefs.baseUrl(), prefs.apiKey(), prefs.model());
-                    String text = c.transcribe(wav, prefs.asrModel());
+                    String text = c.transcribe(wav, prefs.asrModel(), prefs.asrBaseUrl(), prefs.asrApiKey());
                     if (text.isEmpty()) { onLog("识别结果为空"); return; }
                     onLog("[语音输入] " + text);
                     ui.post(() -> {

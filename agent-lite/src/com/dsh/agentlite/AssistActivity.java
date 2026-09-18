@@ -102,7 +102,7 @@ public class AssistActivity extends Activity {
         new Thread(() -> {
             try {
                 LlmClient c = new LlmClient(prefs.baseUrl(), prefs.apiKey(), prefs.model());
-                String text = c.transcribe(wav, prefs.asrModel());
+                String text = c.transcribe(wav, prefs.asrModel(), prefs.asrBaseUrl(), prefs.asrApiKey());
                 ui.post(() -> {
                     btnMic.setText("按住说话");
                     if (text == null || text.trim().isEmpty()) {

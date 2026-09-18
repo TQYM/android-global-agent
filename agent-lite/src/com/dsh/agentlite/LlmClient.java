@@ -364,7 +364,25 @@ public class LlmClient {
 
     /** 语音转文字。asrModel 为空 → 主模型 Omni 原生音频输入；否则走 /audio/transcriptions。 */
     public String transcribe(byte[] wav, String asrModel) throws Exception {
-        if (asrModel == null || asrModel.isEmpty()) {
+        return transcribe(wav, asrModel, "", "");
+    }
+
+    /**
+     * 语音转文字（支持**独立 ASR 端点**）。
+     *
+     * <p>为什么要解耦（2026-09-18 实测）：语音原先复用「主模型原生音频输入」，上游换成
+     * DeepSeek 之后该能力消失——`input_audio` 被 400 拒绝（只认 text / image_url / file），
+     * `/audio/transcriptions` 也返回 404，而设备上 `asr_model` 为空 → 语音输入直接失效，
+     * 用户界面上看不出任何原因。把 ASR 独立出来后，再换 LLM 上游也不影响语音。
+     *
+     * @param asrBase 独立 ASR 端点（如 {@code http://192.168.1.108:18888/v1}）；为空则沿用 LLM 通道
+     * @param asrKey  独立 ASR 密钥；为空则沿用主 key
+     */
+    public String transcribe(byte[] wav, String asrModel, String asrBase, String asrKey) throws Exception {
+        String asrDedicated = asrBase == null ? "" : asrBase.trim().replaceAll("/+$", "");
+        boolean dedicated = !asrDedicated.isEmpty();
+        String asrK = (asrKey == null || asrKey.isEmpty()) ? apiKey : asrKey;
+        if (!dedicated && (asrModel == null || asrModel.isEmpty())) {
             // DashScope 兼容模式要求 data-URI 形式，裸 base64 会被 400 拒绝
             String b64 = "data:;base64,"
                     + android.util.Base64.encodeToString(wav, android.util.Base64.NO_WRAP);
@@ -403,8 +421,11 @@ public class LlmClient {
         out.writeBytes("Content-Disposition: form-data; name=\"model\"\r\n\r\n" + asrModel + "\r\n");
         out.writeBytes("--" + boundary + "--\r\n");
         out.flush();
-        JSONObject resp = post("/audio/transcriptions", buf.toByteArray(),
-                "multipart/form-data; boundary=" + boundary);
+        JSONObject resp = dedicated
+                ? postOnce(asrDedicated, asrK, "/audio/transcriptions", buf.toByteArray(),
+                           "multipart/form-data; boundary=" + boundary, false)
+                : post("/audio/transcriptions", buf.toByteArray(),
+                       "multipart/form-data; boundary=" + boundary);
         if (resp.has("error")) {
             throw new Exception("ASR 错误: " + resp.getJSONObject("error").optString("message"));
         }
