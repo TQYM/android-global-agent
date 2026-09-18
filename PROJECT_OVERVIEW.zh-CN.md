@@ -1075,6 +1075,28 @@ ColorOS 也没有可退回的系统识别服务（`voice_recognition_service=nul
 - ⚠ **安全**：`asr_api_key` 目前与 `api_key` 一样**明文落 SharedPreferences**，属安全审查 P1-7
   的同一类问题，后续应与 `api_key`/`lan_key` 一起迁 Keystore。
 
+### 16.16 项目进度推到灵动岛（文件桥，2026-09-18）
+
+用户要求「把当前项目进度推到灵动岛上」。实现刻意避开 P0-A1 那条安全线：
+
+- **`ProgressBridge`**：每 3 秒读 `getExternalFilesDir()/project_progress.txt` 的**一行文本**，
+  内容变化时调到灵动岛胶囊；文件不存在/为空则收起。桥在 `AgentA11yService` 连上时启动。
+- **`OverlayController.showProgressNote/hideProgressNote`**：既有的 `progress(text)` 带
+  `taskActive` 判断，只在任务执行期间生效，空闲时显示不了这类常驻信息，故新增一对方法。
+- **为什么用文件而不是广播/Intent**：P0-A1 之后外部 Intent（含 `task`/`auto_run` extra）一律被忽略，
+  就是为了防止任意 App 一条 intent 驱动无障碍代理。文件是「进程外**只写数据、不触发行为**」的
+  最小通道，且必须 App 主动轮询才生效；删掉文件即回到常态。
+
+用法（进度文本建议 ≤18 字，胶囊很窄）：
+
+```bash
+adb shell "echo '语音✓GLM✓ 测试25/40' > /sdcard/Android/data/com.dsh.agentlite/files/project_progress.txt"
+adb shell "rm /sdcard/Android/data/com.dsh.agentlite/files/project_progress.txt"   # 收起
+```
+
+真机验证（OnePlus 13T）：胶囊显示「● 语音✓GLM✓ 测试25/40 ↻」，日志
+`进度已推送到灵动岛：语音✓GLM✓ 测试25/40`。提交 `6d5f9f6`。
+
 ### 2026-09-13 00:54 +08 · 会话 33f50b22 · 新建 project-work-log skill
 - 00:52 考察 skill 机制：~/.dsh/skills 为安装目录、workspace skills/ 为源副本（源:命令:diff/ls）
 - 00:53 编写 skills/project-work-log/SKILL.md 并安装至 ~/.dsh/skills/（源:用户请求）
