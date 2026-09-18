@@ -11,7 +11,8 @@
 # Mac 重启后服务不会自己回来，用这个脚本一条命令拉起；手机端的 ASR 端点填脚本打印的地址。
 set -eu
 
-VENV="${ASR_VENV:-/tmp/asr-venv}"
+# venv 放 ~/.cache 而不是 /tmp：/tmp 重启即丢，上次就是这么"过一天又不行"的
+VENV="${ASR_VENV:-$HOME/.cache/asr-venv}"
 MODEL="${ASR_MODEL:-$HOME/.cache/asr-models/whisper-medium-mlx-4bit}"
 PORT="${ASR_PORT:-18888}"
 LOG="${ASR_LOG:-/tmp/asr_server.log}"
