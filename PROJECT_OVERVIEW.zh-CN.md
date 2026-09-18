@@ -1006,6 +1006,45 @@ ColorOS 也没有可退回的系统识别服务（`voice_recognition_service=nul
 **遗留**：设置页还没有「ASR 端点」输入框（现在靠 `su` 写 `asr_base_url`），应补 UI——
 补上后用户即可在手机上自查端点与连通性，不必每次找开发者。
 
+### 16.15 语音转写改为**手机本地离线**（whisper.cpp，2026-09-18 定稿）
+
+> 用户两条硬约束：**不要 root**、**不要依赖 Mac**。本节方案是在这两条约束下的最终形态。
+
+**为什么要第三次返工**：§16.14 把 ASR 解耦成独立端点后指向了 Mac 上的 whisper 服务——
+结果 Mac 一关机/换网/换 IP 语音立刻失效。实测故障现场：Mac 的 `en0` 变成 `10.127.194.126`
+（不在 192.168.1.x），手机连着 `B607`，`ping` 100% 丢包，App 只能报「连不上 ASR 服务」。
+
+**现在的架构：whisper.cpp 直接编进 APK，完全离线**
+
+| 组成 | 说明 |
+|---|---|
+| 原生库 | `libwhisper.so` / `libggml{,-base,-cpu}.so` / `libagentasr.so` / `libc++_shared.so` → `lib/arm64-v8a/`（APK 0.2MB → **18.6MB**） |
+| JNI | `agent-lite/jni/whisper_jni.cpp`，自写；**不复用**官方 `examples/whisper.android` 的 Kotlin/Gradle，保持「纯 Java + 手写构建」 |
+| 入口 | `AsrRouter` 三级回退：**本地离线** → 独立 ASR 端点 → 主模型音频。任一环失效都不会让语音整条哑掉 |
+| 模型 | `ggml-small-q5_1`（181MB），**首次下载一次**，之后永久离线（服务器 / hf-mirror 双源，也可直接放进 `getExternalFilesDir`） |
+| 预热 | App 启动时 `AsrRouter.warmUp()`，免掉首次说话的模型加载等待 |
+| 重建 | `sh tools/build-asr-libs.sh`（全量）或 `--jni-only`（只重链 JNI） |
+
+**真机验证（OnePlus 13T，关闭 Wi-Fi 与移动数据）**
+
+| 阶段 | 结果 |
+|---|---|
+| 首版 | `本地转写: 5.9s 音频 → 8.6s：打开设置` ✓ |
+| 关掉温度回退重试 + 6 线程 | `本地转写: 6.1s 音频 → 6.5s：打开计算器` ✓ |
+
+**三个必须记住的坑**（已固化进 `tools/build-asr-libs.sh` 与 manifest）
+
+1. **必须 `-DGGML_OPENMP=OFF`**：whisper.cpp 默认开 OpenMP，而 NDK 不提供 `libomp.so`，
+   运行期报 `UnsatisfiedLinkError: dlopen failed: library "libomp.so" not found`——
+   更坑的是它被上层日志误报为「本地转写库未打包（ABI 不匹配）」，把排查方向带偏。
+2. **必须 `android:extractNativeLibs="true"`**：ggml 的 CPU 后端是**运行时 dlopen**，
+   库若留在 APK 内（系统对已对齐的库会跳过解压）它找不到。
+3. 本机 `make`/`git` 走 Xcode 工具链会因「未同意 license」直接失败 → 脚本内导出 `DEVELOPER_DIR`。
+
+**已知限制**：6.5s / 6.1s ≈ **1.07× 实时**，偏慢；换 `ggml-base-q5_1`（60MB）约可再快 2 倍、
+准确率略降（`WhisperAsr.MODEL_FILE` 一行即可切换）。设置页仍缺「离线模型管理」入口
+（下载/切换/显示当前模型），应补 UI。
+
 ### 2026-09-13 00:54 +08 · 会话 33f50b22 · 新建 project-work-log skill
 - 00:52 考察 skill 机制：~/.dsh/skills 为安装目录、workspace skills/ 为源副本（源:命令:diff/ls）
 - 00:53 编写 skills/project-work-log/SKILL.md 并安装至 ~/.dsh/skills/（源:用户请求）
@@ -1457,3 +1496,18 @@ ColorOS 也没有可退回的系统识别服务（`voice_recognition_service=nul
 - 18:43 核对文中 13 处行号证据（AgentEngine/Prefs/MemoryStore/Makefile/OverlayController）全部准确（源:命令:sed 抽样核对）
 - 18:43 方案索引写入手册 §10 待办（源:文件:PROJECT_OVERVIEW.zh-CN.md:218）
 - 18:43 终态: done（未动任何代码；待用户评审后决定是否落 P0）
+
+### 2026-09-18 20:00 +08 · 项目:agent-lite +repo · 会话:3340f9c6 · 语音转写改手机本地离线
+- 20:00 用户定下两条硬约束「不要 root」「不要依赖 Mac」→ 语音方案重定（源:用户请求）
+- 20:05 定位语音失效真因：Mac 已换网（en0=10.127.194.126），与手机（192.168.1.110）不同网段、ping 100% 丢包（源:命令:ip/arp/ping）
+- 20:10 ASR 服务层压测 20/20 通过（平均 0.66s）→ 排除服务本身问题（源:测试:5 段音频×4 轮）
+- 20:20 定方案：whisper.cpp 编进 APK（完全离线、零外部依赖）；NDK 26 + cmake 3.22 交叉编译（源:命令:cmake）
+- 20:30 自写 JNI（whisper_jni.cpp）+ WhisperAsr/AsrRouter（三级回退：本地→独立端点→主模型音频）（源:文件:agent-lite/jni+src）
+- 20:35 坑①：NDK 不带 libomp.so → UnsatisfiedLinkError，且被上层日志误报成「ABI 不匹配」→ -DGGML_OPENMP=OFF 重编（源:文件:engine.log）
+- 20:45 坑②：ggml 的 CPU 后端运行时 dlopen，库留在 APK 内找不到 → manifest 加 extractNativeLibs="true"（源:文件:AndroidManifest.xml）
+- 21:00 模型 ggml-small-q5_1（181MB）推入设备；APK 0.2MB → 18.6MB（6 个 .so）（源:命令:adb push+unzip -l）
+- 21:05 **断网验证通过**：关闭 Wi-Fi 与移动数据后仍识别出「打开设置」（源:测试:engine.log 本地转写行）
+- 21:10 优化推理：关温度回退重试 + 6 线程 → 5.9s 音频由 8.6s 降到 6.1s→6.5s（源:文件:whisper_jni.cpp）
+- 21:15 固化 tools/build-asr-libs.sh（三个坑写进注释与默认值）；提交 b4871a1；make check 全绿（源:命令:git+make check）
+- 21:20 手册 §16.15 记录架构/真机验证/坑/限制（源:文件:PROJECT_OVERVIEW.zh-CN.md）
+- 21:22 终态: done（待办：base 模型提速选项；设置页补「离线模型管理」UI）
