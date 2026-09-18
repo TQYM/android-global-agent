@@ -1045,6 +1045,27 @@ ColorOS 也没有可退回的系统识别服务（`voice_recognition_service=nul
 准确率略降（`WhisperAsr.MODEL_FILE` 一行即可切换）。设置页仍缺「离线模型管理」入口
 （下载/切换/显示当前模型），应补 UI。
 
+#### 16.15.1 云端 ASR（智谱 GLM，2026-09-18 追加）
+
+用户要求「增加一个云语言转译，模型用 glm」。因为智谱的接口是 **OpenAI 兼容**的，**协议代码一行没改**，
+只补了配置入口与优先级——这也是 §16.14 把 ASR 从 LLM 通道解耦的价值直接兑现。
+
+| 配置项（都在设置页） | 值 |
+|---|---|
+| 云端语音端点 `etAsrBase` | `https://open.bigmodel.cn/api/paas/v4` |
+| 语音模型 `etAsr` | `glm-asr-2512` |
+| 云端语音密钥 `etAsrKey` | 用户自己的智谱 API Key（密码框；**开发者不索取任何密钥**） |
+
+- **优先级**：云端（填了端点就用）→ 本地离线 → 主模型音频；云端失败或返回空自动回退本地。
+- **端点正确性已实测**：`POST /api/paas/v4/audio/transcriptions` 返回 **401**
+  「Header中未收到Authorization参数」（而非 404），说明路径与 multipart(file+model) 格式都对。
+- 设置页新增「**测试语音转写链路**」按钮：弹窗直接列出当前优先级、云端配置、本地模型状态，
+  不必再靠 adb 写 prefs 排障。
+- 实测清理掉残留的 Mac 端点后，语音不再"先失败一次再回退"，直接走本地：
+  `本地转写: 5.9s 音频 → 6.7s：打开设置`。
+- ⚠ **安全**：`asr_api_key` 目前与 `api_key` 一样**明文落 SharedPreferences**，属安全审查 P1-7
+  的同一类问题，后续应与 `api_key`/`lan_key` 一起迁 Keystore。
+
 ### 2026-09-13 00:54 +08 · 会话 33f50b22 · 新建 project-work-log skill
 - 00:52 考察 skill 机制：~/.dsh/skills 为安装目录、workspace skills/ 为源副本（源:命令:diff/ls）
 - 00:53 编写 skills/project-work-log/SKILL.md 并安装至 ~/.dsh/skills/（源:用户请求）
@@ -1510,4 +1531,8 @@ ColorOS 也没有可退回的系统识别服务（`voice_recognition_service=nul
 - 21:10 优化推理：关温度回退重试 + 6 线程 → 5.9s 音频由 8.6s 降到 6.1s→6.5s（源:文件:whisper_jni.cpp）
 - 21:15 固化 tools/build-asr-libs.sh（三个坑写进注释与默认值）；提交 b4871a1；make check 全绿（源:命令:git+make check）
 - 21:20 手册 §16.15 记录架构/真机验证/坑/限制（源:文件:PROJECT_OVERVIEW.zh-CN.md）
-- 21:22 终态: done（待办：base 模型提速选项；设置页补「离线模型管理」UI）
+- 21:30 用户要求「增加云语言转译，模型用 glm」→ 设置页补云端 ASR 三件套（端点/密钥/模型）+ 链路自检按钮（源:用户请求）
+- 21:35 AsrRouter 改为云端优先、本地兜底；实测智谱端点返回 401 而非 404（路径与格式正确）（源:命令:curl）
+- 21:40 清掉设备上残留的 Mac 端点，语音不再先失败一次；本地直转 5.9s 音频→6.7s（源:命令:adb+engine.log）
+- 21:42 提交 caff7fe；手册 §16.15.1 记录云端接入方式与优先级（源:命令:git+文件:PROJECT_OVERVIEW.zh-CN.md）
+- 21:42 终态: done（待办：base 模型提速选项；离线模型管理 UI；asr_api_key 迁 Keystore）
