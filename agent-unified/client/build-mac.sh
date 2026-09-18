@@ -150,6 +150,15 @@ find "$BUILD/classes" -name "*.class" > "$BUILD/classes.txt"
 cp "$BUILD/unsigned.apk" "$BUILD/aligned.apk"
 (cd "$BUILD/dex" && zip -q -u ../aligned.apk classes*.dex)
 
+# 5.5) 打包离线语音转写的原生库（whisper.cpp）：APK 里的 lib/<abi>/*.so 必须原样存放，
+#      故用 -0 不压缩（可直接 mmap，启动更快）。库由 tools/build-asr-libs.sh 产出。
+if [ -d vendor/asr/lib/arm64-v8a ]; then
+  (cd vendor/asr && zip -q -0 -u "../../$BUILD/aligned.apk" lib/arm64-v8a/*.so)
+  echo "已打包离线转写库: $(ls vendor/asr/lib/arm64-v8a/*.so | wc -l | tr -d ' ') 个 .so"
+else
+  echo "⚠ 未找到 vendor/asr/lib/arm64-v8a：本次构建**不含**离线语音转写（语音将走在线通道）"
+fi
+
 # 6) zipalign + sign (debug key persisted at agent-lite/debug.keystore — build/ 每次被清空，
 #    密钥若放 build/ 内会每轮换随机密钥导致设备无法覆盖安装)
 "$ZIPALIGN" -f 4 "$BUILD/aligned.apk" "$BUILD/aligned4.apk"

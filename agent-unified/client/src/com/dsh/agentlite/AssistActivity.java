@@ -101,8 +101,8 @@ public class AssistActivity extends Activity {
         btnMic.setText("识别中…");
         new Thread(() -> {
             try {
-                LlmClient c = new LlmClient(prefs.baseUrl(), prefs.apiKey(), prefs.model());
-                String text = c.transcribe(wav, prefs.asrModel(), prefs.asrBaseUrl(), prefs.asrApiKey());
+                // 转写走统一入口：本地离线 whisper 优先，其次端点，最后主模型音频
+                String text = AsrRouter.transcribe(this, prefs, wav);
                 ui.post(() -> {
                     btnMic.setText("按住说话");
                     if (text == null || text.trim().isEmpty()) {

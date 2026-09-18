@@ -125,6 +125,7 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
         }
 
         prefs = new Prefs(this);
+        AsrRouter.warmUp(this);   // 预热离线转写模型，首次说话就不用等加载
         engine = AgentEngine.get(this);
         engine.setListener(this);
 
@@ -482,8 +483,8 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
             onLog("识别中…");
             new Thread(() -> {
                 try {
-                    LlmClient c = new LlmClient(prefs.baseUrl(), prefs.apiKey(), prefs.model());
-                    String text = c.transcribe(wav, prefs.asrModel(), prefs.asrBaseUrl(), prefs.asrApiKey());
+                    // 转写走统一入口：本地离线 whisper 优先，其次独立端点，最后主模型音频
+                    String text = AsrRouter.transcribe(this, prefs, wav);
                     if (text.isEmpty()) { onLog("识别结果为空"); return; }
                     onLog("[语音输入] " + text);
                     ui.post(() -> {

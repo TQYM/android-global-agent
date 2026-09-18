@@ -71,3 +71,6 @@ ios/App/build/
 # make check 临时目录与 Python 缓存
 /.check-tmp/
 __pycache__/
+
+# 离线语音转写的原生库与模型（构建产物，见 build-mac.sh）
+agent-lite/vendor/asr/lib/
