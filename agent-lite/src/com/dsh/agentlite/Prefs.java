@@ -30,6 +30,20 @@ public final class Prefs {
     public String model()       { return sp.getString("model", DevConfig.MODEL); }
     // asrModel() 见下方「单模型模式」节（受单模型收敛影响）
     public boolean vision()     { return sp.getBoolean("vision", true); }
+
+    /**
+     * **无限制模式**：自动同意「服务条款 / 隐私政策 / 用户协议」弹窗（默认**开启**）。
+     *
+     * <p>⚠️ 开启意味着 Agent 会替你点「同意并继续」，即**代替你作出法律授权**，而这类同意
+     * 通常**不可逆**（你等于接受了未曾阅读的条款）。这是用户 2026-09-18 明确要求取消该限制
+     * 后的行为；把本开关关掉即回到「暂停并把控制权交还用户」的安全默认。
+     *
+     * <p>注意范围：只覆盖**协议类**弹窗。支付/转账/验证码/删除数据等其它红线各有其规则，
+     * 不受本开关影响。
+     */
+    public boolean autoAcceptTerms() { return sp.getBoolean("auto_accept_terms", true); }
+
+    public void setAutoAcceptTerms(boolean v) { sp.edit().putBoolean("auto_accept_terms", v).apply(); }
     public int maxSteps()       {
         int v = sp.getInt("max_steps", 50);
         if (v == 20 || v == 30 || v == 100) {

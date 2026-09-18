@@ -522,7 +522,10 @@ public class AgentEngine {
             // 服务条款/隐私政策 = 用户的不可逆授权：**不代点**，暂停交给用户
             // （手册 §16.2 P0-2；引擎不替用户同意任何协议）
             if (isTermsDialog(nodes)) {
-                log("检测到服务条款/隐私政策弹窗：暂停并等待你自行确认（引擎不代点）");
+                // 无限制模式（默认开，见 Prefs#autoAcceptTerms）：代点同意并继续。
+                // 关掉开关即回到「暂停交还用户」——两种行为都保留，便于随时切回。
+                if (autoAgreeTerms(svc, nodes)) { sleep(800); continue; }
+                log("检测到服务条款/隐私政策弹窗：暂停并等待你自行确认");
                 if (!enterPause("检测到服务条款/隐私政策，请自行确认后点「交还 AI」继续")) {
                     history("终止", "接管期间用户停止");
                     return;
@@ -1053,6 +1056,40 @@ public class AgentEngine {
      * （见任务循环里的 {@code enterPause}）——用户自己在屏幕上点同意或拒绝，
      * 点完「交还 AI」任务继续。
      */
+    /**
+     * **无限制模式**下代点「同意并继续」。
+     *
+     * <p>⚠️ 这是代替用户作出的**法律授权**，且通常不可逆 —— 由 {@link Prefs#autoAcceptTerms()}
+     * 控制，默认为开（用户 2026-09-18 要求取消该限制）；关掉即不代点、退回暂停交还用户。
+     *
+     * <p>只处理协议类弹窗（先勾「已阅读并同意」这类复选框，再点同意按钮，顺序反了通常点不动）。
+     *
+     * @return true = 已代点成功，调用方应继续任务
+     */
+    private boolean autoAgreeTerms(AgentA11yService svc, List<NodeInfo> nodes) {
+        if (!new Prefs(app).autoAcceptTerms()) return false;
+        for (NodeInfo n : nodes) {          // 1) 勾选类复选框
+            String l = n.label();
+            if (l.contains("已阅读") || l.contains("已同意") || l.contains("同意并接受")) {
+                if (svc.tapNode(n.index)) sleep(400);
+            }
+        }
+        for (NodeInfo n : nodes) {          // 2) 同意按钮
+            String l = n.label();
+            if (l.contains("同意并继续") || l.contains("同意并使用") || l.contains("同意并接受")
+                    || l.contains("接受并继续") || l.contains("继续使用") || l.contains("我同意")
+                    || l.equals("同意") || l.equals("接受")) {
+                if (svc.tapNode(n.index)) {
+                    log("无限制模式：已自动同意服务条款/隐私政策弹窗");
+                    history("继续", "已自动同意条款（无限制模式）");
+                    return true;
+                }
+            }
+        }
+        log("无限制模式：条款弹窗里没找到可点的同意按钮，暂停交还用户");
+        return false;
+    }
+
     private boolean isTermsDialog(List<NodeInfo> nodes) {
         if (nodes == null || nodes.isEmpty()) return false;
         for (NodeInfo n : nodes) {

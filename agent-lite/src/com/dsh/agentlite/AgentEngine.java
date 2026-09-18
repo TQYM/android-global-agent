@@ -522,7 +522,10 @@ public class AgentEngine {
             // 服务条款/隐私政策 = 用户的不可逆授权：**不代点**，暂停交给用户
             // （手册 §16.2 P0-2；引擎不替用户同意任何协议）
             if (isTermsDialog(nodes)) {
-                log("检测到服务条款/隐私政策弹窗：暂停并等待你自行确认（引擎不代点）");
+                // 无限制模式（默认开，见 Prefs#autoAcceptTerms）：代点同意并继续。
+                // 关掉开关即回到「暂停交还用户」——两种行为都保留，便于随时切回。
+                if (autoAgreeTerms(svc, nodes)) { sleep(800); continue; }
+                log("检测到服务条款/隐私政策弹窗：暂停并等待你自行确认");
                 if (!enterPause("检测到服务条款/隐私政策，请自行确认后点「交还 AI」继续")) {
                     history("终止", "接管期间用户停止");
                     return;
@@ -588,7 +591,8 @@ public class AgentEngine {
                 // ——2026-09-18「让 Agent 给朋友圈点赞做不到」的直接原因就是图标被缩到 ~16px，模型只能盲点。
                 // 故这类场景提高分辨率与质量：token 会变多，但没有别的信息可用。
                 boolean a11yBlind = zeroNodeSteps >= 1 || nodes.size() < 5;
-                String dataUrl = bmpToDataUrl(bmp, a11yBlind ? 1000 : 480, a11yBlind ? 75 : 45);
+                // 纯视觉时用原始宽度：点赞/收藏这类图标只有几十像素，任何缩放都会让它认不出来
+                String dataUrl = bmpToDataUrl(bmp, a11yBlind ? 1216 : 480, a11yBlind ? 78 : 45);
                 if (dataUrl != null) {
                     shotFails = 0;
                     int lum = meanLuma(bmp);
@@ -609,6 +613,8 @@ public class AgentEngine {
                                 "tap/longpress 用 px,py（0~1 比例），swipe 用 px1,py1,px2,py2。\n" +
                                 "关键守则：\n" +
                                 "1. 点中心：点击目标按钮/搜索框/Tab 的几何中心，不要点在边缘；\n" +
+                                "1b. 位置先验（实测很有用）：顶部标题栏中心约 y≈0.05~0.06；**底部标签栏/导航栏的"
+                                        + "可点区域约 y≈0.89~0.94**，再往下（y>0.96）是系统手势条，点了不会有任何反应；\n" +
                                 "2. 禁止重复点击：每次执行动作后页面必须有变化；若上一动作未生效，切勿重复点击同一区域，立即尝试轻微调整坐标或滑动(swipe)寻找；\n" +
                                 "3. 键盘输入：看到输入框焦点已亮起时直接使用 text 动作，如果无效使用 key 动作；\n" +
                                 "4. 支付/密码/验证码等敏感环节必须 ask 请用户操作。";
@@ -1050,6 +1056,40 @@ public class AgentEngine {
      * （见任务循环里的 {@code enterPause}）——用户自己在屏幕上点同意或拒绝，
      * 点完「交还 AI」任务继续。
      */
+    /**
+     * **无限制模式**下代点「同意并继续」。
+     *
+     * <p>⚠️ 这是代替用户作出的**法律授权**，且通常不可逆 —— 由 {@link Prefs#autoAcceptTerms()}
+     * 控制，默认为开（用户 2026-09-18 要求取消该限制）；关掉即不代点、退回暂停交还用户。
+     *
+     * <p>只处理协议类弹窗（先勾「已阅读并同意」这类复选框，再点同意按钮，顺序反了通常点不动）。
+     *
+     * @return true = 已代点成功，调用方应继续任务
+     */
+    private boolean autoAgreeTerms(AgentA11yService svc, List<NodeInfo> nodes) {
+        if (!new Prefs(app).autoAcceptTerms()) return false;
+        for (NodeInfo n : nodes) {          // 1) 勾选类复选框
+            String l = n.label();
+            if (l.contains("已阅读") || l.contains("已同意") || l.contains("同意并接受")) {
+                if (svc.tapNode(n.index)) sleep(400);
+            }
+        }
+        for (NodeInfo n : nodes) {          // 2) 同意按钮
+            String l = n.label();
+            if (l.contains("同意并继续") || l.contains("同意并使用") || l.contains("同意并接受")
+                    || l.contains("接受并继续") || l.contains("继续使用") || l.contains("我同意")
+                    || l.equals("同意") || l.equals("接受")) {
+                if (svc.tapNode(n.index)) {
+                    log("无限制模式：已自动同意服务条款/隐私政策弹窗");
+                    history("继续", "已自动同意条款（无限制模式）");
+                    return true;
+                }
+            }
+        }
+        log("无限制模式：条款弹窗里没找到可点的同意按钮，暂停交还用户");
+        return false;
+    }
+
     private boolean isTermsDialog(List<NodeInfo> nodes) {
         if (nodes == null || nodes.isEmpty()) return false;
         for (NodeInfo n : nodes) {
@@ -1257,14 +1297,6 @@ public class AgentEngine {
                 }
                 int[] xy = resolvePoint(svc, a, currentNodes);
                 pushTap(xy[0], xy[1]);
-                // 应用屏蔽无障碍时（微信是典型），它同样会**忽略无障碍注入的手势**：
-                // dispatchGesture 报告成功、引擎以为点到了，目标 App 却毫无反应 → 模型反复盲点
-                // 直到震荡看门狗判无进展（2026-09-18 微信朋友圈点赞卡的正是这一步，日志里
-                // 反复出现同一个坐标 tap@753,2521，而同一坐标用 shell 注入点击是有效的）。
-                // 因此纯视觉场景优先走 root 注入（input tap，shell 级），手机有 root 时立即可用。
-                if (visionOnly && RootShell.available(app) && RootShell.tap(xy[0], xy[1])) {
-                    return "tap(root)@" + xy[0] + "," + xy[1];
-                }
                 if (!svc.tap(xy[0], xy[1])) {
                     if (RootShell.available(app) && RootShell.tap(xy[0], xy[1])) {
                         return (a.has("index") ? "tap#" + a.optInt("index") : "tap") + "(root)@" + xy[0] + "," + xy[1];
