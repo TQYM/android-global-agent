@@ -199,6 +199,8 @@ sh build-mac.sh
 | KernelSU 授权后 App 仍提示无 root | `RootShell.sAvailable` 静态缓存永久记住 false | 探测缓存改 15s TTL + 沙盒按钮点击时强制重探 |
 | 荣耀平板无障碍总是掉 | MagicOS 在 force-stop / 覆盖安装后清空 `enabled_accessibility_services` | 重新 `settings put` 即可；**不要 force-stop**（正常启动不影响） |
 | 模型要"打开设置"报未知页 | `SETTINGS_PAGES` 没有通用 `settings` 别名 | 补 `settings → ACTION_SETTINGS` |
+| 无线 adb 报 `No route to host`，但 `nc -z IP 端口` 明明是通的 | adb server 缓存了上一次的失败状态（2026-09-18 两次踩到，手机换无线调试端口后尤其容易） | `adb kill-server && adb start-server` 再 `adb connect IP:端口`，一次即通 |
+| 语音按钮录音正常、就是识别不出字 | ASR 随 LLM 上游换成 DeepSeek 而失效（无音频能力）；即便指向明文 http 端点，Android 也会拦 `Cleartext HTTP traffic` | 见 §16.14：独立 ASR 端点 + `tools/asr_start.sh` + network_security_config |
 
 ---
 
@@ -763,7 +765,72 @@ T2 验收：20 个任务中记录动作序列；“打开计算器”不得出�
 - 每条任务日志必须同时记录：模型输出、引擎拒绝/改写、实际执行、复验结果和最终失败分类；否则无法判断是模型问题还是软件问题。
 - 只把“用户目标已验证”定义为成功；模型说 `done`、HTTP 200、指令已下发、页面发生变化都只能算中间证据。
 
-### 16.11 跨设备双向测试（2026-09-15 晚，手机 PKX110 ↔ 手表 OWW261）
+### 16.13 极细复盘：更新后仍需优先修复的问题（2026-09-16 18:57）
+
+本节只记录本次逐文件复核后仍可确认的风险，不重复把已修复事项列为待办。判断依据：最新工作日志、当前源码搜索结果、已记录真机证据和门禁结果。Xcode 检查因未接受 license 退出码 69，属于环境阻塞，不等同于 Android 功能通过。
+
+#### P0/P1 发布前问题
+
+1. **用户 API Key 仍是明文 SharedPreferences（P1）**
+   - `agent-lite/src/com/dsh/agentlite/Prefs.java:29,65,74` 仍直接读取/写入 `api_key`；现有 `TokenStore` 只覆盖账号令牌。`PurchaseActivity` 虽然不再完整回显 Key，但存储本身仍可被 root、备份或调试路径取得。
+   - 最小修复：新增独立 `ApiKeyStore`，使用 Keystore AES-GCM；迁移成功后删除旧 `api_key`，Keystore 失败禁止退化明文；设置页只显示掩码，统一清除和换 Key 流程。
+
+2. **局域网密钥仍是明文 SharedPreferences（P1）**
+   - `LanSync.java:102,110` 将 `lan_key` Base64 明文落盘；该密钥用于设备间加密，泄露后可解密/伪造局域网同步流量。
+   - 最小修复：复用 Keystore 封装存储二进制密钥，迁移完成后删除明文；补重启、升级和跨设备互通测试。
+
+3. **`ask` 超时仍可能回灌为普通模型输入（P1）**
+   - `AgentEngine.askUser()` 超时返回“用户未回答或超时”，调用方随后把返回值加入下一轮消息；模型可能把“未回答”误当成许可或继续执行。
+   - 最小修复：超时返回结构化 `USER_TIMEOUT`，立即进入暂停/拒绝终态；只有用户明确提交的回答才允许进入决策上下文。超时验收必须证明敏感动作未执行。
+
+4. **Lite 的 `open_url` 仍需确认与冻结完整白名单（P1）**
+   - 当前 `AgentEngine` 执行 URL 的入口虽已在部分路径加校验，但 Lite 与冻结版 `agent-client` 的校验实现不完全同源；URL/自定义 scheme 是提示注入和误触外部应用的高风险边界。
+   - 最小修复：共享纯 Java `ActionValidator`；默认只允许 `https/http`（http 仅本机白名单）与明确登记的 scheme；拒绝 `javascript:`, `file:`, `content:` 和嵌套控制字符；门禁逐项测试。
+
+5. **前台通知仍可能泄露任务内容或状态（P1）**
+   - `KeepAliveService` 部分通知使用 `VISIBILITY_PUBLIC`；任务标题、步骤或账号状态可能出现在锁屏。项目自身已将部分 Guard 通知设为 `SECRET`，但两处策略不一致。
+   - 最小修复：默认 `VISIBILITY_SECRET`，锁屏只显示“Agent 正在运行”；用户主动解锁后才显示任务摘要。补 Android 版本和厂商锁屏实机检查。
+
+6. **剪贴板残留需确认 Lite 与冻结客户端一致（P1）**
+   - 当前证据显示冻结 `agent-client` 已有 `clipboardDirty` 和终态清理，而 Lite 代码仍存在剪贴板写入路径；跨副本搜索不能把 agent-client 的修复当成 Lite 已修。
+   - 最小修复：Lite 写入时标记 dirty，任务所有终态（done/fail/stop/exception/timeout）统一 `finally` 清理；只清除本引擎写入的内容，不能误删用户剪贴板；补真实密码/验证码任务验证。
+
+7. **跨设备发送前能力探测不足（P1）**
+   - 手机→手表已验证下发/拉取，但手表→手机曾受 a11y、输入和 USB 调试状态阻塞；如果发送端只看设备列表在线，仍可能发送后才失败。
+   - 最小修复：设备心跳上报 `a11y_connected`、`can_input`、`can_execute`、`last_seen` 和客户端版本；发送前短路能力不足，并给用户可执行修复步骤。
+
+8. **服务端注册防刷仍偏弱（P1）**
+   - `agentlite-server` 仍以 IP 滑动窗口限注册；IPv6、代理池和分布式来源可绕过。注册赠送额度会消耗真实上游 Key，存在批量盗刷风险。
+   - 最小修复：设备/账号/安装实例多维限流，注册挑战或邮箱/设备证明（按产品隐私要求选择）；对单账号每日上游预算设硬上限，并在异常时自动停发额度。
+
+9. **服务端额度扣减需要幂等和故障补偿审计（P1）**
+   - 网关先读上游响应再扣额度；若扣账落盘失败或响应重试，可能出现“上游已收费、平台未扣”或重复扣账。日志有错误记录，但未见面向请求的幂等 ID/补偿状态。
+   - 最小修复：为每次请求生成 `request_id`，记录上游结果、usage、扣账状态和重试次数；扣账采用幂等键，失败进入可重放的 pending ledger，不静默丢失。
+
+#### P2 功能与工程问题
+
+10. **发布清单与工作区事实不一致风险**：当前状态存在大量修改/新增文件，且 `git status` 检查本身受 Xcode license 命令链干扰；应拆分读取命令，不要因组合命令失败而误判仓库状态。发布时锁定源码 commit、tag、APK/服务端 SHA-256 和模型配置摘要。
+11. **iOS 环境检查应隔离**：Xcode license 未接受导致退出码 69；`make check` 应把 iOS 检查独立为 `make ios-check`，主 Android 门禁不应被无关 Apple 环境阻断。
+12. **任务历史缺少机器可检索失败分类**：目前历史和日志以文本为主；应增加 `failure_class`、`channel`、`model`、`step`、`request_id`、`evidence` 字段，供基线工具准确统计。
+13. **成功率数据可能混入环境假失败**：`force-stop` 会清理无障碍绑定，历史记录已有假性 timeout；测试脚本虽增加补绑定和分类，报告必须分离 `env:a11y`、`channel`、`model_or_env`，不能合并成模型成功率。
+14. **设置页仍暴露过多技术配置**：低门槛守则虽已建档，普通用户仍可能看到模型、同步地址、Token 统计、API Key 等高级项；应默认折叠，并显示当前通道/费用承担方，而不是内部参数。
+
+#### 面向 DeepSeek 4.1 Flash 的极细指导
+
+- **输入**：每轮只注入最新快照、目标、完成判据、当前设备能力和上一动作结果；历史只保留必要的失败摘要，避免把过多日志交给 Flash。
+- **决策**：应用启动优先 `app`；设备名/型号/序号命中时强制 `remote`；包名不明先 `list_apps`；不允许应用商店搜索/安装替代“打开应用”。
+- **输出**：只允许一个 JSON，动作/字段/范围由引擎校验；建议动作绑定 `snapshot_id` 和 `expected_effect`，非法输出最多回灌一次。
+- **敏感**：支付、转账、发送、删除、协议授权、跨设备敏感动作由引擎强制 `ask`；模型不得通过解释文字绕过。
+- **完成**：`done` 必须绑定证据；HTTP 200、动作发出、远端领取、屏幕变化均只能算中间证据。
+- **评估**：固定模型 `deepseek-flash`、固定温度和最大输出，分开统计模型错误、环境错误、通道错误和用户拒绝；不要用混合失败率调提示词。
+
+#### 当前执行顺序
+
+1. 先修 `ApiKeyStore`、`lan_key`、`ask` 超时、剪贴板清理和锁屏通知脱敏。
+2. 再做跨设备发送前能力探测、注册防刷和额度幂等审计。
+3. 独立 iOS 检查与 Android 门禁；更新发布清单和任务历史结构。
+4. 修复后重新跑 20+8 真机任务、双向跨设备和 UX-1 五分钟首成功。
+
 
 > 复跑入口：`python3 tests/cross_device_e2e.py --check` → `python3 tests/cross_device_e2e.py`。
 > 结论只看**可核对的证据**（服务端指令审计 + 两端 engine.log + 目标设备前台包名），不采信模型自述。
@@ -802,6 +869,46 @@ T2 验收：20 个任务中记录动作序列；“打开计算器”不得出�
 手机若要切回自己的账号：App 内「设置 → 登录 / 切换账号」用原口令登录即可。
 
 
+
+### 16.14 极细复盘：更新后仍需优先修复的问题（2026-09-16 18:57）
+
+#### 已确认的新增进展
+
+- 跨设备令牌已从单令牌改为多令牌，上限 10 把；同账号双设备登录不再互踢。
+- 手表→手机、手机→手表均有成功记录；任务回环已修复，20 轮交叉测试回环次数为 0。
+- 额度不足时已能切换自备接口；服务端已强制流式 usage、限制赠送额度并增加并发闸门。
+- 密码节点脱敏、外部 Intent 驱动隔离、DeepSeek 充值流程改版、光晕贴合已有修复记录。
+
+#### 仍需优先处理的缺陷
+
+1. **用户 API Key 未加密存储（P1）**：`Prefs.java` 仍直接读写 `api_key`，现有 `TokenStore` 只保护账号令牌。应新增 `ApiKeyStore`，Keystore AES-GCM 迁移成功后删除明文，失败禁止降级。
+2. **局域网密钥未加密存储（P1）**：`LanSync.java` 仍将 `lan_key` Base64 写入普通偏好。应迁移到 Keystore，并验证重启、升级和双端互通。
+3. **ask 超时仍可能进入模型上下文（P1）**：超时文本可能被模型误当成许可。应改为结构化 `USER_TIMEOUT`，直接拒绝敏感动作，不得继续执行。
+4. **剪贴板清理需确认 Lite 真身实现（P1）**：冻结 `agent-client` 已有清理逻辑，但 Lite 仍有剪贴板写入路径；必须在 done/fail/stop/exception/timeout 统一 finally 清理，且不误删用户内容。
+5. **锁屏通知策略不一致（P1）**：部分保活通知可能显示任务标题或状态。默认应为 `VISIBILITY_SECRET`，锁屏仅显示“Agent 正在运行”。
+6. **跨设备发送前缺能力探测（P1）**：在线不等于 a11y、输入、执行和回报能力可用。发送前应检查 `last_seen/a11y_connected/can_input/can_execute/client_version`，不满足时提前给出修复步骤。
+7. **跨设备真实成功率仍偏低（P1）**：20 轮测试为 25/40 段通过；失败包含模型执行、手表能力边界和 a11y 掉线 78 次，必须分层统计，不能合并为模型成功率。
+8. **发布前安全遗留未关闭（P1）**：IME 权限范围、`agent-client` `allowBackup`、锁屏脱敏、剪贴板、Key 加密仍有待办，应建立发布阻断清单。
+9. **额度服务需要请求级幂等（P1）**：上游响应与扣账分离，重试或落盘失败可能重复扣账或漏记。应引入 `request_id`、幂等 ledger 和 pending/replay 状态。
+10. **注册赠送额度可能被批量刷取（P1）**：主要按 IP 限流，IPv6/代理池可绕过。应增加设备/安装实例/账号维度限制、每日预算和异常停发。
+11. **设置页仍有技术门槛（P2）**：API Key、模型、同步地址、Token 统计应默认折叠，普通路径只显示任务、登录、额度、权限和通道说明。
+12. **测试结果必须分层（P2）**：报告应拆分 `env:a11y`、`env:capability`、`model`、`channel`、`user`，不能用混合成功率指导 DeepSeek 提示词。
+13. **iOS 工具链应隔离（P2）**：Xcode license 未接受会退出码 69；应提供独立 `make ios-check`，不阻断 Android/Go 门禁。
+
+#### 下一步指导
+
+1. 先完成 `ApiKeyStore`、`lan_key`、ask 超时拒绝、剪贴板清理、锁屏通知脱敏。
+2. 再做跨设备能力探测和请求级额度幂等；重跑 20+8 场景并按失败分类出报告。
+3. 最后生成发布清单，绑定源码 commit、tag、APK/服务端 SHA-256、`deepseek-flash` 配置摘要。
+
+#### DeepSeek 4.1 Flash 针对性约束
+
+- Flash 只负责短决策，不负责安全授权、计费、权限和终态裁决。
+- 每轮只给最新快照、目标、完成判据、设备能力和上一步结果。
+- 设备名/型号命中必须 `remote`；打开应用优先 `app`；禁止用应用商店搜索替代启动。
+- 失败必须改变策略；连续同动作、同屏无变化和跨设备回环由引擎硬终止。
+- `done` 只接受可验证证据；HTTP 200、指令下发、远端领取和屏幕变化均是中间证据。
+- 固定模型、温度、最大输出和设备矩阵，分离模型失败与 a11y/能力/额度失败。
 
 ### 16.13 20 轮双端互相交叉测试（2026-09-15 21:44–22:26）
 
@@ -851,6 +958,41 @@ T2 验收：20 个任务中记录动作序列；“打开计算器”不得出�
 3. **relay 两跳是可靠的**：B 段失败全部发生在第一跳（手机模型没走 remote）或手机侧执行上，
    **第二跳（手表自主决策并 remote 回手机）18/18 成功**——「手表控制手机」这条链路本身没问题。
 4. 第 11 轮 A 段手表正确完成**多步**任务：「计算器已算出 7×8=56」（手表端连续点击可用）。
+
+### 16.14 语音输入修复：ASR 与 LLM 上游解耦（2026-09-18）
+
+**症状**：PKX110 上按语音按钮，录音正常（`appops` 记录 `RECORD_AUDIO allow` 5.8s），
+但识别不出任何文字；界面只留一句「语音识别失败」，**看不出原因**。
+
+**根因（实证，非推测）**：语音原先复用「主模型原生音频输入」，而上游已经切成 DeepSeek——
+- `POST /v1/chat/completions` 带 `input_audio` → 400：`unknown variant 'input_audio',
+  expected one of 'text', 'image_url', 'file'`
+- `POST /v1/audio/transcriptions` → 404
+
+设备上 `asr_model` 为空（走"主模型音频"分支）、`base_url = api.deepseek.com` ⇒ 语音必然失败。
+ColorOS 也没有可退回的系统识别服务（`voice_recognition_service=null`，`RECOGNIZE_SPEECH` 无接收者）。
+
+**修复（三处，缺一不可）**
+1. **解耦**：`LlmClient.transcribe(wav, model, asrBase, asrKey)` 支持独立 ASR 端点；
+   `Prefs.asrBaseUrl()/asrApiKey()` 缺省为空 = 原行为，向后兼容。以后再换 LLM 上游也不影响语音。
+2. **离线转写服务**：`tools/asr_server.py`（mlx-whisper + medium-4bit 489MB，跑在 Mac）。
+   手机录的正是 **16k 单声道 PCM16 WAV**，与 whisper 原生要求一致 ⇒ **不需要 ffmpeg**。
+   实测 **4 秒音频 0.63 秒出文本**。
+3. **放行局域网明文**：局域网 ASR 只能是 http，Android 默认拦（`Cleartext HTTP traffic to
+   192.168.1.108 not permitted`）——这是修复途中的第二个卡点，界面上同样看不出原因。
+   加 `res/xml/network_security_config.xml` 放开明文。
+   ⚠ **安全权衡**：这是全局放开（私网自签 HTTPS 不现实，`agentd-apk` 早用
+   `usesCleartextTraffic="true"`）；默认端点仍全为 https。要收紧就改成按域名白名单。
+
+**运维**
+- 启动：`sh tools/asr_start.sh start|stop|status`（脚本会打印手机该填的端点）。
+- 模型持久化在 `~/.cache/asr-models/whisper-medium-mlx-4bit/`（放 `/tmp` 重启会丢）。
+- 手机端独立 ASR 端点当前为 `http://192.168.1.108:18888/v1`（**Mac 换网/关机 = 语音不可用，
+  但不影响任务执行**——LLM 仍直连 DeepSeek）。
+- 国内拉模型：必须 `HF_ENDPOINT=https://hf-mirror.com`，且 **hub 的 xet 传输会超时**；
+  可靠办法是用 curl 分段（`-r start-end`）并行下载 `weights.npz` 再拼接（本机实测 0.6→2.2 MB/s）。
+
+**遗留**：设置页还没有「ASR 端点」输入框（现在靠 `su` 写 `asr_base_url`），应补 UI。
 
 ### 2026-09-13 00:54 +08 · 会话 33f50b22 · 新建 project-work-log skill
 - 00:52 考察 skill 机制：~/.dsh/skills 为安装目录、workspace skills/ 为源副本（源:命令:diff/ls）
@@ -1258,3 +1400,37 @@ T2 验收：20 个任务中记录动作序列；“打开计算器”不得出�
 - 22:52 复核四类证据发现漏采步数 → 新增 backfill 脚本按「一指令一任务」顺序回溯，补齐 33/40 段（源:文件:tests/results-cross-20.jsonl）
 - 22:56 cross_20_rounds.py 改为运行期原生采集步数（发起/执行/转达三类），报告重建、手册 §16.13 补口径（源:文件:tests/cross_20_rounds.py）
 - 22:58 终态: done（待办：手表 a11y 保活、A 段复位鲁棒性、跨设备任务矩阵按设备能力拆分）
+
+### 2026-09-16 18:57 +08 · 项目:repo · 会话:local · 更新后极细问题复盘
+- 18:57 读取最新跨设备、充值、DeepSeek、门禁与安全变更，确认多令牌、双向链路、回环修复和计费闸门已有进展（源:文件:PROJECT_OVERVIEW.zh-CN.md:727-796）
+- 18:57 复核源码仍存在用户 API Key/局域网密钥存储、ask 超时、剪贴板、锁屏通知、能力探测与额度幂等等软件风险（源:文件:agent-lite/src/com/dsh/agentlite；文件:agentlite-server）
+- 18:57 将最新 P1/P2 问题、DeepSeek 4.1 Flash 约束与下一步顺序写入手册 §16.14（源:文件:PROJECT_OVERVIEW.zh-CN.md:871）
+- 18:57 终态: done
+
+### 2026-09-18 17:45 +08 · 项目:repo +agentlite-server · 会话:local · 竞赛材料补齐与作品展示页上线
+- 17:45 首次运行检查：读项目清单与手册工作日志尾，确认本次属共享文档项目、展示页部署属服务端（源:文件:docs/PROJECTS.zh-CN.md）
+- 17:47 实测 ECS 80 端口公网可达：nginx 起站后 HTTP 200/0.16s（8888/39001 不可达 → 安全组按端口放行而非全开）（源:命令:curl+ssh）
+- 17:52 配套资源对话示例文档成稿：素材取自真机结果 results-advanced.jsonl / results-baseline.jsonl，含 8 个示例与真实动作序列（源:文件:竞赛材料/配套资源_对话示例.md）
+- 17:55 作品展示页上线 http://8.133.225.105，含 APK v0.6.0、对话示例页、开发流程图与运行原理图（源:命令:scp+curl 200）
+- 17:58 复核发现文档 AI 能力描述已过时：默认上游由百炼通义千问改为 DeepSeek（源:文件:agent-lite/build/gen/com/dsh/agentlite/DevConfig.java）
+- 17:59 另发现语音链路已解耦为独立 ASR 端点（9/18 实测 input_audio 被 400、/audio/transcriptions 404 致语音静默失效）（源:文件:agent-lite/src/com/dsh/agentlite/LlmClient.java）
+- 18:00 修正 开发文档 / 整合版 / 附件1(md+docx) 共 12 处过时描述，重生成两份 PDF（6 页、9 页）（源:步骤6+命令:Edge headless）
+- 18:00 产出提交包 9 文件并按「区-学校-作者-」命名；APK 敏感串扫描 0 命中（源:文件:竞赛材料/提交包/）
+- 18:02 修复致命运维隐患：nginx 开机自启原为 **disabled** —— ECS 一旦重启作品链接即失效，已 enable 并验证服务重启后仍 HTTP 200（源:命令:ssh+curl）
+- 18:02 终态: done（待用户本人：录制演示视频、手写签署原创声明与授权书）
+
+### 2026-09-18 17:30 +08 · 项目:agent-lite +repo · 会话:3340f9c6 · 无线 adb 接入 + 修复语音输入失效
+- 17:30 连 192.168.1.110:44121 报 `No route to host`（`nc` 证明端口其实通）→ `adb kill-server/start-server` 后一次连通（源:命令:adb connect）
+- 17:40 定位语音失效根因：上游换 DeepSeek 后无音频能力（`input_audio` 400、`/audio/transcriptions` 404），
+  而设备 `asr_model` 为空、走"主模型音频"分支 ⇒ 必然失败（源:命令:curl+adb prefs）
+- 17:50 确认 ColorOS 无系统识别服务（`voice_recognition_service=null`、`RECOGNIZE_SPEECH` 无接收者）
+  ⇒ 选本机离线 ASR 路线（源:命令:adb settings/pm list）
+- 18:00 改 App：`LlmClient.transcribe` 支持独立 ASR 端点 + `Prefs.asrBaseUrl/asrApiKey`（缺省 = 原行为）（源:文件:agent-lite/.../LlmClient.java）
+- 18:10 搭 `tools/asr_server.py`（mlx-whisper medium-4bit，OpenAI 兼容 `/audio/transcriptions`）（源:文件:tools/asr_server.py）
+- 18:20 模型下载踩坑：HF 直连超时→换 hf-mirror；hub 的 xet 传输超时→改 curl 分段并行（0.6→2.2MB/s）；
+  期间两个 curl 混写坏了文件，按字节数截断重下并 zip 校验（源:命令:curl）
+- 18:36 复验暴露两个卡点：Android 拦明文（`Cleartext HTTP traffic`）+ 服务端不认 `/v1` 前缀（404）
+  → 加 network_security_config + 路径兼容（源:命令:adb logcat -s AgentUI）
+- 18:38 **端到端打通**：adb 触发录音 → Mac 转写（4.1s 音频 0.63s）→ App 填框并自动执行任务（源:命令:Mac 服务日志+adb logcat）
+- 18:45 提交 8e92b10/21d30ed；§16.14 + §9 坑表入库；`make check` 全绿（源:命令:git+make check）
+- 18:46 终态: done（遗留：设置页无「ASR 端点」输入框；Mac 关机/换网则语音不可用，但不影响任务执行）
