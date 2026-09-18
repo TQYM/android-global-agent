@@ -27,6 +27,7 @@ public class SettingsActivity extends Activity {
 
     private Prefs prefs;
     private EditText etBase, etKey, etModel, etAsr, etPlanner, etMaxSteps, etRedeem, etSyncServer;
+    private EditText etAsrBase, etAsrKey;   // 云端语音（智谱 GLM 等）
     // 布局使用平台 Switch（已回归第一版 UI，不再依赖 Material 组件库）
     private Switch swVision;
     private Switch swSync;
@@ -64,6 +65,9 @@ public class SettingsActivity extends Activity {
         etKey = findViewById(R.id.etKey);
         etModel = findViewById(R.id.etModel);
         etAsr = findViewById(R.id.etAsr);
+        etAsrBase = findViewById(R.id.etAsrBase);
+        etAsrKey = findViewById(R.id.etAsrKey);
+        findViewById(R.id.btnAsrTest).setOnClickListener(v -> showAsrStatus());
         etPlanner = findViewById(R.id.etPlanner);
         etMaxSteps = findViewById(R.id.etMaxSteps);
         swVision = findViewById(R.id.swVision);
@@ -175,6 +179,8 @@ public class SettingsActivity extends Activity {
         // ⚠️ 必须用 raw 值：单模型模式下 asrModel()/plannerModel() 返回的是主模型名，
         // 直接回填会让用户一保存就把主模型名写进这两个字段，永久覆盖原配置。
         etAsr.setText(prefs.asrModelRaw());
+        etAsrBase.setText(prefs.asrBaseUrl());
+        etAsrKey.setText(prefs.asrApiKey());
         etPlanner.setText(prefs.plannerModelRaw());
         etMaxSteps.setText(String.valueOf(prefs.maxSteps()));
         swVision.setChecked(prefs.vision());
@@ -205,11 +211,38 @@ public class SettingsActivity extends Activity {
         }
     }
 
+    /** 「测试语音转写链路」：把当前生效的通道、本地模型状态、云端配置一次说清楚。 */
+    private void showAsrStatus() {
+        StringBuilder b = new StringBuilder();
+        String base = etAsrBase.getText().toString().trim();
+        String model = etAsr.getText().toString().trim();
+        b.append("当前优先级：云端 → 本地离线 → 主模型音频\n\n");
+        if (base.isEmpty()) {
+            b.append("· 云端：未配置（不启用）\n");
+        } else {
+            b.append("· 云端：").append(base).append("\n")
+             .append("  模型：").append(model.isEmpty() ? "（留空，需填 glm-asr-2512 之类）" : model).append("\n")
+             .append("  密钥：").append(etAsrKey.getText().toString().trim().isEmpty()
+                     ? "用主密钥" : "已单独填写").append("\n");
+        }
+        boolean libOk = WhisperAsr.available();
+        boolean modelOk = WhisperAsr.modelReady(this);
+        b.append("· 本地离线：").append(!libOk ? "库不可用" : modelOk ? "就绪（whisper.cpp，完全离线）" : "已装库，模型未下载")
+         .append("\n");
+        if (libOk && modelOk) {
+            b.append("  模型文件：").append(WhisperAsr.modelFile(this).length() / 1048576).append("MB\n");
+        }
+        b.append("\n提示：填了云端端点就用云端；留空则用本地离线，飞行模式下也能识别。");
+        new android.app.AlertDialog.Builder(this).setTitle("语音转写链路").setMessage(b.toString())
+                .setPositiveButton("知道了", null).show();
+    }
+
     private void saveCfg() {
         int steps = 50;
         try {
             steps = Integer.parseInt(etMaxSteps.getText().toString().trim());
         } catch (Exception ignored) { }
+        prefs.setAsrCloud(etAsrBase.getText().toString(), etAsrKey.getText().toString());
         prefs.save(etBase.getText().toString().trim(), etKey.getText().toString().trim(),
                 etModel.getText().toString().trim(), etAsr.getText().toString().trim(),
                 swVision.isChecked(), steps, prefs.systemPrompt());

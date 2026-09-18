@@ -32,6 +32,18 @@ public final class AsrRouter {
      * @return 识别文本（可能为空串，调用方按「识别结果为空」处理）
      */
     public static String transcribe(Context ctx, Prefs prefs, byte[] wav) throws Exception {
+        // 0) 云端 ASR（用户显式配了端点即优先用它：更快、更准，且不占手机算力）
+        String cloudBase = prefs.asrBaseUrl();
+        if (!cloudBase.isEmpty()) {
+            try {
+                LlmClient c = new LlmClient(prefs.baseUrl(), prefs.apiKey(), prefs.model());
+                String text = c.transcribe(wav, prefs.asrModel(), cloudBase, prefs.asrApiKey());
+                if (text != null && !text.isEmpty()) return text;
+                AgentEngine.staticLog("云端转写返回空，回退本地离线");
+            } catch (Throwable t) {
+                AgentEngine.staticLog("云端转写失败（" + t.getMessage() + "），回退本地离线");
+            }
+        }
         // 1) 本地离线
         if (localReady(ctx)) {
             try {

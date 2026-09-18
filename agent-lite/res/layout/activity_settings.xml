@@ -293,7 +293,7 @@
                 android:text=""/>
             <EditText
                 android:id="@+id/etAsr"
-                android:hint="语音模型（留空=主模型原生音频）"
+                android:hint="语音模型（glm-asr-2512=云端GLM；留空=本地离线优先）"
                 android:layout_width="match_parent"
                 android:layout_height="@dimen/input_h"
                 android:layout_marginTop="@dimen/space_s"
@@ -304,6 +304,51 @@
                 android:background="@drawable/bg_input"
                 android:paddingLeft="@dimen/space_m"
                 android:paddingRight="@dimen/space_m"/>
+            <EditText
+                android:id="@+id/etAsrBase"
+                android:hint="云端语音端点（如 https://open.bigmodel.cn/api/paas/v4）"
+                android:layout_width="match_parent"
+                android:layout_height="@dimen/input_h"
+                android:layout_marginTop="@dimen/space_s"
+                android:textSize="@dimen/text_body"
+                android:singleLine="true"
+                android:inputType="textUri"
+                android:textColor="@color/color_on_surface"
+                android:textColorHint="@color/color_text_hint"
+                android:background="@drawable/bg_input"
+                android:paddingLeft="@dimen/space_m"
+                android:paddingRight="@dimen/space_m"/>
+            <EditText
+                android:id="@+id/etAsrKey"
+                android:hint="云端语音密钥（智谱 API Key；留空则用上面的主密钥）"
+                android:layout_width="match_parent"
+                android:layout_height="@dimen/input_h"
+                android:layout_marginTop="@dimen/space_s"
+                android:textSize="@dimen/text_body"
+                android:singleLine="true"
+                android:inputType="textPassword"
+                android:textColor="@color/color_on_surface"
+                android:textColorHint="@color/color_text_hint"
+                android:background="@drawable/bg_input"
+                android:paddingLeft="@dimen/space_m"
+                android:paddingRight="@dimen/space_m"/>
+            <TextView
+                android:id="@+id/tvAsrHint"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_xs"
+                android:textSize="@dimen/text_caption"
+                android:textColor="@color/color_text_hint"
+                android:text="语音转写优先级：云端端点（填了就用）→ 本地离线模型 → 主模型音频"/>
+            <Button
+                android:id="@+id/btnAsrTest"
+                android:layout_width="match_parent"
+                android:layout_height="@dimen/btn_h"
+                android:layout_marginTop="@dimen/space_s"
+                android:background="@drawable/btn_ghost"
+                android:text="测试语音转写链路"
+                android:textSize="@dimen/text_body"
+                android:textColor="@color/color_on_surface"/>
             <EditText
                 android:id="@+id/etPlanner"
                 android:hint="语义规划模型（默认 qwen3.5-flash，留空=关闭规划）"

@@ -234,6 +234,20 @@ public final class Prefs {
         return v == null ? "" : v.trim();
     }
 
+    /**
+     * 保存**云端 ASR** 配置（端点 + 密钥）。两者其一为空即视为不使用云端，走本地离线模型。
+     *
+     * <p>典型值（智谱 GLM）：端点 {@code https://open.bigmodel.cn/api/paas/v4}、
+     * 模型 {@code glm-asr-2512}（填在 asr_model）。接口是 OpenAI 兼容的
+     * {@code POST /audio/transcriptions}（multipart: file + model），与 LlmClient 现有实现一致。
+     */
+    public void setAsrCloud(String baseUrl, String apiKey) {
+        sp.edit()
+                .putString("asr_base_url", baseUrl == null ? "" : baseUrl.trim())
+                .putString("asr_api_key", apiKey == null ? "" : apiKey.trim())
+                .apply();
+    }
+
     public void setRootMode(String m) { sp.edit().putString("root_mode", m).apply(); }
 
     // ---- 远程信息同步（agentlite-server） ----
