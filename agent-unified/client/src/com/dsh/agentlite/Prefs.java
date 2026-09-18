@@ -157,7 +157,9 @@ public final class Prefs {
      */
     public String asrModelRaw() {
         String v = sp.getString("asr_model", "");
-        return "glm-asr-2512".equals(v) ? "" : (v == null ? "" : v);
+        // 2026-09-18：glm-asr-2512 现在是**有效**的云端 ASR 模型（智谱），不再是"失效默认值"，
+        // 不能再被清空——否则设置页回填为空，用户看不到自己配过什么。
+        return v == null ? "" : v;
     }
 
     /** 视觉搭档模型：空 = 与主模型相同。 */
@@ -211,7 +213,10 @@ public final class Prefs {
      */
     public String asrModel() {
         String v = sp.getString("asr_model", "");
-        if ("glm-asr-2512".equals(v)) v = "";   // 旧默认值已失效，视为未配置
+        // 「单模型模式」原本把语音也收敛到主模型——只在**没有独立 ASR 通道**时才该这么做。
+        // 配了云端端点（asrBaseUrl 非空）却仍返回主模型名，会把 glm-asr-2512 覆盖成
+        // deepseek-flash，智谱直接报 1211「模型不存在」（2026-09-18 实测踩到）。
+        if (!asrBaseUrl().isEmpty()) return v == null ? "" : v;
         if (singleModelMode()) return model();
         return v == null ? "" : v;
     }
