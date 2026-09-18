@@ -94,10 +94,20 @@ check("UX-6", "「用户停止」不显示为失败",
 terms = re.search(r"private boolean isTermsDialog\(List<NodeInfo> nodes\)\s*\{(.*?)\n    \}", engine_java, re.S)
 terms_body = terms.group(1) if terms else ""
 # 注：注释里可以提到旧方法名（说明由来），要断言的是「方法定义/调用已不存在」
-check("UX-6", "条款/隐私弹窗只检测不代点（引擎不替用户同意协议）",
+# 2026-09-18 规范修订（SPEC_UX_001 §1.1）：用户要求「取消服务条款限制，改成完全无限制」，
+# 故不再断言"绝不代点"，改为断言**代点必须可配置且能退回安全默认**：
+#   ① isTermsDialog 仍只做检测（不掺点击逻辑）；
+#   ② 存在 autoAgreeTerms 代点方法；
+#   ③ 该方法内必须有 autoAcceptTerms() 开关短路 + return false（否则关不掉）。
+terms_auto = re.search(r"private boolean autoAgreeTerms\(.*?\)\s*\{(.*?)\n    \}", engine_java, re.S)
+terms_auto_body = terms_auto.group(1) if terms_auto else ""
+check("UX-6", "条款弹窗可代点，但**必须可关闭**（关掉即退回暂停交还用户）",
       bool(terms) and ".tap(" not in terms_body and "tapNode" not in terms_body
-      and "private boolean autoAgreeTerms" not in engine_java,
-      "检测方法内仍有点击逻辑" if terms_body and (".tap(" in terms_body or "tapNode" in terms_body) else "")
+      and bool(terms_auto)
+      and "autoAcceptTerms()" in terms_auto_body
+      and "return false" in terms_auto_body,
+      ("检测方法内掺了点击逻辑" if terms_body and ("tapNode" in terms_body) else
+       "缺 autoAgreeTerms 或其中没有开关短路（代点无法退回安全默认）"))
 
 # ---------------------------------------------------------------- UX-7
 check("UX-7", "引擎内存在 done 的最小完成复验分支",
