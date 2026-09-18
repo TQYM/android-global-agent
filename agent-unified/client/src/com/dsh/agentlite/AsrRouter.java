@@ -18,6 +18,14 @@ public final class AsrRouter {
 
     private static WhisperAsr sLocal;
 
+    /**
+     * 云端转写的**冷却截止时间**。用户要求「优先 GLM，不可用时用本地」——若不做冷却，
+     * 云端一旦不可用，每次语音都要先等一次超时/401 才回退，体验很差。失败后 5 分钟内直接
+     * 走本地离线，期间不做无谓重试；5 分钟后再试一次云端，恢复即自动切回。
+     */
+    private static volatile long sCloudCooldownUntil;
+    private static final long CLOUD_COOLDOWN_MS = 5 * 60 * 1000L;
+
     private AsrRouter() { }
 
     /** 本地转写是否可用（库已打包且模型已就绪）。 */
@@ -32,17 +40,29 @@ public final class AsrRouter {
      * @return 识别文本（可能为空串，调用方按「识别结果为空」处理）
      */
     public static String transcribe(Context ctx, Prefs prefs, byte[] wav) throws Exception {
-        // 0) 云端 ASR（用户显式配了端点即优先用它：更快、更准，且不占手机算力）
+        // 0) 云端 ASR（配了端点即优先：更快更准、不占手机算力）
         String cloudBase = prefs.asrBaseUrl();
-        if (!cloudBase.isEmpty()) {
+        long now = System.currentTimeMillis();
+        if (!cloudBase.isEmpty() && now >= sCloudCooldownUntil) {
             try {
                 LlmClient c = new LlmClient(prefs.baseUrl(), prefs.apiKey(), prefs.model());
                 String text = c.transcribe(wav, prefs.asrModel(), cloudBase, prefs.asrApiKey());
-                if (text != null && !text.isEmpty()) return text;
-                AgentEngine.staticLog("云端转写返回空，回退本地离线");
+                if (text != null && !text.isEmpty()) {
+                    sCloudCooldownUntil = 0;                       // 云端健康，解除冷却
+                    // 成功也要记一行：否则排查时无法判断这次到底走的云端还是本地
+                    AgentEngine.staticLog("云端转写成功（" + cloudBase + " / " + prefs.asrModel()
+                            + "）：" + (text.length() > 30 ? text.substring(0, 30) + "…" : text));
+                    return text;
+                }
+                sCloudCooldownUntil = now + CLOUD_COOLDOWN_MS;
+                AgentEngine.staticLog("云端转写返回空，冷却 5 分钟，改用本地离线");
             } catch (Throwable t) {
-                AgentEngine.staticLog("云端转写失败（" + t.getMessage() + "），回退本地离线");
+                sCloudCooldownUntil = now + CLOUD_COOLDOWN_MS;
+                AgentEngine.staticLog("云端转写不可用（" + t.getMessage() + "），冷却 5 分钟内改用本地离线");
             }
+        } else if (!cloudBase.isEmpty()) {
+            AgentEngine.staticLog("云端转写冷却中（还剩 "
+                    + ((sCloudCooldownUntil - now) / 1000) + "s），本轮用本地离线");
         }
         // 1) 本地离线
         if (localReady(ctx)) {

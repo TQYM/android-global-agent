@@ -23,6 +23,9 @@ public class LlmClient {
     private static final String TAG = "LlmClient";
 
     private final String baseUrl;
+
+    /** 本次请求是否为语音转写（决定用短超时，见 postOnce）。 */
+    private boolean asrShortTimeout;
     private final String apiKey;
     private final String model;
 
@@ -379,6 +382,7 @@ public class LlmClient {
      * @param asrKey  独立 ASR 密钥；为空则沿用主 key
      */
     public String transcribe(byte[] wav, String asrModel, String asrBase, String asrKey) throws Exception {
+        asrShortTimeout = true;
         String asrDedicated = asrBase == null ? "" : asrBase.trim().replaceAll("/+$", "");
         boolean dedicated = !asrDedicated.isEmpty();
         String asrK = (asrKey == null || asrKey.isEmpty()) ? apiKey : asrKey;
@@ -501,8 +505,10 @@ public class LlmClient {
         // 直连 DashScope 时 covers() 为 false，行为与从前完全一致。
         TlsPin.apply(conn);
         conn.setRequestMethod("POST");
-        conn.setConnectTimeout(15000);
-        conn.setReadTimeout(120000);
+        // 语音转写用**短超时**：ASR 是"说一句、立刻要结果"的交互，云端不可达时必须快速失败
+        // 让上层切到本地离线；沿用主对话的 120s 读取超时会让用户对着手机干等两分钟。
+        conn.setConnectTimeout(asrShortTimeout ? 6000 : 15000);
+        conn.setReadTimeout(asrShortTimeout ? 20000 : 120000);
         conn.setDoOutput(true);
         conn.setRequestProperty("Authorization", "Bearer " + key);
         conn.setRequestProperty("Content-Type", contentType);
