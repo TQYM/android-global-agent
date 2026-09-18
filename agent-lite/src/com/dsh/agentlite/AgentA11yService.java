@@ -57,6 +57,7 @@ public class AgentA11yService extends AccessibilityService {
     public void onServiceConnected() {
         sInstance = this;
         overlay = new OverlayController(this);
+        ProgressBridge.start(this);   // 项目进度 → 灵动岛（文件驱动，见 ProgressBridge）
         sSpec = DisplaySpec.get(this);
         Log.i(TAG, "service connected; spec=" + sSpec);
         // 广播恢复信号：主界面可能已在 onResume 时判定为"未连接"并画出提示横幅，
@@ -87,6 +88,7 @@ public class AgentA11yService extends AccessibilityService {
 
     @Override
     public void onDestroy() {
+        ProgressBridge.stop();
         if (overlay != null) { overlay.hideAll(); overlay = null; }
         sInstance = null;
         A11yGuard.onServiceLost(this);   // 掉线守护：宽限后复查并在需要时回写设置

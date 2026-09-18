@@ -386,6 +386,32 @@ public class OverlayController {
         });
     }
 
+    /**
+     * 把**与任务无关**的进度文本推到灵动岛胶囊（空闲时也生效）。
+     *
+     * <p>与 {@link #progress(String)} 的区别：后者带 taskActive 判断，只在任务执行中出现；
+     * 本方法专门给「项目进度看板」这类常驻信息用，由 {@link ProgressBridge} 从文件驱动。
+     */
+    public void showProgressNote(String text) {
+        ui.post(() -> {
+            try {
+                ensureCapsule();
+                setCapsuleState(true, text);
+            } catch (Throwable ignored) {
+            }
+        });
+    }
+
+    /** 收起进度提示：没有任务在跑时整条撤下，有任务则交回任务自己管理。 */
+    public void hideProgressNote() {
+        ui.post(() -> {
+            try {
+                if (!taskActive) hideAll();
+            } catch (Throwable ignored) {
+            }
+        });
+    }
+
     public void hideCard() { ui.post(this::hideCardSync); }
 
     // ================= 内部：底栏灵动胶囊与展开面板 =================
