@@ -119,7 +119,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, {"error": {"message": "not found"}})
 
     def do_POST(self) -> None:                                    # noqa: N802
-        if not self.path.startswith("/audio/transcriptions"):
+        # 兼容两种写法：客户端把端点配成 http://host:port 或 http://host:port/v1 都能用
+        # （App 会拼成 /v1/audio/transcriptions，实测漏了这层兼容会 404）。
+        path = self.path.split("?")[0].rstrip("/")
+        if not path.endswith("/audio/transcriptions"):
             self._send(404, {"error": {"message": f"unknown path {self.path}"}})
             return
         if _mlx is None:
@@ -143,6 +146,8 @@ class Handler(BaseHTTPRequestHandler):
             with _lock:                                           # mlx 模型非线程安全，串行化
                 r = _mlx.transcribe(audio, path_or_hf_repo=MODEL,
                                     language=None if LANG == "auto" else LANG,
+                                    # 不加这句 whisper 对中文常输出繁体（实测「大開設置裡的無線網絡頁面」）
+                                    initial_prompt="以下是普通话的句子。",
                                     temperature=0.0, condition_on_previous_text=False,
                                     verbose=False)
             text = (r.get("text") or "").strip()

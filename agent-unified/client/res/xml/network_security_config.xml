@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  网络安全配置（2026-09-18 新增）。
+
+  起因：语音输入改成「独立 ASR 端点」后，指向局域网离线转写服务（tools/asr_server.py，
+  http://192.168.1.108:18888）。Android 从 targetSdk 28 起默认禁止明文 HTTP，
+  结果语音失败于：Cleartext HTTP traffic to 192.168.1.108 not permitted —— 界面上只显示
+  「语音识别失败」，用户完全看不出是被系统策略拦的。
+
+  为什么这里放开明文：局域网内做自签 HTTPS 不现实（证书不被系统信任、每台设备都要装 CA），
+  而 ASR 端点、局域网 P2P 调试端点都属于「只在私有网段内、不出公网」的流量。
+  agentd-apk 早已 usesCleartextTraffic="true"（同一权衡）。
+
+  注意：这只放开「http 可用」，并不改变默认端点——项目自己的服务端、DeepSeek 等一律仍是 https；
+  用户若把 base_url 配成 http，是其自身选择。
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system"/>
+        </trust-anchors>
+    </base-config>
+</network-security-config>
