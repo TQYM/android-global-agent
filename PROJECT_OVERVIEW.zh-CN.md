@@ -215,6 +215,9 @@ sh build-mac.sh
 - [x] **平板横屏/多窗口适配**：分辨率差异由比例坐标天然解决；横屏/分屏/旋转已由 DisplaySpec 形态注入 + 分屏窗口区域提示覆盖（2026-09-11，待真机回归）
 - [ ] **鸿蒙设备适配**：兼容层 2–4.x 验证与 NEXT HDC 外挂原型挂起等真机；NEXT 原生评估已出（`docs/HARMONY_NEXT_EVAL.zh-CN.md`：HDC 外挂式为主路线，原生重写冻结）
 - [ ] ~~**HarmonyOS 兼容性**~~ → 实为荣耀 MagicOS（hihonor 系），a11y API 行为与 AOSP 一致，已验证
+- [ ] **模糊语义理解与流程转译**（待评审，2026-09-18）：把 `planTask` 的 3 行散文升级为结构化 `FlowSpec`
+  （P0 无 UI 改动 / P1 澄清卡片 / P2 流程复用），覆盖口语省略、指代继承、歧义澄清、流程复用、ASR 噪音五类模糊。
+  设计见 `docs/FUZZY_SEMANTIC_TO_FLOW_DESIGN.zh-CN.md`；**尚未动代码**
 
 ---
 
@@ -985,14 +988,23 @@ ColorOS 也没有可退回的系统识别服务（`voice_recognition_service=nul
    `usesCleartextTraffic="true"`）；默认端点仍全为 https。要收紧就改成按域名白名单。
 
 **运维**
-- 启动：`sh tools/asr_start.sh start|stop|status`（脚本会打印手机该填的端点）。
-- 模型持久化在 `~/.cache/asr-models/whisper-medium-mlx-4bit/`（放 `/tmp` 重启会丢）。
+- **常驻方式（2026-09-18 加固）**：`~/Library/LaunchAgents/com.agentlite.asr.plist`，
+  `RunAtLoad` + `KeepAlive`，开机自启、崩溃自拉。手工开关用
+  `launchctl load/unload ~/Library/LaunchAgents/com.agentlite.asr.plist`；
+  日志 `tail -f /tmp/asr_server.log`；备选 `sh tools/asr_start.sh start|stop|status`。
+- **为什么必须常驻**：第一版用 `nohup` 启动、venv 还放在 `/tmp` —— Mac 一重启/清理就全没，
+  用户第二天只会看到「语音又不能输入」，**看不出原因**。现已把 venv 与模型都放到
+  `~/.cache/`（`asr-venv`、`asr-models/whisper-medium-mlx-4bit`）。
 - 手机端独立 ASR 端点当前为 `http://192.168.1.108:18888/v1`（**Mac 换网/关机 = 语音不可用，
-  但不影响任务执行**——LLM 仍直连 DeepSeek）。
+  但不影响任务执行**——LLM 仍直连 DeepSeek）；Mac 换 IP 后要同步改端点。
+- **失败提示已自解释**：`MainActivity.asrHint()` 把 `Cleartext` / `Connection refused` /
+  `timeout` / `404` / `UnknownHost` 分别翻成"该怎么做"的一句话（此前用户只看到
+  「语音识别失败：<原始异常>」，等于没有信息）。
 - 国内拉模型：必须 `HF_ENDPOINT=https://hf-mirror.com`，且 **hub 的 xet 传输会超时**；
   可靠办法是用 curl 分段（`-r start-end`）并行下载 `weights.npz` 再拼接（本机实测 0.6→2.2 MB/s）。
 
-**遗留**：设置页还没有「ASR 端点」输入框（现在靠 `su` 写 `asr_base_url`），应补 UI。
+**遗留**：设置页还没有「ASR 端点」输入框（现在靠 `su` 写 `asr_base_url`），应补 UI——
+补上后用户即可在手机上自查端点与连通性，不必每次找开发者。
 
 ### 2026-09-13 00:54 +08 · 会话 33f50b22 · 新建 project-work-log skill
 - 00:52 考察 skill 机制：~/.dsh/skills 为安装目录、workspace skills/ 为源副本（源:命令:diff/ls）
@@ -1436,3 +1448,12 @@ ColorOS 也没有可退回的系统识别服务（`voice_recognition_service=nul
 - 18:50 **真机语音验证通过**：Mac 扬声器播 TTS「打开蓝牙设置」→ 手机录音 → 转写（8.7s 音频 0.66s）
   → App 自动执行并成功打开蓝牙设置页（源:命令:Mac 服务日志+命令:adb logcat）
 - 18:52 终态: done（遗留：设置页无「ASR 端点」输入框；Mac 关机/换网则语音不可用，但不影响任务执行）
+
+### 2026-09-18 18:41 +08 · 项目:repo · 会话:local · 模糊语义转译方案落地
+- 18:41 首次运行检查：读项目清单与手册工作日志尾，确认本次属共享文档项目（源:文件:docs/PROJECTS.zh-CN.md）
+- 18:42 定位缺口：planTask 仅 3 行散文，无结构化/澄清/复用/指代（源:文件:agent-lite/src/com/dsh/agentlite/AgentEngine.java:1211）
+- 18:42 只读调研入口链路：6 条入口、仅 `[跨设备指令] ` 一种前缀、无磁贴入口（源:文件:RemoteCommand.java:58；MainActivity.java:416）
+- 18:43 产出方案 docs/FUZZY_SEMANTIC_TO_FLOW_DESIGN.zh-CN.md：五层管线+三数据结构+P0/P1/P2+6 项门禁（源:文件:docs/FUZZY_SEMANTIC_TO_FLOW_DESIGN.zh-CN.md）
+- 18:43 核对文中 13 处行号证据（AgentEngine/Prefs/MemoryStore/Makefile/OverlayController）全部准确（源:命令:sed 抽样核对）
+- 18:43 方案索引写入手册 §10 待办（源:文件:PROJECT_OVERVIEW.zh-CN.md:218）
+- 18:43 终态: done（未动任何代码；待用户评审后决定是否落 P0）

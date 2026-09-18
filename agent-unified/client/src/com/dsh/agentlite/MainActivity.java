@@ -491,7 +491,7 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
                         btnRun.performClick();
                     });
                 } catch (Exception e) {
-                    onLog("语音识别失败：" + e.getMessage());
+                    onLog("语音识别失败：" + e.getMessage() + asrHint(e));
                 }
             }, "asr").start();
             return;
@@ -514,6 +514,33 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
         } else {
             onLog("✗ 无法启动录音");
         }
+    }
+
+    /**
+     * 把 ASR 异常翻译成**能照着做**的提示。
+     *
+     * <p>为什么需要：语音失败的原始异常对用户毫无指导意义，而下面这几类恰好覆盖了实测遇到的
+     * 全部情况——2026-09-18 排查「语音又不能输入」时，用户在手机上看到的只有一句
+     * 「语音识别失败」，既不知道是 Mac 没开机、服务没跑，还是被系统拦了明文。
+     */
+    private static String asrHint(Exception e) {
+        String m = e.getMessage() == null ? "" : e.getMessage();
+        if (m.contains("Cleartext")) {
+            return "（该端点被系统拦截明文 HTTP：局域网服务应使用 http 且 App 已放开明文配置）";
+        }
+        if (m.contains("Connection refused")) {
+            return "（ASR 服务没在跑：在 Mac 上执行 sh tools/asr_start.sh start）";
+        }
+        if (m.contains("ETIMEDOUT") || m.contains("timeout") || m.contains("Failed to connect")) {
+            return "（连不上 ASR 服务：确认 Mac 已开机、手机与它同一 Wi-Fi，且端点里的 IP 是 Mac 当前地址）";
+        }
+        if (m.contains("404")) {
+            return "（端点路径不对：应形如 http://<Mac的IP>:18888/v1）";
+        }
+        if (m.contains("UnknownHost")) {
+            return "（解析不了端点主机名：检查端点里填的 IP 是否正确）";
+        }
+        return "";
     }
 
     // ---- AgentEngine.Listener（引擎线程回调 → UI 线程） ----
