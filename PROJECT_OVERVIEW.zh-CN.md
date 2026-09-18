@@ -1064,6 +1064,10 @@ ColorOS 也没有可退回的系统识别服务（`voice_recognition_service=nul
 - 云端成功也记日志（否则无法判断某次到底走了哪条通道）。
 - **端点正确性已实测**：`POST /api/paas/v4/audio/transcriptions` 返回 **401**
   「Header中未收到Authorization参数」（而非 404），说明路径与 multipart(file+model) 格式都对。
+- ⚠ **踩过的坑**：`Prefs.asrModel()` 有两处历史逻辑会把模型名改坏——把 `glm-asr-2512`
+  当"失效默认值"清空，以及「单模型模式」把语音收敛到主模型。结果是 App 把 `deepseek-flash`
+  发给智谱，云端报 `1211 模型不存在`（而本机用同 Key 同模型名 curl 是成功的）。已修为：
+  **配了云端端点就不再收敛到主模型**，且不再清空 `glm-asr-2512`。
 - 设置页新增「**测试语音转写链路**」按钮：弹窗直接列出当前优先级、云端配置、本地模型状态，
   不必再靠 adb 写 prefs 排障。
 - 实测清理掉残留的 Mac 端点后，语音不再"先失败一次再回退"，直接走本地：
