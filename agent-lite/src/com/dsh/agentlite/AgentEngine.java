@@ -583,14 +583,23 @@ public class AgentEngine {
             prevFailed = false;
             if (needShot) {
                 Bitmap bmp = svc.screenshot();
-                String dataUrl = bmpToDataUrl(bmp, 480, 45);
+                // 应用屏蔽无障碍时（微信就是典型：系统 uiautomator dump 在微信里只有 1 个节点），
+                // 视觉是**唯一**的感知来源；而 480px 的降采样会把点赞、开关这类小图标糊成十几个像素
+                // ——2026-09-18「让 Agent 给朋友圈点赞做不到」的直接原因就是图标被缩到 ~16px，模型只能盲点。
+                // 故这类场景提高分辨率与质量：token 会变多，但没有别的信息可用。
+                boolean a11yBlind = zeroNodeSteps >= 1 || nodes.size() < 5;
+                String dataUrl = bmpToDataUrl(bmp, a11yBlind ? 1000 : 480, a11yBlind ? 75 : 45);
                 if (dataUrl != null) {
                     shotFails = 0;
                     int lum = meanLuma(bmp);
                     log("截图亮度≈" + lum + (lum < 8 ? "（黑屏，截图可能被屏蔽）" : ""));
                     if ((visionForced || zeroNodeSteps >= 2) && lum >= 8) {
                         // 纯视觉模式：节点被屏蔽但像素可见 → 坐标驱动
-                        if (!visionOnly) { visionOnly = true; log("进入纯视觉模式：改用比例坐标操作"); }
+                        if (!visionOnly) {
+                            visionOnly = true;
+                            log("进入纯视觉模式：改用比例坐标操作"
+                                    + (a11yBlind ? "（截图已提到 1000px，便于辨认点赞/开关等小图标）" : ""));
+                        }
                         android.graphics.Rect wb = svc.getSystemService(android.view.WindowManager.class)
                                 .getCurrentWindowMetrics().getBounds();
                         prompt = appHint + (visionForced
@@ -1248,13 +1257,24 @@ public class AgentEngine {
                 }
                 int[] xy = resolvePoint(svc, a, currentNodes);
                 pushTap(xy[0], xy[1]);
+                // 应用屏蔽无障碍时（微信是典型），它同样会**忽略无障碍注入的手势**：
+                // dispatchGesture 报告成功、引擎以为点到了，目标 App 却毫无反应 → 模型反复盲点
+                // 直到震荡看门狗判无进展（2026-09-18 微信朋友圈点赞卡的正是这一步，日志里
+                // 反复出现同一个坐标 tap@753,2521，而同一坐标用 shell 注入点击是有效的）。
+                // 因此纯视觉场景优先走 root 注入（input tap，shell 级），手机有 root 时立即可用。
+                if (visionOnly && RootShell.available(app) && RootShell.tap(xy[0], xy[1])) {
+                    return "tap(root)@" + xy[0] + "," + xy[1];
+                }
                 if (!svc.tap(xy[0], xy[1])) {
                     if (RootShell.available(app) && RootShell.tap(xy[0], xy[1])) {
-                        return (a.has("index") ? "tap#" + a.optInt("index") : "tap") + "(root)";
+                        return (a.has("index") ? "tap#" + a.optInt("index") : "tap") + "(root)@" + xy[0] + "," + xy[1];
                     }
                     throw new Exception("手势被系统取消");
                 }
-                return a.has("index") ? "tap#" + a.optInt("index") : "tap";
+                // 坐标必须进日志：纯视觉（应用屏蔽无障碍）时模型只能靠截图给比例坐标，
+                // 一旦点不中，没有坐标就无法判断是「模型定位偏了」还是「点击被吃掉」
+                // ——2026-09-18 排查微信朋友圈点赞时，日志里只有光秃秃的 "执行 tap"。
+                return (a.has("index") ? "tap#" + a.optInt("index") : "tap") + "@" + xy[0] + "," + xy[1];
             }
             case "remote": {
                 // 跨设备：让同账号的另一台设备执行任务

@@ -111,6 +111,11 @@ public class OverlayController {
     public void taskStarted(String task) {
         ui.post(() -> {
             try {
+                // 上一轮的结果卡片必须先撤掉。2026-09-18 定位到「微信朋友圈点不动」的真凶就在这：
+                // 卡片窗口 frame 一直铺到屏幕最底（实测 [56,1133][1160,2556]），而卡片用的是
+                // FLAGS_TOUCH（会吃掉自己区域内的触摸），于是**残留的失败卡片会把底部导航、点赞按钮
+                // 这些区域的点击全部吃掉**——新任务点不动，用户手动点也点不动，且日志里看不出原因。
+                hideCardSync();
                 currentTask = task;
                 taskActive = true;
                 paused = false;
@@ -150,6 +155,13 @@ public class OverlayController {
                 ui.postDelayed(() -> {
                     removeView(capsule); capsule = null;
                 }, 4000);
+                // 结果卡片给足阅读时间后**也要自动撤下**：卡片窗口 frame 铺到屏幕最底
+                // （实测 [56,1133][1160,2556]，高约 406dp），而卡片会吃掉自己区域内的触摸，
+                // 长期停在屏幕上等于把底部导航/点赞按钮那一带的点击全封死——
+                // 2026-09-18「微信朋友圈无法点赞」就是这么来的。taskActive 判断避免误撤新任务的卡片。
+                ui.postDelayed(() -> {
+                    if (!taskActive) hideCardSync();
+                }, 15000);
             }
         });
     }
