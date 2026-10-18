@@ -2692,3 +2692,12 @@ adb shell "rm /sdcard/Android/data/com.dsh.agentlite/files/project_progress.txt"
 - 14:46 推送 4c4a2c9..cc05cf4 并补推本地独有 tag v0.6.0-zerofriction（源:命令:git push origin）
 - 14:47 make check 全量免设备门禁通过（源:命令:make check，exit 0）
 - 14:47 终态: done（工作区零未提交、远程止于 cc05cf4；默认分支与 Release 未动）
+
+### 2026-10-18 14:50 +08 · 项目:repo · 会话:local · 默认分支重建与 v0.7.0 发布
+- 14:50 AndroidManifest 升 versionCode 7 / versionName 0.7.0；CHANGELOG 将 Unreleased 收敛为 [0.7.0] - 2026-10-18 并补模块化/计费/门禁条目（源:文件:agent-lite/AndroidManifest.xml:4-5；文件:CHANGELOG.md:5-29）
+- 14:51 build-mac.sh 构建通过：19,590,513 字节含 6 个 ASR .so，签名证书 CN=agent-client（源:命令:bash agent-lite/build-mac.sh）
+- 14:52 apk_readability 通过：dex 无 API Key/令牌明文、compileSdk 37、android:debuggable 未开（源:命令:python3 tests/apk_readability.py）
+- 14:53 提交 c3df7a7 并推送；以 shell-command-backend 新建远程 main，并把默认分支 PATCH 为 main（源:命令:git push origin shell-command-backend:main；gh api -X PATCH default_branch）
+- 14:53 本地 main 快进至 c3df7a7 与 origin/main 对齐，避免旧 0f38c18 误导（源:命令:git branch -f main）
+- 14:57 发布 v0.7.0（latest、非 prerelease）：APK + SHA256SUMS + icon 三资产，APK SHA-256 64fea312…f837814a（源:命令:gh release create）
+- 14:58 终态: done（默认分支 main，两分支同指 c3df7a7，Release 已上线；shell-command-backend 保留未删）
