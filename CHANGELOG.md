@@ -4,6 +4,25 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-18
+
+### Added（契约 / 凭据路由 / 流程记忆模块化，2026-10-18）
+
+- **Android 客户端拆出可测模块**：`AccountHttp`（账号 HTTP 收敛）、`ContractVersions`
+  （契约版本常量）、`CredentialRoute` + `CredentialRouteUi`（凭据来源路由，与 UI 解耦）、
+  `FeatureFlags`（功能开关）、`FlowMemory` / `FlowPlan` / `FuzzyFlow`（流程记忆与模糊匹配）、
+  `SemanticTranslator` / `TextNormalizer`（语义与文本归一）、`PopupGuard`（弹窗守卫），
+  并新增 `contracts/`、`tools/` 两个子包。密码节点不采文本，只留坐标，内容不进记忆库。
+- **服务端计费模块**：新增 `agentlite-server/billing.go`，配套 `storage` / `streaming` /
+  `gateway` / `interface_correctness` 回归测试与 benchmark。
+- **门禁与回归**：新增 33 个 Python 检查脚本（account_sync、action_execution、asr_lan、
+  auto_tap_guard、credential_route、done_evidence、flow_memory、fuzzy_*、m0/m3、
+  migration_drill、popup_* 等）与 8 个 Java 单测，`make check` 保持 `go contract drill ui jvm`。
+- **文档**：新增 ADR-001（功能开关）、ADR-002（契约）、ADR-003（M3 工具注册表）、
+  `FUZZY_SEMANTIC_TO_FLOW_DESIGN`、`MATURE_MODULE_INTEGRATION_PLAN`，归档
+  `INTERFACE_AUDIT_2026-10-09/10` 与 `INTERFACE_IMPLEMENTATION_2026-10-11`。
+- **iOS**：`AccountService` / `HTTPClient` / `SyncService` / `Models` 与同步测试随契约同步。
+
 ### Fixed（真机验收脚本的零 root 前提与记忆库隔离，2026-10-11）
 
 - **零 root 前提在 run 期间被脚本自己抹掉**：`tests/credential_real_device.py` 与
@@ -554,6 +573,7 @@
 
 - 首个可侧载安装的 zero-Root 手机助手 beta 版。
 
-[Unreleased]: https://github.com/TQYM/android-global-agent/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/TQYM/android-global-agent/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/TQYM/android-global-agent/releases/tag/v0.7.0
 [0.6.0]: https://github.com/TQYM/android-global-agent/releases/tag/v0.6.0
 [0.5.0-beta.1]: https://github.com/TQYM/android-global-agent/releases
