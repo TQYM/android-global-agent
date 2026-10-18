@@ -161,15 +161,16 @@ def check_cert_pin():
 
     # 客户端确实把这枚证书用起来了（构建期 PinnedCa + 运行期 TlsPin）
     build = read(os.path.join(CLIENT, "build-mac.sh"))
-    sync = read(client_file("SyncClient.java"))
+    transport = read(client_file("AccountHttp.java"))
+    pin = read(client_file("TlsPin.java"))
     ok_build = "assets/agentlite_sync_ca.pem" in build and "PinnedCa" in build
-    ok_asset = 'CA_ASSET = "agentlite_sync_ca.pem"' in sync
-    if ok_build and ok_asset:
-        add("PASS", "证书 pin", "构建期生成 PinnedCa、运行期 SyncClient 按 CA_ASSET 加载 ✓")
+    ok_pin = "setSSLSocketFactory(TlsPin.factory())" in transport and "PinnedCa.PEM" in pin
+    if ok_build and ok_pin:
+        add("PASS", "证书 pin", "构建期生成 PinnedCa、运行期 AccountHttp 复用 TlsPin.factory ✓")
     else:
-        add("FAIL", "证书 pin", "证书未被真正接入（构建期 PinnedCa 或运行期 CA_ASSET 缺失）",
+        add("FAIL", "证书 pin", "证书未被真正接入（构建期 PinnedCa 或运行期 TlsPin 调用缺失）",
             ["build-mac.sh 引用 pem=%s，生成 PinnedCa=%s" % ("assets/agentlite_sync_ca.pem" in build, "PinnedCa" in build),
-             "SyncClient CA_ASSET 匹配=%s" % ok_asset])
+             "AccountHttp/TlsPin 接线匹配=%s" % ok_pin])
 
 
 # ────────────────────────── 3. 地址一致性 ──────────────────────────
@@ -499,17 +500,22 @@ def check_lan_protocol():
 READ_CALL = r'\.(?:opt|get)(?:String|Int|Long|Boolean|JSONObject|JSONArray)\(\s*"([a-z_][a-z0-9_]*)"'
 SEND_CALL = r'\.put\(\s*"([a-z_][a-z0-9_]*)"'
 # SharedPreferences 读写（接收者是 sp / prefs.sp）——这些键是**本地存储**，不是线协议字段
-PREFS_CALL = r'\b(?:sp|prefs\.sp)\.(?:get|put|contains|remove)[A-Za-z]*\(\s*"([a-z_][a-z0-9_]*)"'
+PREFS_CALL = r'\b(?:sp(?:\([^)]*\))?|prefs\.sp)\.(?:edit\(\)\.)?(?:get|put|contains|remove)[A-Za-z]*\(\s*"([a-z_][a-z0-9_]*)"'
 
 # 参与跨端契约的客户端文件（读响应 / 发请求）
-XFILE = ["AccountClient.java", "SyncClient.java", "LoginActivity.java", "SettingsActivity.java"]
+XFILE = ["AccountClient.java", "AccountHttp.java", "SyncClient.java", "RemoteCommand.java", "LoginActivity.java", "SettingsActivity.java"]
 
 
 def prefs_keys():
     """客户端本地存储键全量（跨所有源文件扫描）——同名键无法区分读 JSON 还是读本地，一律排除。"""
     keys = set()
     for p in java_sources():
-        keys |= set(re.findall(PREFS_CALL, strip_comments(read(p))))
+        code = strip_comments(read(p))
+        keys |= set(re.findall(PREFS_CALL, code))
+        # JSON persisted as a SharedPreferences string (e.g. pending ACK) is
+        # local state too, not a new wire response/request schema.
+        for var in re.findall(r'\.putString\([^;\n]*?,\s*(\w+)\.toString\(\)\s*\)', code):
+            keys |= set(re.findall(re.escape(var) + r'\.(?:put|(?:opt|get)(?:String|Int|Long|Boolean|JSONObject|JSONArray))\(\s*"([a-z_][a-z0-9_]*)"', code))
         keys |= set(re.findall(r'\bprefs\.(?:get|put)[A-Za-z]*\(\s*"([a-z_][a-z0-9_]*)"', strip_comments(read(p))))
     return keys
 
