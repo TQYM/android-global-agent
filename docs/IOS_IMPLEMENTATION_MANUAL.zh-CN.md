@@ -140,7 +140,7 @@
 |---|---|---|---|
 | C1 | `lan_key_params.key_length` | **`key_len`**（+ 还有 `algorithm` 字段） | 解码抛 `keyNotFound`，注册/登录**第一跳就失败** |
 | C2 | push 响应 `next_seq` | **`server_seq`**，且响应含 **`duplicates`** | 同上，同步不可用 |
-| C3 | pull 响应 `next_seq` | **`server_seq`**（语义 = 账号流当前水位） | 同上，且游标会错 |
+| C3 | 把 pull 的 `server_seq` 当已消费游标 | **`server_seq` 为高水位；`next_since` 为本页已交付游标** | 跳过未返回页；消费成功后才提交 records 最后 seq（2026-10-11 已修） |
 
 权威定义：`lan_key_params` 见 `account.go:72-77`；push 响应见 `api.go:349-355`；pull 响应见 `api.go:370-376`。
 
@@ -167,7 +167,7 @@
 {"fingerprint":"ios-<32hex>","name":"iPhone-1a2b","model":"iPhone","brand":"Apple","sdk":26,"app_version":"0.1.0"}
 → {"device_id":"d_…","account_id":"a_…","created":true,"server_time":"…"}
 ```
-- `fingerprint` 必填、**≤256 字符**，同 fingerprint 视为同一台设备（`store.go:223`）。
+- `fingerprint` 必填、**≤256 字符**，只在同一账号域内幂等复用；另一已归属账号的同指纹不接管、不继承状态（[BindDevice](<../agentlite-server/store.go#L232>)）。
 - `device_id` 由服务端签发；**后续所有设备级接口都必须带 `X-Device-Id`**，否则 400 `missing_device`（`api.go:146`）。
 
 **下发指令** `POST /api/v1/device/command`
@@ -180,30 +180,26 @@
 
 **领取指令** `GET /api/v1/device/commands` → `{"commands":[…],"count":N}`
 - ★ **只返回 `status == "pending"` 的指令**（`command.go:149`）。
-- 超出 TTL（**5 分钟**，`CommandTTL`）未领取的指令会被就地标记 `expired` 并**删除**。
+- 超出领取 TTL（**5 分钟**，`CommandTTL`）的 pending 指令不再投递，领取扫描将其标记 `expired`；终态保留 **24 小时**供查询。
 
 **回报** `POST /api/v1/device/command/ack`
 ```json
-{"command_id":"c_…","status":"done","detail":"执行结果摘要（≤256 字符，服务端截断）"}
+{"command_id":"c_…","status":"done","detail":"执行结果摘要（服务端按256上限截断）"}
 ```
-- ★★ **`status` 只接受 `running` / `done` / `failed`**（`command.go:166-171`）。
-  **没有 `cancelled`** —— 传它会被 400 `bad_input` 拒掉。
-- 只有**目标设备本人**能 ack：非目标设备 → 403 `not_target`；已终态 → 409 `already_acked`；不存在/过期 → 404。
-- ★★ **终态 ack 之后，服务端会把该指令从内存表删除**（`command.go:195`）。此后 `GET /device/command?id=` 一律 **404**。
-  ⇒ **ack 的返回值是这条指令结果的唯一可获得时刻**，客户端必须就地保存，不能"回头再查"。
-  （该行为已固化为 e2e 断言，防止后来者误判为 bug。）
-- ★★ **由此推出一个必须写进 UI 的边界：下发方无法确认已完成的指令。**
-  目标设备回报终态 → 服务端删除 → 下发方再查就是 404，**拿不到 `detail`**。
-  也就是说「iPhone 下发 → Android 执行完 → iPhone 显示结果」这条链路
-  **在当前服务端上是不完整的**：iPhone 只能知道"指令消失了"（多半是完成了），
-  拿不到结果文本。要闭环，目标设备必须在 ack 之外**另发一条同步记录**（`/sync/push`），
-  由下发方从同步流里取结果。**该回执通道服务端尚未提供**，已记为 U3（§9.1）。
+- **`status` 只接受 `running` / `done` / `failed`**；没有 `cancelled`，错误/取消理由放入 `failed.detail`。
+- 只有**目标设备本人**可 ack：非目标设备 → 403 `not_target`；不存在/领取超期 → 404。
+- **同目标设备、同终态、同截断后的 detail 重复 ACK 幂等**；冲突终态 → 409 `already_acked`。重复 ACK 不修改 `updated_at`，不延长结果保留期。
+- **终态仍由原 command 对象承载**：`GET /api/v1/device/command?id=...` 在 `CommandResultTTL = 24 小时`内返回 status/detail。下发方直接查询该对象，不另经 `/sync/push` 建一套回执通道。
+- 当前指令仍存于服务进程内，审计流水不在启动时重放；**重启或保留期结束后可能 404**。结果本地保存与服务端持久队列是不同保证。
+- 此契约已由[服务端接口回归](<../agentlite-server/interface_correctness_test.go>)与[iOS 真实 TLS E2E](<../ios/Tests/AgentLiteCoreTests/EndToEndTests.swift>)验证；本次未部署线上，详见[实施报告](<INTERFACE_IMPLEMENTATION_2026-10-11.zh-CN.md#33-指令一个对象不另造-sync-回执旁路>)。
 
 **指令状态机（服务端全集）**：`pending → running → done|failed`，另有服务端自标的 `expired`。
 
 ### 4.4 同步语义
 
-- `seq` 由服务端**按账号**单调分配，客户端只当游标用。**绝不能用本地时间当游标**（多设备时钟不同步会静默丢记录）。
+- `seq` 由服务端**按账号**单调分配，客户端按 records 最后 seq 推进；不用本地时间或 `server_seq` 高水位替代已消费事实。
+- `next_since` 若存在须与本页最后 seq 一致；旧服务端缺该字段时仍从 records 计算。`consume` 成功、未取消且认证代次不变后才存游标；无 `consume` 为纯获取，不持久化游标。
+- 游标按 `sync.cursor.v2.<accountID>` 隔离，旧无账号归属 v1 从 0 幂等重放；中途消费或存盘失败保留原游标。
 - `data` 是**不透明 JSON**：服务端不解释（`api.go:310`），客户端也不能丢字段 → Swift 侧用 `JSONValue` 原样承载。
 - 上行必须带 `origin_device_id`，否则服务端记成「本机产生」——数据不丢但**溯源错**（`SyncClient.java:451` 记录过该坑）。
 - 幂等：按记录 `id` 去重，重复推送计入 `duplicates` 而非重复落库。
@@ -369,12 +365,11 @@ swift run agentlite-ios register --name myacct --key 至少八位密钥
 swift run agentlite-ios whoami            # 账号 / 额度 / 设备列表
 swift run agentlite-ios devices           # 同账号的其它设备
 swift run agentlite-ios send --to d_xxx --task "打开设置"
-swift run agentlite-ios watch --id c_xxx  # 仅在「未终态」期间有效，见下方 ★
+swift run agentlite-ios watch --id c_xxx  # 轮询到终态，读取原 command 的结果
 swift run agentlite-ios collect           # 本机作为目标设备收件
 
-# ★ watch 的边界：对方一旦回报终态，服务端就删除了该指令，watch 会得到 404。
-#   CLI 会把这种情况翻译成人话而不是报错。真正的结果文本只有**目标设备**那侧拿得到
-#  （见 §4.3 与 U3）。
+# ★ 当前源码保留终态24小时；服务重启或保留期结束后可能404。
+#   本次未部署，联调实例需先确认已具有该契约（见§4.3）。
 ```
 
 ### 8.3 iOS App（Xcode 工程 + 模拟器 + 真机）
@@ -462,15 +457,17 @@ xcodebuild -downloadPlatform iOS            # 补齐匹配的运行时（约数 
 
 ## 9. 未完成项与下一步
 
-### 9.1 未完成（诚实清单）
+### 9.1 验收与历史跟进清单
+
+> 2026-10-11 本轮更新 U3/U3b；其他项为原手册历史记录，本次未探测线上、安装设备或引入 APNs。本地源码及构建验证详见[实施报告](<INTERFACE_IMPLEMENTATION_2026-10-11.zh-CN.md#6-验证结果与证明边界>)。
 
 | # | 项 | 状态 | 阻塞原因 |
 |---|---|---|---|
 | U1 | iPhone 真机端到端 | ❌ 未做 | 无签名的 Apple ID、无真机连接（`devicectl` 无设备） |
 | U1b | 模拟器端到端 | ⏸ 待运行时 | App 与测试已就绪；Xcode SDK 26.5 与已装运行时 26.4 不匹配，`xcodebuild` destination 不可用（§8.3） |
 | U2 | 线上服务端连通性 | ⚠️ 未验证 | 编写时 `8.133.225.105:18443` **连接被拒**（`curl: (7) Couldn't connect`）。需确认服务是否在跑、安全组是否放行 |
-| U3 | **指令结果回执通道缺失** | ❌ 未做（服务端） | 终态 ack 后服务端即删除指令，下发方查不到结果（§4.3）。需目标设备在 ack 之外另发 `/sync/push` 记录，或服务端保留终态一段时间 |
-| U3b | 服务端 `key_len` / `server_seq` 字段与文档措辞不符 | ⚠️ 已绕过未修复 | iOS 侧按实测字段实现；**文档与 Go 源码的措辞不一致仍存在**，建议在 `docs/DEVELOPMENT_MANUAL.zh-CN.md §7` 补注 |
+| U3 | **指令终态查询与 ACK 幂等** | ✅ 2026-10-11 已完成本地实现/Go回归/Swift TLS E2E，未部署 | 原 command 对象保留终态24小时，无另建 sync 回执；服务重启仍丢队列（§4.3） |
+| U3b | 字段契约与分页措辞 | ✅ 当前分页/归属/回执说明已同步 | `server_seq` 高水位与 `next_since` 已交付游标分离；字段名以 Go 源码和跨端契约门禁为准，见§3.2/§4.4 |
 | U4 | APNs 静默推送通道 | ❌ 未做 | 服务端无 APNs 集成；这是 iOS 被控端可靠性的关键缺口 |
 | U5 | SwiftUI 界面 | ✅ 已做 | `ios/App/`（账号 / 设备 / 远程 + 空状态），已对模拟器 SDK 通过类型检查 |
 | U6 | App Intents / 快捷指令动作集 | ❌ 未做 | 需要真机确认动作授权流程（`LocalActionProvider` 协议已就位） |
@@ -479,9 +476,7 @@ xcodebuild -downloadPlatform iOS            # 补齐匹配的运行时（约数 
 ### 9.2 建议的下一步顺序
 
 1. **先修 U2**：确认线上服务可用性（这决定所有真机联调能否进行）。
-2. **U3 回执通道**（客户端/服务端最小改动）：目标设备 ack 时顺带 `push` 一条
-   `{command_id,status,detail}` 同步记录；下发方从同步流读结果。**不做这条，
-   "下发→执行→看结果"的体验就是断的**（iPhone 只能看到指令消失）。
+2. **验收已实现的 U3 契约**：目标设备回报原 command，下发方直接查询 status/detail；无另建同步回执。先在数据副本验证迁移，再明确部署；线上终态24小时可见、幂等 ACK 与服务重启边界需实测。（数据副本上的迁移验证本机已完成：`make drill`，48 项断言全过；零 root 真机行为验收也已在真机跑通：`tests/credential_real_device.py` 44 项、`tests/t03_t05_real_device.py` 15 项断言全过。）
 3. **补齐模拟器运行时**（§8.3）：`xcodebuild -downloadPlatform iOS`，之后
    `bash ios/build-mac.sh --simulator` 即可在 iOS 运行时里跑 Keychain / ATS / 端到端测试。
 4. **U6 动作集**：先落 3–5 个高频本地动作（打开 App、记笔记、查日程），验证 App Intents 授权流程。
@@ -504,9 +499,9 @@ xcodebuild -downloadPlatform iOS            # 补齐匹配的运行时（约数 
 | K8 | 自签证书 + ATS | `-1202 NSURLErrorServerCertificateUntrusted` | 必须 pin（§7.1） |
 | K9 | 文档字段名与实现不符（C1–C3） | 第一跳请求就解码失败 | **以服务端 Go 源码为准**，落盘前用一次实跑核对 |
 | K10 | 先 ack `running` 再执行 | 指令永久停在 running，不可恢复 | 先执行、后 ack 终态（§6.3） |
-| K11 | 终态 ack 后回头查指令 | 404，看起来像 bug | 服务端已删除该指令（`command.go:195`）；结果取 ack 返回值 |
-| K12 | 用 `cancelled` 作为 ack 状态 | 400 被拒，指令状态不变 | 服务端只有 `running/done/failed`；拒绝也用 `failed`，理由放 `detail` |
-| K13 | 让下发方"回头查"已完成的指令 | 404，像是 bug | 服务端终态即删除；结果取自 ack 返回值，或另建回执通道（U3） |
+| K11 | 把当前终态查询误判为必然404 | 下发方丢失已执行结果 | 当前原 command 保留终态24小时；重启/过期才可能404，结果及时本地保存 |
+| K12 | 用 `cancelled` 作为 ack 状态 | 400，指令状态不变 | 服务端只有 `running/done/failed`；取消/执行失败使用 `failed.detail` |
+| K13 | 为结果另建 sync 回执 | 同结果出现两份事实源和多余请求 | 直接查询原 command；同终态 ACK 幂等，不延长24小时保留期 |
 | K14 | 用 `ContentUnavailableView` | 报错：仅 iOS 17+ 可用（部署目标是 16） | 用 `EmptyStateView`（`ios/App/AgentLiteIOS/EmptyStateView.swift`）；不要为了少写 30 行把最低版本抬到 17 |
 | K15 | `BGTaskScheduler.register(forTaskID:using:)` | 编译报「extra argument 'forTaskID'」 | 正确签名是 `register(forTaskWithIdentifier:using:launchHandler:)` |
 | K16 | 核心库内部工具函数不给宿主用 | 宿主 App 报「inaccessible due to internal protection level」 | 只应有一份判断的函数（如 `HTTPClient.isLoopback`）要 `public` |

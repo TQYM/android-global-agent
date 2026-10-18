@@ -138,18 +138,11 @@ final class EndToEndTests: XCTestCase {
         XCTAssertEqual(report.acked.first?.status, "done")
         XCTAssertEqual(report.acked.first?.detail, "回显: 打开设置", "回报内容应带执行结果，便于下发方判断")
 
-        // 5) ★ 服务端事实：终态 ack 之后指令会被删除，再查就是 404（command.go:195）。
-        //    这里显式断言它，免得后来者以为「查询失败」是 bug 而去乱改。
-        do {
-            _ = try await getCommandFrom(token: token, id: sent.commandID)
-            XCTFail("终态 ack 后服务端应已删除该指令，查询应为 404")
-        } catch let e as AgentLiteError {
-            if case .transport(let m) = e {
-                XCTAssertTrue(m.contains("404"), "预期 404，实际: \(m)")
-            } else {
-                XCTFail("预期 404 transport 错误，实际 \(e)")
-            }
-        }
+        // 5) 终态保留供下发端查询，结果仍归属同一条指令。
+        let terminal = try await getCommandFrom(token: token, id: sent.commandID)
+        XCTAssertEqual(terminal.commandID, sent.commandID)
+        XCTAssertEqual(terminal.status, "done")
+        XCTAssertEqual(terminal.detail, "回显: 打开设置")
     }
 
     /// 自己给自己下指令必须被服务端拒（ErrCommandSelf）。
@@ -262,7 +255,8 @@ final class EndToEndTests: XCTestCase {
         XCTAssertEqual(again.accepted, 0, "重复推送不应被再次接受")
         XCTAssertEqual(again.duplicates, 1, "重复项应计入 duplicates")
 
-        let records = try await client.sync.drain()
+        let consumed = SyncTestConsumer()
+        let records = try await client.sync.drain(consume: { await consumed.append($0) })
         XCTAssertEqual(records.count, 1)
         XCTAssertEqual(records.first?.kind, "task")
         XCTAssertEqual(records.first?.id, item.id)
@@ -272,7 +266,7 @@ final class EndToEndTests: XCTestCase {
         XCTAssertEqual(obj?["n"], .number(42))
 
         let cursor1 = try await client.sync.cursor()
-        XCTAssertGreaterThan(cursor1, cursor0, "拉取后游标必须前进，否则会重复处理")
+        XCTAssertGreaterThan(cursor1, cursor0, "消费成功后游标必须前进，否则会重复处理")
     }
 
     // MARK: - 局域网（跨实现互解）

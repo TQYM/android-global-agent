@@ -54,15 +54,16 @@ type Runner struct {
 	ScreenPath string
 	Client     *llm.Client
 
-	Log      func(string)
-	OnStep   func(step int, action string, nodes []semantics.Node)
-	OnTap    func(x, y int, label string) // tap marker for the WebUI
-	Stopped  *atomic.Bool
+	Log     func(string)
+	OnStep  func(step int, action string, nodes []semantics.Node)
+	OnTap   func(x, y int, label string) // tap marker for the WebUI
+	Stopped *atomic.Bool
 	// Ctx 取消时会立刻中断进行中的模型请求与循环（nil = 不可取消）。
 	// 只有 Stopped 标志时，停止要等最长 180 秒的读超时才生效（手册 §15.2-2）。
 	Ctx context.Context
 
-	curNodes []semantics.Node // last perceived nodes, for index taps
+	curNodes          []semantics.Node   // last perceived nodes, for index taps
+	captureScreenshot func(string) error // nil uses the device capture; tests inject only this platform boundary.
 }
 
 const actionSchema = `
@@ -370,7 +371,7 @@ func (r *Runner) Run(task string) (string, error) {
 	}
 	blinded := 0 // consecutive null-root perception failures
 	lastKey := ""
-	repeats := 0 // consecutive identical actions (stuck detector)
+	repeats := 0                               // consecutive identical actions (stuck detector)
 	lastRebind := time.Now().Add(-time.Minute) // allow immediate first rebind
 
 	for step := 1; step <= r.Cfg.MaxSteps; step++ {
@@ -425,7 +426,11 @@ func (r *Runner) Run(task string) (string, error) {
 			}
 		}
 
-		messages = append(messages, r.perceptionMessage(prompt))
+		perception, err := r.perceptionMessage(prompt)
+		if err != nil {
+			return "", err
+		}
+		messages = append(messages, perception)
 		reply, err := r.Client.ChatCtx(r.ctx(), messages)
 		if err != nil {
 			// ctx 取消 = 用户停止（或进程收尾），不是模型/网络故障，别报成调用失败
@@ -469,7 +474,13 @@ func (r *Runner) Run(task string) (string, error) {
 		if action.Action != "wait" {
 			r.waitForChange(nodes)
 		}
-		_ = device.Screenshot(r.ScreenPath)
+		// Vision mode captures once at the next fresh perception, shared with the UI.
+		// Text mode still refreshes the UI preview after the action.
+		if !r.Cfg.Vision {
+			if err := r.takeScreenshot(); err != nil {
+				r.Log("预览截屏失败：" + err.Error())
+			}
+		}
 
 		// stuck detector: identical action repeated without progress
 		idxStr := "nil"
@@ -506,17 +517,25 @@ func (r *Runner) Run(task string) (string, error) {
 // perceptionMessage wraps the node-table prompt, attaching the current
 // screenshot when vision is enabled. The screenshot is refreshed here so
 // the image the model sees matches the nodes it was built from.
-func (r *Runner) perceptionMessage(prompt string) llm.Message {
+func (r *Runner) takeScreenshot() error {
+	if r.captureScreenshot != nil {
+		return r.captureScreenshot(r.ScreenPath)
+	}
+	return device.Screenshot(r.ScreenPath)
+}
+
+func (r *Runner) perceptionMessage(prompt string) (llm.Message, error) {
 	if !r.Cfg.Vision {
-		return llm.TextMessage("user", prompt)
+		return llm.TextMessage("user", prompt), nil
 	}
-	if err := device.Screenshot(r.ScreenPath); err == nil {
-		if dataURL, derr := vision.DataURL(r.ScreenPath, 640, 60); derr == nil {
-			return llm.VisionMessage("user", prompt+"\n\n同时附上了当前屏幕截图。", dataURL)
-		}
+	if err := r.takeScreenshot(); err != nil {
+		return llm.Message{}, fmt.Errorf("视觉感知截屏失败: %w", err)
 	}
-	// screenshot/compress failed: degrade gracefully to text-only
-	return llm.TextMessage("user", prompt)
+	dataURL, err := vision.DataURL(r.ScreenPath, 640, 60)
+	if err != nil {
+		return llm.Message{}, fmt.Errorf("视觉感知编码失败: %w", err)
+	}
+	return llm.VisionMessage("user", prompt+"\n\n同时附上了当前屏幕截图。", dataURL), nil
 }
 
 func trimErr(err error) string {

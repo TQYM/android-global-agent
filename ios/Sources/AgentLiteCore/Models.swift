@@ -92,6 +92,11 @@ public struct AccountProfile: Codable, Equatable, Sendable {
     public let devices: [ServerDevice]
     public let lanKeyParams: LANKeyParams?
 
+    /// 从本次档案中筛选对端，不重复请求档案，也不缓存设备列表。
+    public func peerDevices(excluding deviceID: String?) -> [ServerDevice] {
+        devices.filter { $0.deviceID != deviceID }
+    }
+
     enum CodingKeys: String, CodingKey {
         case accountID = "account_id"
         case name, quota, devices
@@ -151,11 +156,21 @@ public struct PullResult: Codable, Equatable, Sendable {
     public let records: [SyncRecord]
     public let serverSeq: Int64
     public let hasMore: Bool
+    /// 本页最后已交付的位置；旧服务端不返回此字段。消费游标仍以实际记录为准。
+    public let nextSince: Int64?
+
+    public init(records: [SyncRecord], serverSeq: Int64, hasMore: Bool, nextSince: Int64? = nil) {
+        self.records = records
+        self.serverSeq = serverSeq
+        self.hasMore = hasMore
+        self.nextSince = nextSince
+    }
 
     enum CodingKeys: String, CodingKey {
         case records
         case serverSeq = "server_seq"
         case hasMore = "has_more"
+        case nextSince = "next_since"
     }
 }
 

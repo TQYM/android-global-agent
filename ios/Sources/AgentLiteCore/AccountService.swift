@@ -81,12 +81,12 @@ public actor AccountService {
             accountKey: accountKey
         )
         try credentials.save(creds)
-        await http.setAuth(token: creds.token, deviceID: nil)
+        await http.setAuth(token: creds.token, deviceID: nil, accountID: creds.accountID)
 
         let bound = try await bindDevice()
         creds.deviceID = bound.deviceID
         try credentials.save(creds)
-        await http.setAuth(token: creds.token, deviceID: creds.deviceID)
+        await http.setAuth(token: creds.token, deviceID: creds.deviceID, accountID: creds.accountID)
         return creds
     }
 
@@ -94,13 +94,13 @@ public actor AccountService {
     @discardableResult
     public func restore() async throws -> Credentials? {
         guard let creds = try credentials.load() else { return nil }
-        await http.setAuth(token: creds.token, deviceID: creds.deviceID)
+        await http.setAuth(token: creds.token, deviceID: creds.deviceID, accountID: creds.accountID)
         return creds
     }
 
-    public func logout() throws {
+    public func logout() async throws {
         try credentials.logout()
-        Task { await http.setAuth(token: nil, deviceID: nil) }
+        await http.setAuth(token: nil, deviceID: nil)
     }
 
     // MARK: - 设备绑定
@@ -146,6 +146,6 @@ public actor AccountService {
     /// 过滤掉本机：服务端明确拒绝自己给自己下指令（command.go 的 ErrCommandSelf）。
     public func peerDevices() async throws -> [ServerDevice] {
         let me = await http.currentDeviceID
-        return try await profile().devices.filter { $0.deviceID != me }
+        return try await profile().peerDevices(excluding: me)
     }
 }

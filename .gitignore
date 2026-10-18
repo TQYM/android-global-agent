@@ -74,3 +74,7 @@ __pycache__/
 
 # 离线语音转写的原生库与模型（构建产物，见 build-mac.sh）
 agent-lite/vendor/asr/lib/
+
+# 本地验证产物与 PPT 转换工作目录（截图/基线行数/转换中间件，非仓库内容）
+/.device-verify/
+/.ppt-master-work/

@@ -4,6 +4,282 @@
 
 ## [Unreleased]
 
+### Fixed（真机验收脚本的零 root 前提与记忆库隔离，2026-10-11）
+
+- **零 root 前提在 run 期间被脚本自己抹掉**：`tests/credential_real_device.py` 与
+  `tests/t03_t05_real_device.py` 的 `write_prefs` 是**整体覆盖**（`cat > PREF`），而 entries 里
+  没有 `root_mode` —— 运行期 `agent_prefs.xml` 里这一项就被抹掉，`Prefs.rootMode()`
+  （`Prefs.java:132` `getString("root_mode","auto")`）落回默认 `"auto"`。也就是说「零 root 主链路」
+  这个自称在脚本运行期间并不成立；先前那份结论实际是靠设备侧证据撑住的（KernelSU 允许列表不含
+  `com.dsh.agentlite`、sulog 里没有一条 `su` 请求来自应用 uid），不是靠文档里写的代码层判据。
+  现在两个脚本的 prefs 写入都显式带上 `root_mode=off`，运行期条件与文档一致，也不再依赖
+  「某台设备恰好没授权」。
+- **T04a 记忆库隔离**：`t03_t05_real_device.py` 的「有证据路径仍入库」会假失败——上一轮验收已把
+  「打开计算器」写进记忆库，同场景任务被直接复现完成（logcat：「命中操作记忆库」→
+  「记忆库复现 1/1」→「已按记忆库直接完成（1 步，未重新规划）」），根本走不到
+  `AgentEngine.java:992`（`if (recordable && !recordedSteps.isEmpty())`）的入库分支，于是
+  「已写入操作记忆库」与「操作记忆未入库」两条日志都不出现，报「既无入库也无未入库日志」。
+  现在 T04a 开始前把 `flowmem.json` 移到 `flowmem.json.t04a.bak`、结束（含 `restore()` 兜底）归位；
+  相应地 T4-5 的表述改为「无证据终态不新建也不增长记忆库」，在隔离基线下与「有证据会新建」形成对照。
+- **还原链路**：删掉陈旧快照（原先脚本只在快照不存在时采集，导致上一轮的 prefs 被反复写回），
+  让脚本重新采集真实用户态（118 字节、无 `root_mode` 键）。
+- **新增运行期自检，一加上就抓出第二个缺陷**：两条脚本在推进阶段前会读回一次 prefs 并断言
+  `root_mode=off`（`credential_real_device.py` 的 `P0`、`t03_t05_real_device.py` 的 `P-ROOT`），
+  使「零 root」不再只是文档里的说法。自检首次运行即报 `root_mode=''`——`read_prefs()` 的正则只认
+  `value="..."` 属性形式，而 `SharedPreferences` 把字符串写成元素文本
+  （`_xml()` 产出 `<string name="k">v</string>`），于是 `base_url`/`model`/`root_mode` 一律读回空串。
+  此前没有断言依赖字符串读回（已接线的判断都读 boolean，如 `use_own_key`、`auto_accept_terms`），
+  所以一直没暴露；而「按读回值判断前置条件」这类断言会永远假失败。现在两种形式都认，并用 `_xml()`
+  的输出做了往返一致验证。
+- **`adb reverse` 隧道泄漏**：`credential_real_device.py` 建了两条隧道
+  （`tcp:19101`/`tcp:19102`）但 `restore()` 只还原 prefs 与令牌，不撤隧道，收工后设备上一直挂着
+  两条指向宿主的转发（下次运行还会静默复用陈旧隧道）。已在 `restore()` 里按端口逐条
+  `reverse --remove`。`t03_t05_real_device.py` 本就撤了自己的 `tcp:19111`，无需改。
+
+### Added（数据副本迁移演练与支付竞争 smoke，2026-10-11）
+
+- **`tests/migration_drill.py`**：在临时数据副本上用真实 `agentlite-server` 二进制 + 现场自签 TLS
+  走完首次迁移、停机核对、重开幂等、孤儿设备认领、迁移后写入、回滚与损坏边界，并新增**阶段 J
+  支付竞争 smoke**——`threading.Barrier(2)` 并发打「同一订单 pay vs cancel」与「同一订单两个不同
+  兑换码抢付」，断言恰好一个赢家，服务重开后核对额度增量恰等于赢家那张码的份额（多记即双重支付，
+  少记即丢账）。48 项断言全过。
+- **门禁**：`make check` 依赖改为 `go contract drill ui jvm`，新增 `make drill` 目标；演练只绑
+  `127.0.0.1` 随机端口、使用现场自签证书，不碰外部网络。
+- **报告同步**：`docs/INTERFACE_IMPLEMENTATION_2026-10-11.zh-CN.md` §4 上线前第 1、2 步标注
+  「本机已完成」，§6 复跑入口补 `make drill`，§7 重写设备验收边界并新增「Android 授权白名单
+  无损坏自愈」一条（该条已在同日 Fix 段补上自愈并真机验证）。
+- **真机脚本加固**：`tests/credential_real_device.py` 补解锁前置检查 `screen_ready()`。锁屏设备上
+  `uiautomator dump` 会超时打断脚本，而 `/data/data`（CE 存储）在锁定期间不挂载会让前置状态写入
+  静默落空——「未登录」本身又是被测状态，可能凑出一份看着合理的「通过」。现在直接退环境码 2 并
+  打印判据；锁屏设备实测输出 `环境不可用：锁屏未解（mShowingDream=false mDreamingLockscreen=true）`、
+  退出码 2。
+- **零 root 真机验收已在真机跑通**：零 root 由两条独立证据共同成立——代码层 `root_mode=off` 让
+  `RootShell.available()` 在探测前直接返回 false，设备层这台机器的 KernelSU 允许列表不含
+  `com.dsh.agentlite` 且 sulog 里没有任何一条 `su` 请求来自应用 uid（逐条核对都是 `uid=0 euid=0
+  comm="sh"`，即 adb shell 发起）；旁证为主进程与 guard 进程 uid 均为应用 uid（`u0_a577`）、
+  无障碍服务已绑定（`capabilities=169`）。两条脚本都用本机假端点
+  （经 `adb reverse` 暴露，不出网）。`tests/credential_real_device.py` → **44 通过 / 0 失败**
+  （含运行期零 root 自检 `P0`）：
+  首启与登录态、自己的配置、账号通道、模型缺失、故障归因与不跨通道、设置页保存后的显式选择卡，
+  含 3 张终态截图。`tests/t03_t05_real_device.py` → **15 通过 / 0 失败 / 1 跳过**
+  （含运行期零 root 自检 `P-ROOT`）：任务代际
+  （旧任务收尾回调不得撤掉新任务）、证据分级（无证据 done 落「不确定」且不入库，隔离基线
+  0 → 0 字节）、代点分支（本机未弹确认框故跳过，非缺陷）。两脚本主链路全程用户态，结束
+  均还原设备用户态。
+  首轮尝试被 ColorOS 锁屏挡住：`input` 合成事件被 keyguard 拒绝（滑动手势含底部边缘起手、
+  `keyevent 82/4/3`、`wm dismiss-keyguard`、`cmd window dismiss-keyguard`、`locksettings
+  set-disabled true` 报成功但不持久化、`USER_PRESENT` 广播、重启 SystemUI 全无效），锁定期间
+  `/data/data`（CE 存储）以密文目录项呈现、前置与取证都做不了；这是 Android 的安全设计，手工
+  解锁一次后即全绿。
+
+### Fixed（授权白名单损坏自愈与事前授权口径修正，2026-10-11）
+
+- **`AuthStore` 补上损坏自愈**：`SharedPreferences` 解析失败原本静默返回空 map，`AuthStore.list()`
+  因此无任何提示——一旦事前授权接线，损坏就表现为「白名单整体消失」且无从察觉。构造函数现在先
+  `recoverIfCorrupt(ctx)` 再取实例：用 `android.util.Xml.newPullParser()` 走到 `END_DOCUMENT` 并
+  要求首个 START_TAG 名为 `map`，任何 `Throwable` 判为不可解析；判定损坏则按
+  `agent_auth.xml.corrupt.<millis>` 改名保留现场（改名失败则 `delete()`），并写一条
+  `W AuthStore` 日志。只能「加载前预检」而不能像 `FlowMemory.java:68-82` 那样 catch 异常，是因为
+  `SharedPreferences` 的解析发生在 Android 内部、异常不外抛。`agent-lite` 与
+  `agent-unified/client` 两模块逐字节一致。
+  真机验证：设备装含该修复的构建（`73703ef912bf619018edf73d7b4640b8`）后从设置页点
+  「预授权管理」即触发，三条证据同时命中——`shared_prefs/` 出现
+  `agent_auth.xml.corrupt.<millis>`（md5 `f4e19c04c6c69de81d7e242ed8d8cd22`，与损坏原件
+  **逐字节一致**）、logcat 留下「授权白名单文件损坏，已备份为 …，白名单按空表继续」、对话框
+  正确显示「当前无预授权条目」。把备份复制回原名再触发一次可复现，产出第二份独立备份、md5 相同，
+  顺带证明时间戳命名在重复损坏下不覆盖前一次现场（`FlowMemory` 的固定备份名会）。
+- **事前授权未接线的事实写进文档**：`AuthStore.grantAlways()` / `isAlways()` 与
+  `AgentEngine.requestAuth()` 在 `agent-lite` 与 `agent-unified/client` 里都**只有定义、没有调用者**，
+  `OverlayController.showAuth()` 从不执行，卡片上「单次允许/始终允许/拒绝」三个按钮永远点不到；
+  已接线的只有设置页的 `list()` / `revoke()`，白名单没有写入路径。按
+  `docs/INTERACTION_LOGIC_SPEC.zh-CN.md` S-3「接线前**必须不**对外宣传事前授权拦截已生效」，
+  把 `README.zh-CN.md` 与 `docs/DOUBAO_SPEC_ADAPTATION.zh-CN.md` 中按已生效叙述的两处改为
+  「已实现但未接线」并指向 §10.2 的 DEV-4 登记；报告 §7 相应拆成两条（未接线 / 损坏自愈）。
+
+### Fixed（门禁稳定性：演练偶发假失败，2026-10-11）
+
+- **`tests/migration_drill.py` 的「旧配额流水未作为入账依据重放」会偶发假失败**——`make check`
+  实测 4 次里红了 1 次，紧接着单跑又是 48/0（48 项断言全过）。这种「随机变红」比稳定失败更难查。
+  根因是断言写 `first_tx["accounts"][0]` 并假定第 0 个是 alice，而 `billing.jsonl` 首次导入的数组
+  顺序来自 `agentlite-server/store.go:141` 的 `accounts map[string]*Account` 经 `billing.go:63`
+  `for _, a := range s.accounts` 导出——**Go 不保证 map 迭代顺序**。
+  实测（go1.27.1）：同一进程对 2 元素 map 反复 `range` 200 万次，首键 `a_legacy1` 占 87.5%、
+  `a_legacy2` 占 12.5%；换成 3 元素则是 75% / 12.5% / 12.5%——正是 Swiss table 单 group 8 个 slot、
+  迭代起点在 8 个位置上等概率的几何（7/8、6/8、1/8）。跨进程探针 40 轮复现同一比例：
+  `accounts[0]` 落在 bob（quota=300）上 **6 次（15%）**，这 6 次里按位置取到的值与按 id 取到的值
+  不一致，旧断言必然假失败。旧 detail 又写死「alice 额度仍为 9000」，把真实值一起藏住，故障现场
+  因此看不出是取错了对象。改为按 `account_id` 取账号、detail 打印实际额度——同一探针按 id 取值
+  40 轮全对，`make drill` 连跑 5 次均 48/0。服务端导出顺序不影响语义（导入按 id 匹配），未改动。
+- 运维提示同步进报告 §4.2：副本核对不要逐字节 diff `billing.jsonl`，按 id 比对。
+
+### Fixed（任务代际防护 T05a / 动作入口收敛 T03a / done 证据分级 T04a，2026-10-09）
+
+- **T05a 任务代际**：`OverlayController.taskEnded(keepCard=true)` 的 4 秒收尾回调补上 `taskActive`
+  守卫（此前无条件撤胶囊，而 15 秒分支有守卫）；`AgentEngine` 引入 `RUN_SEQ` 代际号，旧任务的延迟
+  回调只在「仍是最新一代」时才改 `KeepAliveService` 状态。真机实测：任务 A 完成后 0.2 秒启动任务 B，
+  B 的保活锁、覆盖层胶囊与运行态通知均未被旧回调破坏。
+- **T03a 代点进 exec**：启动确认代点与无限制模式协议代点（勾选框 + 同意按钮）三处由裸
+  `svc.tap`/`svc.tapNode` 改为经 `exec()`，统一节点直点、坐标修正与执行日志，失败原因进日志不再
+  静默落空。`injectViaClipboard` 的 root 聚焦点击登记为受约束例外（`DisplaySpec.applyOffset` 非幂等）。
+- **T04a done 证据分级**：新增纯静态 `judgeDone(sawFgChange, expectPkg, activePkg)` →
+  `PROVEN / WEAK / UNPROVEN`；`arrivedExpectPkg` 记住「确实到达过被期望的目标」，使 `PROVEN` 在
+  真机可达（`expectPkg` 是一次性核对项，done 时通常已被清空）。**二次无证据 done 不再放行**：
+  终态降级为「不确定」，`recordable=false` 不入记忆库，新增琥珀色 `showUncertain` 卡片与绿色
+  `showDone` 的完成语义位分离（终态文案不含「完成」字样）。
+- 新增门禁并纳入 `make ui` / `make jvm`：`tests/generation_guard.py`(14)、`tests/auto_tap_guard.py`(15)、
+  `tests/done_evidence_guard.py`（真值表 18 + 结构守卫 18）、共用剥注释读法 `tests/java_source_util.py`；
+  三者在 HEAD 旧代码上分别 FAIL 5 / 6 / 8 项。**注意**：旧代码断言基线取自 HEAD；工作树上的
+  「修复前」实测为 5 / 5 / 7 项。
+- 真机回归（OnePlus PKX110 / Android 16 / 无线 adb）：凭据路由 A–E 41/0 + 阶段 F 6/0 无回退；
+  三卡行为 `tests/t03_t05_real_device.py` **14 通过 / 0 失败 / 1 跳过**（跳过：本机系统已记住
+  「允许打开」，启动确认框未复现）。详见 `PROJECT_OVERVIEW.zh-CN.md` §18.8 与
+  `docs/MATURE_MODULE_INTEGRATION_PLAN.zh-CN.md` §23.12。
+- **未做（方案明确留待后续）**：T04b（WEAK 档入库门槛）、T03a 第二刀（`execChecked` 包层）、
+  T04a 的 WEAK 入库行为。**真机暴露但本轮未改**：结果卡片（`FLAGS_TOUCH` 覆盖层）在场期间
+  点「运行」存在竞态，建议另立卡。
+
+### Fixed（悬浮胶囊吃掉应用底部导航点击，2026-09-21）
+
+- 修复任务运行期间底部状态胶囊（窗口 frame `[264,2437]-[952,2542]`）压在应用 Tab 栏上、
+  以 `FLAGS_TOUCH` 吞掉点击的问题：胶囊改为 `FLAG_NOT_TOUCHABLE` 纯展示层并移除点击监听。
+- 实测对照：同一坐标 `tap(766,2442)` 在无悬浮窗时画面变化 36.6%，胶囊存在时为 0.0%——
+  这是「微信朋友圈点赞做不到」的直接原因（Agent 点不动「发现」Tab）。
+- 修复后真机端到端复验通过：`Like the first Moment in WeChat Moments` 19 步完成，
+  朋友圈首条动态出现点赞条目「报道北方」，与修复前基线（无任何点赞）对比确认点赞真实发生。
+- 详见 `PROJECT_OVERVIEW.zh-CN.md` §17.9。
+
+### Fixed（纯视觉感知与看门狗，2026-09-21）
+
+- 修复 ColorOS/微信类应用只返回窄幅 `SystemUI` 状态栏节点时仍被当作应用页面的问题；检测到该形态后强制进入截图+比例坐标纯视觉路径。
+- 纯视觉/状态栏污染场景的无进展看门狗改用动作后新截图视觉摘要；截图失败时不再依据恒定状态栏节点或旧截图误杀任务。
+- 新增 `NodeInfo` 纯 Java 感知判定与视觉摘要回归，`FlowMemoryTest` 共 54 项通过；APK 独立构建成功。
+- 更新 `docs/INTERACTION_LOGIC_SPEC.zh-CN.md` DEV-5，保留生态三档、截图敏感守卫等未完成项。
+
+### Added（M3-02 参数 Validation，2026-09-21）
+
+- 新增纯 Java `ValidationResult`，`ToolSpec.validate` 与 `ToolRegistry.validate` 在路由接线前冻结参数校验边界：必填、未知字段、null、类型、范围和枚举。
+- 整数仅接受十进制整数；拒绝小数、科学计数法、NaN/Infinity；错误结果不回显输入值。
+- 新增 `tests/m3_tool_validation_guard.py`；扩展 `ToolRegistryTest`，M3-01/M3-02 JVM 断言共 58 项。`feature_tool_router` 继续默认关闭，旧 `AgentEngine.exec()` 不变。
+
+### Added（M3-01 声明式工具注册表，2026-09-21）
+
+- 新增纯 Java `ToolParameter`、`ToolSpec`、`ToolRegistry`，严格从 `ActionSchema` 登记 25 个动作。
+- 冻结参数最小 schema：必填性、类型、范围、枚举和 `additionalProperties=false`；重复注册明确拒绝。
+- `ask`/`done`/`fail` 作为控制工具登记，但不携带执行器、不接入 `AgentEngine`；`feature_tool_router` 继续默认关闭。
+- 新增 `tests/m3_tool_registry_guard.py`（22 项）和 `tests/ToolRegistryTest.java`（46 项），详见 `docs/ADR-003-M3-TOOL-REGISTRY.zh-CN.md`。
+
+### Added（M0-02 结构化契约冻结，2026-09-20）
+
+- 新增纯 Java `ScreenSnapshot`、`ToolInvocation`、`TraceEvent`、`ScreenState` 契约及稳定字段渲染器，不依赖 Android、`org.json` 或第三方运行时库。
+- 冻结快照、工具、轨迹、流程复现四类版本；工具终态不可逆，Trace 事件限定为 8 类。
+- 按用户确认冻结隐私与存储边界：密码节点输出 `[password]`；Trace 未来默认本地保存脱敏截图/快照，最多 20 个任务、单任务 8 MiB、总量 64 MiB。
+- 旧 `FlowPlan` 无 `ScreenState` 时标记 `LEGACY_UNGUARDED`，仅明确 `LOW`/`NORMAL` 风险允许直放；空值、未知值和高风险交回模型与现有守卫。
+- 新增 `tests/m0_contract_guard.py`（29 项）与 `tests/ContractModelsTest.java`（23 项），并入 `make ui`/`make jvm`。
+- 详见 `docs/ADR-002-CONTRACTS.zh-CN.md`。
+
+### Added（M0-01 成熟模块功能开关基线，2026-09-20）
+
+- 新增 `FeatureFlags` 与 `Prefs.featureFlags()`，集中冻结 8 个成熟模块开关和 2 个影子模式开关。
+- 感知、工具路由、复现、技能、Provider、虚拟屏及策略/轨迹正式模块默认关闭；策略与轨迹影子模式默认开启但不改变旧执行路径。
+- 新增 `tests/m0_feature_flags_guard.py`，29 项静态契约断言并入 `make check` 的 `ui` 目标。
+- 新增 `docs/ADR-001-FEATURE-FLAGS.zh-CN.md`，记录默认矩阵、版本、兼容边界和回滚方式。
+
+### Added（三功能协同整合：模糊语义 + 操作记忆库 + 弹窗治理，2026-09-20）
+
+把此前各自独立的三块能力在**同一条任务路径**上打通：转译产出结构化流程 → 主模型按流程执行 →
+执行中把「一次性突发界面」当环境噪音剔除 → 业务步骤写入操作记忆库 → 第二次同任务**零模型往返**复现。
+来源：用户要求「把最新的功能进行整合（模糊语义，记忆库，新的 skill）」。
+
+- **回放三态终局**（`REPLAY_OK=1` / `REPLAY_STALE=0` / `REPLAY_INTERRUPTED=-1`）：复现不再只有
+  「成/败」二元。**环境打断**（弹窗两轮关不掉、敏感场景接管、a11y 断开）**不记失败**——此前无差别
+  `markFail` 会让两次运营弹窗误退役一条好记录；只有**路径失效**（界面改版、目标消失、连续无变化）
+  才 `markFail`。
+- **采集侧一次性突发界面过滤**（`PopupGuard.isDismissAnchor`）：带强关闭锚点（跳过/关闭/×）的步骤
+  **跳过入库**并留痕「操作记忆跳过一次性突发界面步骤」。判定受**任务语义约束**——任务本身是
+  「取消订单」时 `取消` 不得被当噪音跳过。修复的是「把广告关闭步记进路径，下次复现去点一个
+  已经不存在的按钮」这一类必然失效。
+- **回放侧弹窗处置**（`PopupGuard.findDismissable` + `MAX_REPLAY_DISMISS=2`）：回放遇弹窗先处置
+  再续跑，两轮无效即判环境打断并回退模型，不无限重试。
+- **`TYPE_SYSTEM` 窗口纳入感知**（`AgentA11yService.collectNodes`）：系统权限窗/系统对话框的节点
+  此前被整窗丢弃，复现路径只能看见被遮挡的底层旧节点。
+- **一体化端到端**：新增 `tests/integrated_features_e2e.py`（真机 16 项：夹具弹窗在场时提交 →
+  转译成功 → 弹窗步被识别且不入库 → 业务步入库且带骨架指纹 → 第二次命中记忆库并直接完成 →
+  零模型往返 → 弹窗噪音不给记录增加失败计数）。假模型 `tests/mock_llm_server.py` 新增
+  `integrated` 场景（多模态 content 解析，此前 vision 请求会让 mock 500 → 引擎静默切网关）。
+- **规范与 Skill 同步**：SPEC 升 **v1.0.6**（新增 §4.4 操作记忆库与复现路径 R-1~R-6、附录 C 对照行）；
+  Skill §9 溯源表新增三条（记忆库、采集侧过滤、回放侧处置），§7.5 补充「引擎可能先于模型复现历史
+  路径」的正常机制说明。动作集合与字段契约**未变**，`SCHEMA_VERSION` 不递增。
+- **测试环境治理**（`tests/integrated_features_e2e.py`）：真机已登录时 `LlmClient.forPrefs` 会给
+  自备 Key 客户端挂**同步服务网关 fallback**，mock 一旦失败真实模型就接管、测试结果不可复现——
+  测试期清空 `sync_token`/`account_id` 掐断该通道；备份改为**主机侧且不覆盖首次**
+  （设备端备份曾被下一轮 run 覆盖，导致还原后把 mock 配置写回用户设备）；恢复链逐条容错
+  （一次 USB 掉线曾中断整个还原）。
+
+### Added（软件引导跟随：新手引导/分步指引，2026-09-19）
+
+- **`SCHEMA` 守则 4 新增 g) 新手引导/分步指引**（来源：用户要求「增加软件引导跟随，让 agent
+  可以跟随软件指引进行操作」）。判定特征：高亮遮罩+镂空聚焦、气泡「点击这里/试试看」、
+  「下一步/知道了/开始使用/跳过引导」按钮、分步圆点。双策略按任务相关性分流：
+  - **跟随模式**（任务本身要求「跟着引导设置/开通」，如首次配置、开通某功能）：按引导指示
+    点击被高亮的元素或「下一步/继续/知道了」逐步行进，**每步复验界面变化后**再走下一步；
+  - **跳过模式**（引导只是首次教学、与任务无关）：优先点「跳过/跳过引导/×/不需要」；
+    没有跳过入口就连续点「下一步/知道了/开始使用/继续」走完（一般 3~6 步）；
+  - **红线不豁免**：引导中要求授权、登录、开启通知、付费、同意协议仍按守则 4 a)/d)
+    与守则 5（敏感红线）处理——引导 UI 不构成绕过敏感确认的理由；
+  - **循环防护**：超过 6 步仍走不完或同一提示循环重复 → 找跳过入口或 `fail`「引导无法完成」。
+- **门禁扩至 30 项**：`tests/popup_ad_guard.py` 新增 PU-11 八项断言（判定特征/跟随/跳过/
+  红线不豁免/6 步上限），守则 4 标题同步列入「新手引导」类别；Skill §3 表新增引导行、
+  SPEC 升 v1.0.5（§4.2 环境态序列补「新手引导/分步指引」）。动作集合与字段契约未变，
+  `SCHEMA_VERSION` 不递增。
+
+### Added（突发界面处置守则：弹窗/广告/权限/异常跳转，2026-09-19）
+
+- **`SCHEMA` 新增守则 4「突发界面优先处置」**（原守则 4~9 顺延为 5~10；动作集合与字段契约未变，
+  `SCHEMA_VERSION` 不递增）：来源：用户反馈「当前 skill 依旧不全面，无法应对弹窗、广告等突发情况」。
+  六类突发界面各有明确处置边界——
+  - **系统权限弹窗**：最小必要授权，「仅本次允许/使用时允许」优先；任务没用到的敏感权限
+    （定位/通讯录/短信/电话/相机/麦克风）点拒绝且不再强求；拿不准 `ask`；
+  - **开屏/插屏广告**：只点「跳过/跳过广告/×/关闭」或 `key 4`，**严禁**点广告主体/领取福利/
+    下载/抽奖；倒计时先 `wait` 1000~2000ms；两轮关不掉 → `fail`「广告无法关闭」；
+  - **运营弹窗**（领券/红包/评分/更新/会员）：无关任务点「关闭/×/暂不/取消/稍后再说」，
+    「立即更新/立即开通/立即领取」等改变状态的一律不点；
+  - **登录/注册墙**：先试「跳过/暂不登录/游客模式」；绕不过 → `fail`「需要登录」，
+    严禁自行输入账号、密码、验证码；
+  - **系统对话框**（USB 调试/位置服务/剪贴板）：非任务必需一律「拒绝/取消/仅本次」；
+  - **异常跳转**（浏览器/应用商店/下载页）：`key 4` 返回并复验 → 重新 `app` 直达 → `fail`；
+    严禁进应用商店搜索/安装补救（与守则 7 呼应）。
+  通则：每步先于原任务检查顶层窗口；被遮挡的底层页面旧编号禁止引用；处置后以
+  「弹窗消失 + 底层目标可见」复验，未复验不得恢复原任务；同一弹窗两轮无效必须换策略。
+- **防漂移门禁 `tests/popup_ad_guard.py`**（22 项断言，并入 `make check` 的 `ui` 目标）：
+  守则 4 每类突发界面一条不漏地变成断言（PU-1~PU-8），PU-9 核对 `Prefs` 转译层简短守则
+  不弱化，PU-10 核对守则编号 1~10 连续有序（防插入错位）。
+- **三处一致性同步**：Skill（`skills/software-interaction-logic/SKILL.md` §3 环境态表扩充
+  五类新环境态 + §8 检查清单 + §9 溯源表）与守则（`docs/INTERACTION_LOGIC_SPEC.zh-CN.md`
+  v1.0.4 §4.2 环境态序列 + 版本变更表）按「代码 / Skill / 守则」纪律同步。
+
+### Added（操作记忆库：记一次，之后直接复现，2026-09-19）
+
+- **记忆库默认开启**（`Prefs#flowMemory`，可关）：每次任务把**每一步成功执行的操作**记进操作记忆库
+  （`filesDir/flowmem.json`），同一句话下次再来时**直接照做**——跳过转译与主循环的逐步推理，
+  **零模型往返**完成操作。来源：用户要求「记忆库改成默认的，将每一步成功执行的操作放入记忆库，
+  之后直接复现记忆库就可以完成操作」。
+- **判断与搬运分层**：`FlowPlan`（纯逻辑，零 android / org.json，桌面可直跑回归）
+  + `FlowMemory`（落盘 / 命中统计 / UI 列表）+ `AgentEngine`（采集与复现接线）。
+  复现全程复用既有 `exec()`，手势降级、root 兜底、输入法借用、敏感场景守卫与模型驱动时**完全一致**
+  ——记忆库既不是第二条执行路径，也不是免检通道。
+- **三道闸门**：① **可复现动作白名单**（`app`/`tap`/`longpress`/`text`/`key`/`back`/`home`/`edge_back`/
+  `swipe`/`scroll`/`wait`/`open_url`），出现 `remote`/`open_api`/`list_apps`/`setting` 类动作即
+  **整条流程作废**（不写半条流程——缺步的路径比没有路径更危险）；② 输入内容疑似凭据
+  （4 位以上纯数字、含「密码/验证码/口令」）→ 整条不入库，密码框连文本锚点都不采集；
+  ③ **不上云**（不接 `SyncClient`），本地可见 / 可删 / 可清空 / 可关。
+- **定位优先语义**：`resource-id → 文本相等 → 文本包含（两边都 ≥2 字）→ 类名唯一`，
+  都定位不到才退到记录的比例坐标（跨分辨率、跨设备可用）；仍拿不到就**放弃复现**而不是猜。
+- **失败即贬值**：连续 2 次复现失败即退役（任何一次成功立即清零），失败后**回退模型规划**——
+  记忆库永远只是加速器，不会变成卡住任务的新故障点。
+- **门禁**：`tests/FlowMemoryTest.java`（桌面 JVM，48 断言）+ `tests/flow_memory_guard.py`
+  （免设备，31 项）+ `tests/flow_memory_e2e_mock.py`（虚拟机端到端：记一次 → 直接复现且零模型往返，
+  配套 `mock_llm_server.py` 新增 `flow` 场景）。
+
 ### Changed（模型通道切换，2026-09-15）
 
 - **额度网关上游切换到 DeepSeek**（dashscope 两条通道上游均欠费导致产品不可用）：服务端新增

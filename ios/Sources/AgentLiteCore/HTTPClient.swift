@@ -36,6 +36,7 @@ public struct ServerError: Error, CustomStringConvertible, Sendable {
 public enum AgentLiteError: Error, CustomStringConvertible, Sendable {
     case notLoggedIn
     case notBound
+    case sessionChanged
     case badURL(String)
     case transport(String)
     case decoding(String)
@@ -47,6 +48,7 @@ public enum AgentLiteError: Error, CustomStringConvertible, Sendable {
         switch self {
         case .notLoggedIn: return "尚未登录账号"
         case .notBound: return "本机尚未绑定到账号"
+        case .sessionChanged: return "账号会话已变化，请重新同步"
         case .badURL(let u): return "地址不合法: \(u)"
         case .transport(let m): return "网络错误: \(m)"
         case .decoding(let m): return "响应解析失败: \(m)"
@@ -137,6 +139,14 @@ public actor HTTPClient {
     private let session: URLSession
     private var token: String?
     private var deviceID: String?
+    private var accountID: String?
+    private var authGeneration: UInt64 = 0
+
+    /// 只用于把一次同步绑定到发起它的登录会话；不保存令牌副本。
+    struct SyncSession: Equatable, Sendable {
+        let accountID: String
+        let generation: UInt64
+    }
 
     /// - Parameters:
     ///   - pinnedSPKISHA256: 允许的服务端证书 SPKI 指纹。**空集合 = 拒绝一切连接**
@@ -173,6 +183,12 @@ public actor HTTPClient {
         }
     }
 
+    /// 测试使用同一个请求实现，只替换 URLSession 的传输配置。
+    init(baseURL: URL, session: URLSession) {
+        self.baseURL = baseURL
+        self.session = session
+    }
+
     /// 是否环回地址。公开出去是因为宿主 App 需要据此决定"用哪个 pin"：
     /// 环回可免 pin（联调），公网地址必须 pin —— 这个判断只应有一份实现。
     public static func isLoopback(_ url: URL) -> Bool {
@@ -185,13 +201,31 @@ public actor HTTPClient {
         HTTPClient(baseURL: baseURL, pinnedSPKISHA256: [], allowInsecureLoopback: true)
     }
 
-    public func setAuth(token: String?, deviceID: String?) {
+    public func setAuth(token: String?, deviceID: String?, accountID: String? = nil) {
+        if self.token != token || self.deviceID != deviceID || self.accountID != accountID {
+            authGeneration += 1
+        }
         self.token = token
         self.deviceID = deviceID
+        self.accountID = accountID
     }
 
     public var currentToken: String? { token }
     public var currentDeviceID: String? { deviceID }
+
+    func syncSession() throws -> SyncSession {
+        guard let token, !token.isEmpty, let accountID, !accountID.isEmpty else {
+            throw AgentLiteError.notLoggedIn
+        }
+        guard let deviceID, !deviceID.isEmpty else { throw AgentLiteError.notBound }
+        return SyncSession(accountID: accountID, generation: authGeneration)
+    }
+
+    func requireSession(_ expected: SyncSession) throws {
+        guard expected.accountID == accountID, expected.generation == authGeneration else {
+            throw AgentLiteError.sessionChanged
+        }
+    }
 
     // MARK: 请求
 
@@ -199,6 +233,7 @@ public actor HTTPClient {
         public var authorized: Bool
         public var deviceScoped: Bool
         public var query: [String: String]
+        var syncSession: SyncSession?
 
         public init(authorized: Bool = true, deviceScoped: Bool = false, query: [String: String] = [:]) {
             self.authorized = authorized
@@ -252,6 +287,7 @@ public actor HTTPClient {
         }
         guard let url = comps.url else { throw AgentLiteError.badURL(path) }
 
+        if let expected = options.syncSession { try requireSession(expected) }
         var req = URLRequest(url: url)
         req.httpMethod = method
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")

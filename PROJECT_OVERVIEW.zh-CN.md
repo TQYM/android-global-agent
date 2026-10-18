@@ -1,7 +1,8 @@
 # Android Global Agent — 项目全景文档
 
 > 本文档供后续 AI 接手时快速了解项目现状、技术决策与已知边界。
-> 最后更新：2026-09-13（新增 §14 iOS 端「账号+远程控制」与 §13 全面体检结论；正文 §1–§12 仍以 2026-09-06 为基准，刷新列入待办）
+> 最近增量更新：2026-10-07（接续 10-06 审计，实现 T01 凭据行为回归切片与 T02 路由修复）。历史正文、审计与实测记录保留；§1–§12 主要描述早期完整版，不直接代表当前 Agent Lite 配置或验证结论。
+> **最新实施状态先读 [§18.6](<#186-t01-凭据切片与-t02-路由修复2026-10-07>)；整体阶段仍见 §18，未来开发见[整合规划 §23](<docs/MATURE_MODULE_INTEGRATION_PLAN.zh-CN.md#23-面向老年人与手机入门者的开发续篇2026-10-06>)。**10-06 轮仅文档；本次已获准修改测试和代码，未安装、部署或发布。
 
 > 🧭 **多项目工作区——先认领项目再动手**：本工作区同时存在多个互不相干的子项目
 > （`agent-client` / `agent-lite` / `ios` / `agentlite-server` / `agent-unified` / `agentd` /
@@ -129,6 +130,10 @@ sh build-mac.sh
 
 ## 7. 沙盒模式（Root 限定）
 
+> **边界声明（2026-09-21）**：本节描述的是 **root 专属的「可选增强」能力**，启停不影响主链路。
+> 下文「为什么必须 root」只解释**这个可选能力本身**为何需要 root，
+> **不构成任何功能 / 构建 / 测试 / 发版对 root 的依赖**（全项目底线见 §12.1）。
+
 ### 为什么必须 root（三重实测证据）
 1. Android 10+ 起 App 创建公有虚拟屏被拒（需 ADD_MIRROR_DISPLAY/CAPTURE_VIDEO_OUTPUT 或 MediaProjection token），OWN_CONTENT_ONLY 屏只能显示自己内容；
 2. ColorOS（实测 ColorOS 16）会把**任何**普通/MediaProjection 虚拟屏的任务投射到物理屏（`canHostTasks=false`）；
@@ -201,6 +206,9 @@ sh build-mac.sh
 | 模型要"打开设置"报未知页 | `SETTINGS_PAGES` 没有通用 `settings` 别名 | 补 `settings → ACTION_SETTINGS` |
 | 无线 adb 报 `No route to host`，但 `nc -z IP 端口` 明明是通的 | adb server 缓存了上一次的失败状态（2026-09-18 两次踩到，手机换无线调试端口后尤其容易） | `adb kill-server && adb start-server` 再 `adb connect IP:端口`，一次即通 |
 | 语音按钮录音正常、就是识别不出字 | ASR 随 LLM 上游换成 DeepSeek 而失效（无音频能力）；即便指向明文 http 端点，Android 也会拦 `Cleartext HTTP traffic` | 见 §16.14：独立 ASR 端点 + `tools/asr_start.sh` + network_security_config |
+| **主界面/设置页显示「剩余 0 units」，账号其实还有额度**（2026-09-21 真机实测：服务端 `quota=144`，界面显示 0） | 服务端 `quota` 语义是**剩余额度**（`quota.go` 每次调用执行 `Quota -= units; QuotaUsed += units`），客户端却在 5 处按 `quota - quota_used` **二次扣减**再 `max(0,…)` | **待修复**（本轮设备验证只记录不改码）：剩余额度直接取 `quota`，`quota_used` 仅作「累计已用」展示。见 §17.2 缺陷① |
+| **点输入框后「运行」按钮点不到、输入内容也看不见** | `AndroidManifest.xml` 未声明 `windowSoftInputMode`；软键盘弹出后覆盖输入区（实测键盘顶 ≈y1180，输入框 `1536–1757`、运行键 `1562–1730` 全在覆盖范围内） | **待修复**：声明 `adjustResize`（或其他让输入区随键盘上移的方案）。见 §17.2 缺陷② |
+| 真机验证期间 App 反复报「无障碍服务掉线」并执行 L1 抖动修复 | 主机跑 `uiautomator dump` 会拉起 `com.android.commands.uiautomator` 抢占无障碍绑定，与 AgentLite 服务互斥 | **测试设施问题，非产品缺陷**：验证期间改用 `screencap`，静默 60s 实测零掉线。见 §17.3 |
 
 ---
 
@@ -215,9 +223,16 @@ sh build-mac.sh
 - [x] **平板横屏/多窗口适配**：分辨率差异由比例坐标天然解决；横屏/分屏/旋转已由 DisplaySpec 形态注入 + 分屏窗口区域提示覆盖（2026-09-11，待真机回归）
 - [ ] **鸿蒙设备适配**：兼容层 2–4.x 验证与 NEXT HDC 外挂原型挂起等真机；NEXT 原生评估已出（`docs/HARMONY_NEXT_EVAL.zh-CN.md`：HDC 外挂式为主路线，原生重写冻结）
 - [ ] ~~**HarmonyOS 兼容性**~~ → 实为荣耀 MagicOS（hihonor 系），a11y API 行为与 AOSP 一致，已验证
-- [ ] **模糊语义理解与流程转译**（待评审，2026-09-18）：把 `planTask` 的 3 行散文升级为结构化 `FlowSpec`
-  （P0 无 UI 改动 / P1 澄清卡片 / P2 流程复用），覆盖口语省略、指代继承、歧义澄清、流程复用、ASR 噪音五类模糊。
-  设计见 `docs/FUZZY_SEMANTIC_TO_FLOW_DESIGN.zh-CN.md`；**尚未动代码**
+- [x] **模糊语义理解与流程转译 P0**（2026-09-18）：`planTask` 由 3 行散文升级为结构化 `FlowSpec` 转译
+  （新增 `TextNormalizer` / `FuzzyFlow` / `SemanticTranslator`，含 token 预算与截断修复）。
+  `make check` 全绿（转译门禁 22 项 + 桌面回归 85 断言），**Android 14 虚拟机 4 场景端到端通过**。
+  设计见 `docs/FUZZY_SEMANTIC_TO_FLOW_DESIGN.zh-CN.md`（附录 D 为实施记录）。
+  **待办**：① 真机 + 真 Key 验证「真实模型能否稳定输出合规 FlowSpec」（最大遗留风险）；
+  ② P1 澄清卡片 / P1 实体账本
+- [x] **操作记忆库（原 P2「流程库复用」）**（2026-09-19）：每一步成功执行的操作自动入库
+  （`FlowPlan` 纯逻辑 + `FlowMemory` 落盘，`filesDir/flowmem.json`），同一句话下次**直接复现、零模型往返**；
+  复现失败即贬值并回退模型规划。**默认开启**，记忆库页可查 / 可删 / 可清空 / 可关。
+  设计见 `docs/FUZZY_SEMANTIC_TO_FLOW_DESIGN.zh-CN.md` §4.4.1、§5.4.4、附录 E。
 
 ---
 
@@ -267,7 +282,46 @@ sh build-mac.sh
 
 - `api_key` **永不入 git**，仅存在设备 SharedPreferences
 - 用户活跃使用手机时（聊天、支付、浏览），**禁止任何盲触输入**
-- root 是可选加速器，**永远不是零 root 路径的依赖**
+- **底线：全项目禁止依赖 root**（详见 §12.1，原文「root 是可选加速器」已升格）
+
+### 12.1 底线规则：全项目禁止依赖 root
+
+> **升格记录（2026-09-21）**：原表述「root 是可选加速器，**永远不是零 root 路径的依赖**」只覆盖客户端执行路径，
+> 现扩为**全工作区底线**——覆盖 `agent-client` / `agent-lite` / `ios` / `agentlite-server` / `agent-unified` /
+> `agentd` / `harmony-agent` / `repo`（含构建、部署、测试、文档、发布说明）。
+> **同步承载**：仓库根 `AGENTS.md`（会话强制加载），两处内容冲突时以本节为准。
+
+**语义（唯一定义）**：**零 root 是唯一必需基线**；root 只能是「**可用则用、不可用则无损降级**」的可选增强。
+
+**禁止（MUST NOT，违反即缺陷；不因「开发机/目标机已 root」而豁免）**：
+
+1. **前置条件化**：任何功能、构建、安装、部署、测试、发版不得以 root（`su`、`app_process`、系统签名、
+   `adb root` 等）为前置条件。无 root 设备必须能走通主链路：安装 → 登录 → 建任务 → 执行完成。
+2. **唯一路径化**：不得让任何能力只有 root 一条路径。root 路径必须配零 root 等价路径或**明确降级**；
+   降级要静默切换且日志可见，**不得静默失效**。
+3. **命令拼接**：禁止把模型输出/外部输入拼进 `su -c` 等 shell（提示注入 = 任意命令以 root 执行，见 §13.1 P0-2）；
+   root 通道只允许**白名单固定命令 + 参数校验**。
+4. **文档与门禁**：README / 手册 / CI / 发布说明不得把 root 写成「要求 / 依赖 / 前置」；
+   不得让「设备未 root」导致门禁或测试失败。
+5. **未登记新增**：新增 root 专属功能**必须先在下方例外表登记**，并写明零 root 影响面与降级方案；未登记即违规。
+
+**允许（MAY）**：root 作为可选加速器存在——§6 零 root 能力矩阵是**基线能力**，§7 沙盒模式是 **root 专属可选能力**。
+前提是「无 root 时能力可缺失但**不阻塞主链路**，且缺失对用户与日志**可见**」。
+
+**例外登记表（现有 root 相关实现，一律按「可选增强」对待；新增即登记）**：
+
+| 位置 | root 用途 | 零 root 路径 | 判定 |
+|---|---|---|---|
+| `agent-client`（`RootShell` / `SandboxController`） | 沙盒虚拟屏、a11y 保活、root 文本注入 | §6 无障碍矩阵（`root_mode=off` 全功能） | 合例（P0-2 注入面已加白名单） |
+| `agent-lite`（`RootShell.java:44/62`，`Prefs.rootMode()` 默认 `auto`） | 手势/注入的 root 加速分支、`root_mode` 上报 | 无障碍通道即主路径 | 合例，**待补**「无 root / `root_mode=off`」显式回归 |
+| `agentd`（`agentd-go` + `agentd-apk`） | 守护以 root 运行、a11y 桥 8081、WebUI | 当前**无**零 root 形态 | **待评估**：补零 root 形态，或明确定位为 root 专属组件并在文档声明 |
+| `tools/set-glm-key.sh:60-69` | `su -c` 改写设备 prefs 写入 ASR key | 可改走应用内设置界面写入 | 合例（运维脚本，非产品路径） |
+| `tools/harmony-agent` | HDC 外挂通道 | — | 合例（不要求设备 root） |
+| `tests/integrated_features_e2e.py` | 通过 `su -c` 读写 `agent-lite` 私有 prefs/flowmem，构造集成 E2E | `tests/flow_memory_e2e_mock.py` 的设备路径、应用内测试入口或导出的测试接口 | **不合例：不得作为必跑基线；当前仅能标为 root 专属增强/待改造** |
+
+**验证（SHOULD，作为门禁候选）**：
+无 root 设备（或 `root_mode=off`）跑通主链路 = 硬门禁项；文档层面扫 README / 手册 / 门禁脚本，
+确认不存在把 root 写成前置换取的表述。
 
 ---
 
@@ -1118,6 +1172,648 @@ adb shell "rm /sdcard/Android/data/com.dsh.agentlite/files/project_progress.txt"
 于是**改规范而不是绕过**：`SPEC_UX_001` 新增 §1.1 例外条款，门禁断言从「绝不代点」改为
 「**代点必须可关闭**」，并保留「`isTermsDialog` 只检测、不掺点击逻辑」的约束。
 
+## 17. 真机验证记录（2026-09-21 · OnePlus 13T / ColorOS 16 / Android 16）
+
+> 设备 `PKX110`，已安装 `com.dsh.agentlite` 0.6.0（versionCode 6，含 M0-01/M0-02/M3-01 源码类）。
+> 全程零 root 业务路径（仅 adb + App 自身能力，`su` 只用于读取证据）。**本轮只验证与记录，未改任何源码。**
+
+### 17.1 验证矩阵（通过项）
+
+| 项 | 结果 | 证据 |
+|---|---|---|
+| 冷启 | **204ms**（COLD），无 FATAL/AndroidRuntime | `am start -W`；`logcat` 无崩溃 |
+| 无障碍绑定与自愈 | 绑定成功；`force-stop` 后仍保持；`kill -9` 后自动重绑 | `dumpsys accessibility` + `settings get secure` |
+| 真机首成功 | 任务「Open the Calculator」**5 秒完成**（2 步，`app com.coloros.calculator` 直达） | engine.log `18:13:01→18:13:06` |
+| 记忆库闭环 | 第一次写入 1 条；**第二次命中并直接复现，零模型往返** | engine.log `命中操作记忆库 → 记忆库复现 1/1`，且无「流程转译」记录；`flowmem.json` 落盘 |
+| 用户停止 | 「运行」后 1.5s 点停止 → `收到停止请求` → `任务已被用户停止`，**未记为失败** | engine.log `18:15:46` |
+| 进程死亡恢复 | `kill -9` 后重启：账号、模型、设备 ID、记忆库全部保持 | prefs + `flowmem.json`（368 字节） |
+| 升级安装 | `install -r` 平滑，登录与 a11y 绑定未丢 | `dumpsys package` |
+
+### 17.2 本轮发现的缺陷（**未修**，按用户要求只记录）
+
+**缺陷①：额度显示二次扣减（P1，共 5 处）**
+
+> **状态更新（2026-09-21 20:10 复验）：本项在真机上已不成立。** 当前构建（20:05 安装）主界面显示
+> 「账号：xdev09151936 · 剩余 **144** units」，与 prefs `account_quota=144` / `account_quota_used=956`
+> 及服务端权威值一致，**不再是 0 units**。仓库侧门禁 `m3_tool_registry_guard.py` 亦有
+> 「额度展示直接使用剩余 quota」与「设置页/手表/购买页不二次扣减」断言（本轮 31/31 通过）。
+> 下方为 2026-09-21 18:16 的历史记录，保留以溯源。
+
+服务端 `quota.go:217-231` 的语义是 `Quota -= units; QuotaUsed += units`，即 `quota` 是**剩余额度**、`quota_used` 是**累计已用**，两者互相独立、不可相减。客户端却在多处相减后截断：
+
+| 位置 | 计算 | 实测表现 |
+|---|---|---|
+| `MainActivity.java:262` | `max(0, quota - used)` | 主界面显示「剩余 **0** units」 |
+| `SettingsActivity.java:279` | `max(0, q - used)` | 设置页本地缓存路径 |
+| `SettingsActivity.java:317` | `max(0, m.quota - m.quotaUsed)` | 设置页服务端路径，实测显示「额度：**0 / 144** units（已用 956…）」 |
+| `WatchSettingsActivity.java:111` | `max(0, quota - used)` | 手表端同源 |
+| `PurchaseActivity.java:410` | `max(0, quota - used)` | 购买页「我方额度」 |
+
+**实测三方对照**（`quota` = 剩余 / `quota_used` = 累计已用）：
+
+| 数据源 | quota | quota_used | 界面显示 |
+|---|---|---|---|
+| 服务端权威 | **144** | 956 | — |
+| 客户端缓存（重启前） | 242（陈旧） | 858 | — |
+| 客户端缓存（重启后已刷新） | **144**（与服务端一致） | 956 | **仍显示 0 units** |
+| 客户端 UI | — | — | **0 units** |
+
+★ **排除「数据陈旧」这一解释**：App 重启后缓存已刷新到与服务端一致的 `144/956`，界面**依旧显示「剩余 0 units」**——证明根因是**纯计算错误**（`144 - 956 = -812` 被截断为 0），而非数据未同步。缓存陈旧只是叠加因素。
+
+**影响**：账号实际仍有 **144 units** 可用，界面却告知「剩余 0」，用户会误判额度耗尽而放弃使用；也容易把后续失败误归因为「额度耗尽」。该缺陷**不拦截请求**（`LlmClient` 不校验本地额度），任务本身仍可执行。
+
+**缺陷②：软键盘遮挡输入区与「运行」按钮（P2）**
+
+`AndroidManifest.xml` 未声明 `android:windowSoftInputMode`。真机实测（1216×2640）：软键盘弹出后顶部约在 `y≈1180`，而输入框 bounds `[112,1536][558,1757]`、运行按钮 bounds `[810,1562][1104,1730]`——**两者被完全覆盖**，布局未上移（仅因焦点变化位移 26px）。
+
+**影响**：用户点输入框输入时既看不到自己输入的内容，也点不到「运行」（实测点击落在键盘上，任务未启动、日志无「任务启动」记录）。需先手动收起键盘才能继续，属可用性缺陷。
+
+### 17.3 测试设施注意事项（非产品缺陷，但会污染验证结论）
+
+1. **不要用 `uiautomator dump`**：它会拉起 `com.android.commands.uiautomator` 抢占无障碍绑定，与 AgentLite 服务互斥，触发 `A11yGuard` 反复报「服务掉线」并执行 L1 抖动修复（实测累计 10 次）。**静默 60s（期间只用 `screencap`）零掉线、日志零新增**，据此判定为测试设施干扰而非产品缺陷。附带风险：抖动修复会**清空 `enabled_accessibility_services` 再写回**，若用户同时启用其他无障碍服务（TalkBack 等）会被短暂清掉，建议登记为后续观察项。
+2. **`adb shell input keyevent 67`（DEL）无法清空 App 输入框**：App 使用自研 IME 通道，实测 30 次 DEL 后旧文本仍在，导致任务文本被拼接成 `Open the WLAN settings page Calculator`。真机验证应改用「清空 App 数据后的干净输入框」或直接以 `flowmem`/prefs 预置任务文本。
+
+### 17.4 本轮未验证项（不得以静态门禁替代）
+
+- **旋转/分屏/形态注入**：`settings put system user_rotation 1` 未生效（设备保持 `rotation 0`），ColorOS 对非游戏应用默认锁竖屏，本机无法构造横屏场景；无崩溃、无形态变化日志。
+- **敏感场景（支付/验证码）接管与 `ask` 阻塞**：需构造真实支付界面，风险与成本高，本轮未做。
+- **纯视觉降级（节点为空）**：本轮未触发（计算器/设置页节点正常）。
+- **M3-01/M3-02 工具声明与参数校验**：`ToolRegistry` 仍未接入 `AgentEngine`，无效参数校验目前是纯 Java 独立层；M3-03/04/05 的「Invocation/状态机、无效参数不触碰设备、审批与停止取消、新旧执行路径对等」仍待 Router 接线后在设备上验证。
+
+### 17.5 第二轮真机验证（2026-09-21 20:05–20:11，同一设备）
+
+构建：本轮 `sh agent-lite/build-mac.sh` 产物（19,574,129 bytes，`versionCode 6 / versionName 0.6.0`）
+覆盖安装。**只验证与记录，未改任何源码。**
+
+| 项 | 结果 | 证据 |
+|---|---|---|
+| 覆盖安装 | `install -r` 成功（890ms），登录态 / a11y 绑定 / 记忆库全部保留 | `dumpsys package`（`lastUpdateTime=20:05:52`） |
+| 冷启 | **465ms**（COLD），无 FATAL/ANR | `am start -W`；`logcat` 未见本应用崩溃 |
+| 无障碍绑定 | 安装后保持绑定；本轮 `uiautomator dump` **未**触发互斥掉线 | `settings get secure` + `dumpsys accessibility` |
+| 真机任务（模型路径） | 「Open _the _Calculator」**4.0s 完成**：转译 `intent=open_app` → 第 1 步 `app com.coloros.calculator` → 完成 | `logcat AgentEngine` 20:06:49→20:06:55 |
+| **记忆库零往返复现** | **命中并直接完成，1.2s**：`命中操作记忆库：1 步 → 打开计算器` → `记忆库复现 1/1` → `已按记忆库直接完成（1 步，未重新规划）`，**全程无「流程转译」记录** | `logcat AgentEngine` 20:10:24→20:10:26；`flowmem.json` `hits=2 oks=3` |
+| 缺陷① | **已不成立**：主界面显示「剩余 144 units」（= prefs `account_quota=144`） | 截图 `_local/verify-20260921-ui/ui-01-main.png` |
+| 缺陷② | **仍然存在**：键盘顶部 `y≈1568`，输入框 `y 1508–1642`、运行按钮 `y 1508–1730`，仅露出约 60px 上沿 | 截图对比 + 亮度扫描（`_local/verify-20260921-ui/ui-16-row-zoom.png`） |
+
+**记忆库匹配边界（本轮新增实测结论）**：命中要求**归一化文本精确相等**。
+`Open _the _Calculator`（下划线降级为空格导致分词差异）**未命中**、走模型转译，并**另存为独立条目**；
+`Open the Calculator` 才命中。即当前记忆库不会把「同一意图的不同书写」合并为一条记录。
+
+### 17.6 测试设施陷阱补充（本轮实测，非产品缺陷）
+
+1. **`adb shell input text "a b"` 的空格会变成下划线**：实测得到 `Open_the_Calculator`，导致
+   （a）任务文本与记忆库原文不一致而无法命中；（b）带空格任务难以用 adb 复现。
+   需要真实空格时用 `input keyevent 62` 分段注入（本轮即以此输入出精确原文）。
+2. **`KEYCODE_DEL` / `KEYCODE_MOVE_END` 仍无法清空输入框**（复验 §17.3 第 2 条）：连续 40 次 DEL
+   后文本一字未减。本轮可行替代：长按输入框 → 点「剪切」。
+3. **坐标点击前必须确认前台应用**：本轮中途 `keyevent 4` 把 AgentLite 退到后台（前台变为计算器），
+   此后对 (942,1575) 的「运行」点击全部落在计算器上、日志无任何 agentlite 记录，白花 3 轮排查。
+   判定手段：`dumpsys activity activities` 的 `topResumedActivity`，或 `uiautomator dump`
+   （内容里带 `package=`）；**不要靠截图**——陈旧画面与真实前台可能不一致。
+4. **`cmd clipboard set-text` 在 ColorOS 不可用**（返回 `No shell command implementation.`），
+   无法用命令行预置剪贴板来做精确文本输入。
+5. **`adb shell input text` 不能注入中文**：中文会直接抛
+   `java.lang.NullPointerException ... InputShellCommand.sendText`，任务文本为空。中文任务只能靠拼音输入法
+   或先切到 AgentLite 之外的中文输入通道；验证英文任务时逐词 `input text` + `keyevent 62` 注入空格。
+6. **「运行」按钮的坐标会随输入框行数变化**（本轮最耗时的一坑）：输入框内容 1 行时按钮在
+   `y≈1508–1730`，内容涨到 4 行后整行下移，真实边界变为 `[810,1933]-[1104,2101]`，
+   继续用经验坐标 `y=1575` 点击会**完全落空且没有任何日志**。
+   正确做法：`uiautomator dump` 读 `resource-id="com.dsh.agentlite:id/btnRun"` 的 `bounds` 再点，
+   不要靠截图目测或记忆坐标。
+
+### 17.7 高难度生活型任务实测：给第一条朋友圈点赞（2026-09-21 20:16–20:19）
+
+**任务**：「打开微信朋友圈，给第一条朋友圈点赞」（因中文无法注入，实际提交的英文文本为
+`Like_the_first_WeChat_Momentns_and_the_first`，含累加残文，但关键词齐全，模型可理解）。
+前置态：微信已在后台且停在主页。构建同 §17.5。
+
+**基线（任务前人工采集）**：第一条动态 = 「9.28 龙玥彤 · 孩子用不到俩月给自己吃胖五斤」（9 分钟前）；
+点赞区只有「田一涵, 来子晨」，**不含本机账号**，即确实未点赞。
+
+**结果：任务失败，未产生任何点赞**。微信被启动过一次，但停在「奶奶」聊天页，从未进入朋友圈。
+
+| 步 | 动作 | 说明 |
+|---|---|---|
+| 1–2 | 决策/wait | 前三步日志已被 logcat 环形缓冲冲掉，只能看到第 2 步起 |
+| 3 | wait 3000ms | 感知恒为 5 个节点 |
+| 4 | **app com.tencent.mm** | 唯一一次有效动作：把微信拉到前台 |
+| 5 | wait 4000ms | 仍未识别界面 |
+| 6 | **wake** | 误判屏幕未点亮 |
+| 7 | app com.tencent.mm | 再次尝试启动 |
+| — | **看门狗终止** | `任务失败——屏幕连续 6 步无任何变化，疑似卡死，已自动停止` |
+
+全程 **0 次 tap/swipe/text**；flowmem 未被污染（失败任务不入库，符合预期）。
+
+**第二次对照复现（20:21:28–20:21:48，前置态改为微信主页）**：结果与首次一致——
+第 1 步 `app com.tencent.mm`，第 2–3 步 `wait`，第 4 步又 `app com.tencent.mm`，
+第 5 步 `wait 4000ms`，第 6 步 `wake`，随后**同样被指纹看门狗终止**（`屏幕连续 6 步无任何变化`）。
+两次步序几乎逐字相同，**2/2 稳定复现**，始终 0 次点击。
+→ 可判定为**系统性缺陷而非随机失败**：只要「应用屏蔽无障碍 + 系统状态栏提供恒定节点」，
+任务就会在 6~7 步内被看门狗误杀，与任务文本和前置界面无关。
+（该次任务文本因 adb 逐词注入而累积成
+`打开微Open WeChat MomeLike the first WeChat Momentnts and the first Moment信，帮我给微信朋友圈的第一个好友点一个赞`，
+转译结果 `intent=general`——即**文本污染也未改变失败步序**，进一步说明瓶颈在引擎侧。）
+
+
+#### 暴露的缺陷（本轮重点，待高级模型修复）
+
+**缺陷A（P0，感知层）：微信应用窗口节点被完全屏蔽，感知只剩系统状态栏**
+
+`AgentA11yService.collectNodes` 在本次 32 次采集中**全部**只记录到
+`顶层窗口: pkg=com.android.systemui type=3 bounds=0 0 1216 135`；
+`getWindows()` 里微信的 `TYPE_APPLICATION` 窗口 `w.getRoot()` 返回 null（ColorOS 16 实测），
+于是节点集 = 状态栏的 5 个节点（电量/信号/时间）。
+`collectNodes` 的输出**没有携带「本次只采到系统窗口」的标记**，调用方无法区分
+「真的看到 5 个元素」与「应用窗口被屏蔽，只有状态栏」。
+
+**缺陷B（P0，判定层）：非空节点让「纯视觉模式」与空节点哨兵双双失效**
+
+引擎的纯视觉降级与看门狗哨兵都只判 `nodes.isEmpty()`。微信场景下节点数恒为 5（状态栏），
+既不会触发「连续 2 步 0 节点 → 纯视觉模式」，也不会写入 `empty-0/empty-1` 交替哨兵，
+于是模型拿到的是**与截图完全不一致的节点表**，同时看门狗认为「有节点、屏幕有信息」。
+
+**缺陷C（P0，判定层，最致命）：指纹看门狗在纯视觉场景误杀任务**
+
+`NodeInfo.fingerprint` 只由节点数量与 `text|desc|id` 计算，**完全不含截图**。
+状态栏 5 节点恒定 → 每步指纹相同 → 第 7 步判定「屏幕连续 6 步无任何变化」并终止。
+而截图实际一直在变（微信首页 → 奶奶聊天页），真实进展被无视。
+推论：**在「应用屏蔽无障碍 + 有系统状态栏」的常见组合下，看门狗必然在 6~7 步内误杀**，
+这解释了本轮为何没等到模型进入朋友圈。
+（对照：§17.4 记录的「空节点屏看门狗失效」是**漏杀**，本条是**误杀**，两者根因同源——
+指纹只看节点、不看像素。）
+
+**缺陷D（P1，提示词/决策层）：状态栏节点污染节点表**
+
+模型看到的节点表含状态栏元素，与截图显示的微信界面完全不匹配；
+本次任务文本又被 adb 输入污染（`Momentns` + 残文），叠加后模型前两步只在 `wait`，
+未能建立「先点『发现』→ 再点『朋友圈』」的路径。
+
+#### 后续修复候选（按优先级，供高级模型执行）
+
+1. **看门狗改用截图差异（最高优先）**：纯视觉/节点可疑时，指纹应以「截图降采样哈希」为主，
+   而不是节点哈希；或至少在节点指纹集合 ≤2 种时**不判定卡死**，改为注入「换策略」警告。
+2. **纯视觉判定改为「顶层窗口非本应用且节点数 < 阈值」**，而不是死等 `isEmpty()`；
+   `collectNodes` 应回传 `topPackage`/`topSystem`/`onlySystemWindows` 等信号供调用方决策。
+3. **状态栏节点与页面节点分开送模**：系统窗口节点单独成段并标注「系统状态栏，非应用内容」，
+   避免模型把状态栏当页面元素。
+4. **补一条真机回归**：微信（屏蔽无障碍）场景下，任务至少能进入朋友圈并完成一次点击，
+   且不得在 6 步内被看门狗终止。
+
+
+---
+
+### 17.8 纯视觉看门狗修复后真机验证（2026-09-21 21:28–21:34）
+
+构建：修复版 `agent-lite/build/agent-lite.apk`，19,574,129 bytes；覆盖安装，未清理登录态、额度或记忆库。
+本轮只执行低风险任务 `Open WeChat`，**不进入朋友圈、不点赞、不发送内容**，用于验证感知降级和看门狗，不冒充朋友圈端到端成功。
+
+| 项 | 结果 | 证据 |
+|---|---|---|
+| APK 安装 | 成功，耗时约 923ms | `adb install -r` |
+| 无障碍服务 | 绑定保持，未 root | `settings get secure enabled_accessibility_services` |
+| 窗口污染识别 | **成功**：识别 `top=com.android.systemui`，忽略状态栏节点并切换纯视觉 | `logcat AgentEngine 21:29:38` |
+| 纯视觉截图 | 成功，截图亮度≈49，节点表降为 0 | `logcat AgentEngine` |
+| 低风险任务 | **成功**：第 1 步启动微信，第 2 步完成「微信已打开，当前显示在聊天界面」 | `logcat AgentEngine 21:29:38–21:29:40` |
+| 看门狗 | 未在第 6~7 步误杀；本次 2 步完成 | `logcat` |
+| 前台复验 | `com.tencent.mm/.ui.LauncherUI` | `dumpsys activity activities` |
+| 副作用 | 未点赞、未发言、未修改聊天内容；仅启动微信 | 人工限定任务范围 |
+
+**修复结论**：缺陷 A/B/C（SystemUI-only 识别、纯视觉触发、状态栏指纹误杀）已完成代码修复并通过真机最小链路。
+朋友圈「进入发现→朋友圈→第一条点赞」仍需单独复验；本轮不宣称该高风险社交动作已完成。
+
+**验证门禁**：纯 Java 感知回归 `55/55`；全局复核 `9/9`；SPEC-UX 静态项 `17/0`；M3-01 `31/31`；M3-02 `28/28`；
+`agent-unified/client` 与 `agent-lite` 逐字节同步校验通过。Xcode license 未接受仍会阻断聚合 `git`/`make` 路径，不影响独立 Android 构建。
+
+### 17.9 朋友圈点赞端到端验证与「胶囊吃点击」缺陷修复（2026-09-21 22:12–22:27）
+
+**任务**：`Like the first Moment in WeChat Moments`（用户已明确授权真实点赞；点赞对象为真实好友，事后可自行取消）。
+**基线（22:21 人工采集）**：朋友圈首条 = `traever-旅行者`「这就是我退抖音前最后一个点赞吗」（50 分钟前），
+动态下方**只有「50分钟前」与「···」，没有任何点赞条目**——确认本机当时未点赞。
+
+**修复前两次失败（22:15–22:17）**：Agent 全程空转，动作在 `tap@766,2442`（发现 Tab 坐标）与另一坐标间 A/B 震荡，
+最多跑到第 45 步仍停在微信主页/聊天页，**从未进入朋友圈**；两次运行均需人工强停。
+
+**根因实测（缺陷 E：悬浮层吃掉应用底部导航点击）**：
+
+| 悬浮窗 | 实测 frame | 影响 |
+|---|---|---|
+| 实时控制面板 | `[42,1524]-[1174,2374]` | 覆盖页面下半屏（任务运行期间） |
+| **状态胶囊** | **`[264,2437]-[952,2542]`** | **正压在微信 Tab 栏「发现」命中区上** |
+
+对照实验（同一坐标 `tap(766,2442)`、同一微信主页）：
+
+| 条件 | 画面变化 |
+|---|---|
+| 无悬浮窗（`am force-stop com.dsh.agentlite` 后） | **36.6%**（成功进入发现页） |
+| 任务运行中（胶囊存在） | **0.0%**（点击被吞） |
+
+胶囊窗口使用 `FLAGS_TOUCH`（`FLAG_NOT_FOCUSABLE|FLAG_NOT_TOUCH_MODAL`）且设置了 `setOnClickListener`，
+因此会吃掉自身区域内的全部触摸——Agent 点的正是「发现」Tab 的真实坐标，却永远点不动。
+这与 §17.6 记录的「残留结果卡片吃点击」同源（同文件同类窗口），本轮是在**任务运行期间**再次复现。
+
+**修复**：`OverlayController` 新增 `FLAGS_DISPLAY = FLAG_NOT_TOUCHABLE|FLAG_NOT_FOCUSABLE`，
+底部胶囊改用该标志并移除点击监听；进度文案回归**纯展示**职责，控制面板仍可由「暂停接管」等卡片入口唤起。
+
+**修复后真机复验（22:26:13–22:27:00，19 步完成）**：
+
+| 步 | 动作 | 结果 |
+|---|---|---|
+| 1 | `app com.tencent.mm` | 启动微信 |
+| 2 | `tap@753,2481` | **成功进入「发现」页**（修复前同坐标 0% 响应） |
+| 3 | `tap@304,409` | **成功进入朋友圈**（前台 = `ImproveSnsTimelineUI`） |
+| 4–12 | `tap@1106,2230` ×9 | 反复点空白区，未命中点赞入口 |
+| 13 | `swipe` | 下拉刷新 |
+| 14 | `tap@608,1320` | 点中动态正文 → 进入动态详情页 |
+| 15 | `back` | 返回时间线 |
+| 16–18 | `tap@1118,792`、`tap@1118,765` | 命中点赞按钮 |
+| 19 | `tap@535,765` | 确认/退出 |
+| — | `任务完成：已给朋友圈第一条动态（55分钟前那条）点赞，点赞列表已显示「报道北方」` | 22:27:00 |
+
+**独立核验（不采信模型自述）**：22:27 截图显示该动态下方出现点赞条目 **「❤ 报道北方」**，
+而 22:21 基线同一位置**没有任何点赞条目**；`task_history.jsonl` 记录成功终态。
+**结论：点赞真实发生，端到端链路打通；用户可自行取消该赞。**
+
+**遗留（不阻塞本次结论）**：
+1. **路径效率**：时间线视图上模型未直接命中右下角「···」（手册抄本：点动态右下角「···」弹「赞」），
+   而是经「刷新 → 进详情页 → 点赞」绕行；19 步对单次点赞偏高，且 19 > 12 故**未写入操作记忆库**（符合既有阈值）。
+2. 胶囊改为不可点后，任务期间展开控制面板只剩卡片入口；如需常驻入口，应选**不覆盖应用底栏**的位置。
+
+### 17.10 更新后源码审计与门禁复验（2026-10-02 12:36–13:00 +08）
+
+本节针对最新脏工作区做证据审计，不把历史真机记录重复计为当前缺陷。审计范围为 `agent-lite/` 真身、`agent-unified/client/` 镜像、根门禁和新增 M0/M3 模块；本轮除门禁入口修复外未改产品执行逻辑。
+
+> **状态更新（2026-10-02 16:37 +08，读本节前先读这段）**
+> 本节是**审计当时**的证据快照，下列条目此后已被处理，勿再当作现存缺陷：
+>
+> | 本节条目 | 当前状态 | 落地位置 |
+> |---|---|---|
+> | A-1 `open_url` 可回放 | **已修**：移出 `REPLAYABLE` + 采集/还原分支拆除 + 旧库加载过滤 | §17.11-1、§17.12 A2/D1 |
+> | A-2 `ask` 超时伪装回答 | **已修**：`AskResult` 三态 + `USER_TIMEOUT` 系统事件 + 连续超时终止；真机补出「主动放弃 ≠ 超时」并拆为 `ASK_SKIPPED` | §17.11-2、§17.12 C1–C3、A7 |
+> | A-3 M3 未接线 | **已修**：`TOOL_REGISTRY` 接入 `exec()` 前网关（开关 `feature_tool_router`，默认关）；真机确认非法参数零设备动作 | §17.11-3、§17.12 B2 |
+> | A-4 集成 E2E 以 root 为前提 | **已修（声明层面）**：降级为 root 专属增强诊断；已核实 `make check = go+contract+ui+jvm`，且 `ui` 目标为显式脚本白名单，真机脚本不在其中 | §17.11-4 |
+> | A-5 默认自动同意条款 | **已修**：`autoAcceptTerms()` 默认 `false`；仍缺「首次启用风险确认弹窗」（Lite 版无该开关 UI 入口） | §17.11-5（残余见 §17.12 未修项）|
+> | B 非原子写入 | **已修**：tmp + `fsync` + rename；损坏备份 `.corrupt`；写失败可见；真机验证损坏分支 | §17.11-6、§17.12 D2 |
+> | B `hasCredential` 非通用分类器 / `ScreenSnapshot` 只掩码密码节点 | **仍未修**（通用脱敏与截图/OCR 负向测试留待后续主题） | —（待立项）|
+> | C 两处门禁结论（「未排除 `open_url`」「未接入 M3 被当作设计事实守护」）| **已过时**：两条门禁断言均已反转为「必须接线/必须排除」 | §17.11-1/3 |
+> | D「边界阻止通用自动化结论」列举的五条 | **四条已修**（`open_url`/`ask`/M3/协议默认），root E2E 已降级；结论本身仍成立，但依据需按 §17.12 重读 | §17.12 |
+> | E-2 结构化标签要求 | **部分落地**：`USER_TIMEOUT` 已实现；**`TOOL_INVALID` 尚未落地**——M3 拒绝回灌仍是自然语言句子（「动作 X 参数校验未通过：…」），与「不伪装成普通话语」的纪律不完全一致 | 待办（见下）|
+>
+> 下方各项末尾的「最小修复」保留为**审计当时的建议原文**，不代表未修。
+
+#### A. 已确认的当前问题
+
+1. **P1：`open_url` 仍可进入操作记忆回放，与 R-5 规范冲突。**
+   - 现象：规范 §4.4 R-5 要求包含 `remote`、`open_api` 等直达/跨设备动作的整条路径不得入库；但 `FlowPlan.REPLAYABLE` 仍包含 `open_url`（`agent-lite/src/com/dsh/agentlite/FlowPlan.java:68–71`），`captureStep` 与 `stepToAction` 也分别保存、还原 URL（`AgentEngine.java:1314–1317,1373–1375`）。
+   - 根因：静态门禁只排除了 `open_api`，没有把 `open_url` 视为同类外部 Intent/DeepLink 副作用；回放最终通过 `Uri.parse(url)` 直接发起 `ACTION_VIEW`（`AgentEngine.java:2085–2088`），不经过模型重新确认当前语境。
+   - 影响：历史任务中的 `tel:`、应用 Scheme、带参数网页或其他外部链接可能被零模型往返重放；记忆库中还会明文保存 URL 查询参数。当前未证明已发生真实误拨/误打开，但这是已由源码确认的策略边界缺口。
+   - 最小修复：默认把 `open_url` 从可复现白名单移除；若产品必须保留，应建立严格的 scheme/host/参数白名单、任务语义绑定和单独终态复验，并同步 `flow_memory_guard.py`、JVM 回归与规范。
+
+2. **P1：`ask` 超时仍以普通自然语言回答回灌模型。**
+   - 现象：`askUser()` 在 5 分钟无回答时返回「用户未回答或超时」（`AgentEngine.java:2264–2277`），调用方不区分明确回答、停止和超时，统一追加为“用户回答”继续下一轮（`AgentEngine.java:828–843`）。
+   - 根因：用户回答契约仍是可空字符串，而不是 `ANSWERED / TIMEOUT / STOPPED` 结构化结果；超时没有硬拒绝敏感动作或直接进入暂停/拒绝终态。
+   - 影响：模型可能把“未回答或超时”误解为允许继续，尤其不应发生在发送、删除、协议、支付等不可逆动作前。本轮只确认了静态控制流，未宣称已在真实敏感界面完成误执行复现。
+   - 最小修复：返回不可混淆的结构化结果；只有 `ANSWERED` 的用户提交内容进入上下文，`TIMEOUT` 直接拒绝当前敏感动作并结束/暂停，`STOPPED` 走用户停止终态；补超时后设备零动作回归。
+
+3. **P1：M3 `ToolRegistry`/参数校验仍未接入 `AgentEngine`，不能作为运行时安全边界。**
+   - 现象：`ToolRegistry.validate()` 已能拒绝未知工具、缺参、类型、范围、枚举和未知字段（`agent-lite/src/com/dsh/agentlite/tools/ToolRegistry.java:35–43`），但 `AgentEngine.java` 没有 `ToolRegistry` 引用；`FeatureFlags.toolRouter()` 默认关闭（`FeatureFlags.java:40`）。
+   - 根因：M3 当前是独立声明/桌面测试层，旧 `ActionSchema` 检查只确认动作名登记，不会自动调用 M3 参数校验器。
+   - 影响：当前产品路径仍依赖旧执行分支的字段读取与各动作自有检查；“M3-02 参数校验已完成”只能理解为模型层/纯 Java 声明完成，不能理解为“无效参数绝不触碰设备”已成立。静态门禁明确把“`AgentEngine` 未接入 M3 Registry”列为通过项，因此这不是测试失败，而是功能尚未接线。
+   - 最小修复：在执行前增加受开关控制的 Router/Validator 网关，校验失败不得调用 `exec()`；保持旧路径回退时也有等价拒绝语义，并补未知字段、越界坐标、敏感参数和停止取消的设备侧测试。
+
+4. **P1：集成真机脚本把 root 写成必需测试前提，违反全项目零 root 基线。**
+   - 现象：`tests/integrated_features_e2e.py` 文件头明确写“root 真机”，私有目录读写集中经过 `root()` 与 `su -c`（`tests/integrated_features_e2e.py:8–9,35–51`）。
+   - 根因：脚本直接读写 `/data/data/com.dsh.agentlite/...` 的 prefs 和 `flowmem.json`，没有应用内或零 root 的备份/预置接口。
+   - 影响：该脚本不能作为 §12.1 所要求的无 root 主链路或发布门禁证据；普通未 root 设备即使主功能可用，也无法通过这条集成验证。此前日志中的 `16/16` 只能标为 root 环境增强验证，不足以证明零 root 基线。
+   - 最小修复：将脚本明确降级为 root 专属诊断增强并从必跑门禁剥离，或增加零 root 方案：应用内测试入口、调试构建专用导出/导入、或仅通过公开 UI 完成备份与断言。禁止把模型/外部输入继续拼进 root shell。
+
+5. **P1：无限制模式默认自动同意条款/隐私政策，仍是明确的法律与产品风险。**
+   - 现象：`Prefs.autoAcceptTerms()` 默认值为 `true`（`Prefs.java:44`）；主循环检测到协议弹窗后调用 `autoAgreeTerms()`，自动勾选并点击同意（`AgentEngine.java:639–644,1607–1628`）。
+   - 根因：这是 2026-09-18 已记录的产品决策，不是偶发回归；“无限制模式”把不可逆授权从人工接管改为自动代点。
+   - 影响：用户可能未逐条阅读即完成服务协议、隐私政策或个人信息处理授权；它与默认的敏感场景人工确认原则存在显著张力。
+   - 最小修复：默认关闭，或至少在首次启用时做明确、可追溯的风险确认；将协议、隐私、权限和付款分开设定，不以一个“无限制”开关覆盖全部法律授权。若维持现状，发布说明和 UI 必须明确告知代点范围与不可逆后果。
+
+#### B. 记忆库与隐私边界：已确认的残余风险
+
+- **凭据闸门不是通用敏感数据分类器。** `FlowPlan.hasCredential()` 只拦截显式“密码/验证码/口令”和 4 位以上纯数字形态（`FlowPlan.java:169–185`）；`FlowMemory.toJson()` 会把原始任务、归一化文本、步骤 `text`、`open_url` 地址写入应用私有的明文 JSON（`FlowMemory.java:243–275`）。因此普通姓名、地址、订单号、带 token 查询参数的 URL 等不会因为“不是数字密码”而自动脱敏。操作记忆不上云降低了扩散面，但不等于本地文件、备份、root 或调试读取不可见。
+- **文件写入不是原子提交，异常被静默吞掉。** `FileWriter(..., false)` 直接覆盖 `flowmem.json`，写失败只记录为空操作、不向 UI 或诊断层报告（`FlowMemory.java:231–240`）；读取损坏文件也直接按空库处理（`FlowMemory.java:46–62`）。这不会把任务判失败，但进程死亡/磁盘异常时可能丢失整个加速库，且用户无法区分“没有记录”和“记录损坏”。最小修复是临时文件 + `fsync`/rename、版本/大小上限、损坏备份和可见诊断。
+- **结构化契约只强制掩码密码节点。** `ScreenSnapshot` 自己明确只对 `password` 节点掩码，并要求采集入口预先完成其他隐私策略（`contracts/ScreenSnapshot.java:9–12,77–85`）；`NodeInfo` 另有验证码数字脱敏，但截图/OCR/非数字秘密没有同等由契约保证的过滤。当前证据足以确认“契约不是完整隐私证明”，不足以断言某个具体版本已经泄露真实凭据；截图/OCR 路径仍需专门的负向测试。
+
+#### C. 本轮验证结果与状态边界
+
+- 首次 `make check` 失败并已定位为门禁入口缺陷：`Makefile` 的 `ToolRegistryTest` 源列表漏掉 `ValidationResult.java`，导致桌面 JVM 编译失败；补入该源文件后，`make check` 全部通过。当前结果包括 Go 单测、契约 26/26、UI 文案/控件、各静态门禁、M3 JVM 58/0、PopupGuard JVM 27/0。
+- `python3 tests/flow_memory_guard.py`：40 项通过、0 失败、1 项真机待验；该绿色结果不能掩盖其未排除 `open_url` 的规范偏差。（**已过时**：门禁现要求排除 `open_url`，45/0，见本节顶部状态更新）
+- `python3 tests/m3_tool_registry_guard.py`：31 项通过、0 失败；其中“`AgentEngine` 未接入 M3 Registry”被当作当前设计事实守护，而不是运行时安全已完成。（**已过时**：断言已反转为「必须接线且网关先于 `exec()`」，33/0）
+- `bash agent-unified/scripts/sync-sources.sh --check`：`agent-unified/client` 与 `agent-lite` 逐字节同步通过。
+- 本轮没有新的 OnePlus 真机执行，因此 §17.2 的额度/键盘历史状态继续按既有记录解释：源码和静态门禁显示额度计算、`adjustResize` 与 IME 辅助已存在，但不能把本轮免设备验证写成新的真机复验；M3 行为、`ask` 超时、截图/OCR 隐私仍未设备验证。（**已过时（部分）**：M3 行为与 `ask` 超时已于 §17.12 完成真机行为验证；**截图/OCR 隐私仍未经设备负向测试**，见本节状态更新）
+
+#### D. 是否实质降低手机自动化门槛
+
+**结论：对常见、低风险、可验证任务，已经实质降低；对通用手机自动化，证据不足。**
+
+已被证据支持的降门槛能力包括：自然语言归一化与结构化转译、已装应用匹配、`app`/设置直达、无障碍到纯视觉的降级、系统状态栏污染识别、弹窗处置、任务停止、失败回退和本地流程复现。真机曾验证“打开计算器”模型路径完成，以及第二次记忆库命中后约 1.2 秒零模型往返；微信纯视觉和底部胶囊触控缺陷也有修复后的真实证据。
+
+但以下边界阻止“通用自动化/零风险”结论：`open_url` 回放策略与 R-5 冲突，`ask` 超时没有拒绝型结构化结果，M3 工具校验未进入执行网关，协议默认自动同意，集成 E2E 仍 root 前置，且当前完整真机基线并未覆盖所有动作、ROM 和敏感场景。因此更准确的产品表述应是“降低常见任务的技术门槛，并在部分 ROM 上提供可回退执行”，而不是“用户无需理解权限、风险和设备差异即可自动完成任意任务”。（**依据已更新**：前四条与 root 前置均已处理，见本节顶部状态更新与 §17.12；末尾「真机基线未覆盖所有动作/ROM/敏感场景」仍然成立——本轮只覆盖确定性 mock 场景 + 一次真实超时静置。）
+
+#### E. 给 DeepSeek 4.1 Flash 的实施约束
+
+1. 继续使用单动作、短 JSON、固定动作词表；把参数拒绝、敏感暂停、完成复验放在引擎，不依赖 Flash 自觉。
+2. 将 `USER_TIMEOUT`、`REPLAY_STALE`、`REPLAY_INTERRUPTED`、`TOOL_INVALID` 等结果作为结构化上下文标签，不把它们伪装成普通用户话语。（**部分落地**：`USER_TIMEOUT` 已实现并经真机验证；`TOOL_INVALID` 尚未落地——M3 网关的拒绝回灌仍是自然语言句子，见本节顶部状态更新）
+3. 先修复 `open_url` 回放边界和 M3 Router 接线，再扩充动作；每次只改变一个策略主题，并以 `make check` + 真机负向场景验收。
+4. 记录“模型看到的节点/截图、引擎拒绝或改写、实际动作、复验结果、最终归因”五元证据，避免把感知问题归咎于模型。
+5. 继续保留 `app` 优先、禁止应用商店绕行、动作后验证、失败换策略和敏感人工确认；不要用增大 `max_tokens` 掩盖工具契约或环境判定缺陷。
+
+
+### 17.11 §17.10 五项 P1 修复落地（2026-10-02 13:52 起 +08）
+
+按 §17.10.E 实施顺序（先修 `open_url` 回放边界与 M3 接线，每次一个策略主题）完成
+五项 P1 与记忆库落盘健壮性修复。除注明外全部为源码 + 门禁 + 规范同步的免设备改动。
+
+#### 1. P1-1 `open_url` 移出可复现白名单（R 系列 → 设计文档 §9.3）
+
+- `FlowPlan.REPLAYABLE` 删除 `open_url`；javadoc 记录判定理由（外部 Intent/DeepLink
+  参数与当次语境绑定，照抄旧 URL 等于零确认重放 `tel:`/应用 Scheme/带 token 查询参数）。
+- 采集与还原双侧拆除：`captureStep`/`stepToAction` 删除 `open_url` 分支——采集侧由
+  白名单入口判定直接作废整条；还原侧（旧库遗留记录）落入 `default` 放弃复现、回退模型。
+- 旧库迁移防线：`FlowMemory.list()` 跳过含 `open_url` 步骤的记录（`hasOpenUrl`），
+  防止经历史记录绕过白名单；下次任意 save 自然清除出库。
+- 同步：设计文档 §9.3 动作清单补 `open_url`；`flow_memory_guard.py` FM-6 banned 列表
+  + 旧记录过滤断言；`FlowMemoryTest` 新增「含 open_url → 拒绝」用例（56/0）。
+- 附带收益：URL 明文不再进 `flowmem.json`，§17.10.B「带 token 查询参数入库」的
+  最大暴露面被消解。
+
+#### 2. P1-2 `ask` 超时结构化三态
+
+- 新增 `AskResult`（ANSWERED / TIMEOUT / STOPPED）与 `MAX_ASK_TIMEOUTS=2`；
+  `askUser` 不再返回可空字符串。
+- 只有 `ANSWERED` 的用户文本进入模型上下文；`TIMEOUT` 首次走 `enterPause` 交还用户
+  并注入 `USER_TIMEOUT` 结构化系统事件标签（明确禁止在无确认时执行不可逆动作），
+  连续超时到阈值直接 `failTask` 终止；`STOPPED` 走用户停止终态，不再伪装成回答回灌。
+- 门禁：`action_schema_guard.py` 新增 A6 节（结构化契约、超时不回灌、连续超时终止
+  三组断言），12 通过 / 0 失败。
+
+#### 3. P1-3 M3 ToolRegistry 接入执行网关
+
+- `AgentEngine` 持有 `TOOL_REGISTRY = ToolRegistry.builtIn()`（不可变快照）；
+  `feature_tool_router` 开关开启时在 `exec()` 之前校验参数——未知参数/缺参/类型/
+  范围/枚举错误**不触碰设备**，回灌一次短错误，连续非法（>3 次）终止任务。
+- `actionToArgs`：JSONObject → Map 转换剔除 `action` 键（避免 unknown-parameter 误拒）、
+  整数值浮点归一化为整数串（避免 org.json 把 `3` 承载为 `3.0` 造成假阴性）。
+- 开关默认仍关闭（灰度语义不变，旧路径等价拒绝 = `isRegistered` + `exec` 自检）。
+- 门禁契约同步演进：`m3_tool_registry_guard` / `m3_tool_validation_guard` 的
+  「未接线」断言反转为「已接线 + 网关先于 exec + 开关控制」；`m0_feature_flags_guard`
+  第 57 行从「不出现 featureFlags() 调用」演进为「所有读取必须且仅是 toolRouter() 判定，
+  网关调用位于开关之后」。33/0、29/0、31/0。
+
+#### 4. P1-4 root E2E 降级声明
+
+- `tests/integrated_features_e2e.py` 文件头明确**root 专属增强诊断**定位：非门禁、
+  非零 root 基线证据（`make check` 与发布门禁均不含它），零 root 路径走
+  `flow_memory_e2e_mock.py`；root 命令全部来自脚本内固定白名单路径、参数经
+  `shlex.quote` 转义，不拼接模型/外部输入。§12.1 例外表已登记，无需重复登记。
+
+#### 5. P1-5 `autoAcceptTerms` 默认关闭
+
+- `Prefs.autoAcceptTerms()` 默认值 `true` → `false`：与敏感场景人工确认的安全默认
+  对齐；历史已显式存过 `true` 的设备不受影响（SharedPreferences 已存值优先）。
+- 引擎与 Prefs 的 javadoc 同步改写（记录 2026-09-18 → 2026-10-02 两次决策的脉络）。
+- 残余：Lite 版无该开关的设置 UI 入口，「首次启用时风险确认弹窗」无从落地——
+  已列为后续项（补 UI 入口时一并实现确认对话框）。
+
+#### 6. P1-B FlowMemory 原子写入与损坏可见化
+
+- `save()` 改为临时文件（`flowmem.json.tmp`）+ `getFD().sync()` + `rename` 原子提交；
+  rename 失败（个别厂商 FUSE 层）退回直写保底。进程死亡/磁盘异常最坏丢一次增量，
+  不再把整个库截断成半个 JSON。
+- 读取损坏时把现场备份为 `flowmem.json.corrupt`（不覆盖已有备份）再按空库继续，
+  用户与排障可区分「没有记录」与「记录损坏」；写失败从静默空操作改为 `Log.w` 留痕。
+- 门禁：`flow_memory_guard.py` 新增 FM-11 三项断言（45 通过 / 0 失败）。
+
+#### 验证边界（本节不越界宣称）
+
+- `make check` 全绿（Go 单测、契约 26/0、UI/SPEC-UX/FuzzyFlow/FlowMemory 45/0、
+  PopupGuard、全局复核、M0/M3 门禁、桌面 JVM 回归含 FlowMemoryTest 56/0）；
+  `agent-lite.apk` 重新构建成功（19,574,129 字节）；`sync-sources.sh` 镜像同步通过
+  （client=23 未提交条目）。
+- **真机行为验证已于同日补做**（见 §17.12，OnePlus PKX110）：ask 三态、M3 网关设备侧
+  零动作、`open_url` 不入库与旧记录不回放、损坏库恢复均已取得行为级证据；
+  ask/M3/open_url 的源码级结论不再单独悬置。原子写的**崩溃时序**仍未复现
+  （不可精确控制进程死亡时刻），但损坏分支与 `.corrupt` 备份已真机验证。
+- `hasCredential` 仍是形态闸门（姓名/地址等非凭据敏感文本不在拦截目标内）——
+  本轮只消解 `open_url` 明文 URL 这个最大暴露面，通用脱敏留待后续主题。
+
+
+### 17.12 §17.11 待真机项的行为级验证（2026-10-02 15:35–16:37 +08 · OnePlus PKX110）
+
+**设备与设施**：OnePlus PKX110（ColorOS / Android 16，本机 root 诊断机）。新增验证脚本
+`tests/p1_device_verify.py`（A–E 五阶段、26 条断言、PASS/FAIL/**SKIP** 三分类；文件头
+明确 **root 专属增强诊断**定位——非门禁、非零 root 基线证据，零 root 路径仍是
+`make check` 静态门禁 + 桌面 JVM 回归）。模型侧用 `tests/mock_llm_server.py` 新增三个
+确定性场景：`openurl`（open_url 后收尾）、`ask`（提问直到拿到「用户回答：」或
+`USER_TIMEOUT` 标签）、`m3invalid`（越界 px → 未知字段 foo → 缺 direction → 合法 key → done）。
+
+**结果矩阵：26 通过 / 0 失败 / 1 需人工**
+
+| 组 | 断言 | 结论 |
+|---|---|---|
+| A1 | flow 首跑入库 1 条；同款任务二次**零模型往返**复现 | PASS |
+| A2 | `open_url` 执行成功，但**无任何入库日志** + 库文件不含 open_url 步骤 + 记录数不变 | PASS |
+| B1 | 关网关基线：`m3invalid` 序列走完、无拒绝日志 | PASS |
+| B2 | 开网关：三个非法动作**各被拒一次**，理由覆盖 `OUT_OF_RANGE(px)` / `UNKNOWN_PARAMETER(foo)` / `MISSING_REQUIRED(direction)` | PASS |
+| B2 | 网关开时设备动作**恰好只剩 1 个合法项**（`key 4` 放行执行），任务被引导至完成 | PASS |
+| C1 | 放弃确认（「不执行」）→ 独立终态终止；不被谎报为 5 分钟超时；待确认操作未执行 | PASS |
+| C2 | 回答提交后完成，模型上下文确实收到「用户回答：」 | PASS |
+| C3 | **真实静置 5 分钟**（16:19:58）→ 结构化 TIMEOUT（第 1 次）+ 暂停 + 整个窗口**零设备动作** | PASS |
+| C3-4 | 交还后 `USER_TIMEOUT` 以系统事件回灌模型 | 16:20 人工补验 PASS（见下），脚本轮 SKIP |
+| D1 | 含 open_url 的旧记录**不命中** + 加载侧 `Log.w` 留痕 + 任务回退模型规划完成 | PASS |
+| D2 | 捏坏 `flowmem.json` → `.corrupt` 备份 + 按空库继续完成 + 新库重新可写 | PASS |
+
+**C3-4 的证据链（16:20，人工补验）**：悬浮窗「我已完成，交还 AI」不在 uiautomator 枚举范围，
+改用截图色块定位（浅蓝按钮质心 `608,2243`）→ `input tap` → 日志「用户已交还控制权，AI 继续执行」
+→ 引擎下一轮把 `USER_TIMEOUT` 作为**系统事件**回灌 → mock 的 `ask` 场景只在 user 上下文含
+`USER_TIMEOUT` 时回专用回复 → 最终任务摘要为「任务完成：已收到超时事件」。
+即：**超时既没有被伪装成用户话语，也没有解禁待确认动作**。
+
+**本轮发现的新缺陷（未修，按「一次一个主题」留待下一轮）**
+
+1. **悬浮窗卡片渲染不稳定**：16:20 轮 TIMEOUT 暂停时「请手动操作」卡片可见（人工借此完成
+   C3-4）；16:34 轮同一路径、同一构建未渲染卡片（截图仅剩 AlertDialog）。`appops get
+   com.dsh.agentlite SYSTEM_ALERT_WINDOW` = `default`，`rejectTime` 约 10 天前。
+   影响：AgentLite 不在前台时，「暂停」态的唯一恢复入口在悬浮窗上——卡片不显示即**没有出口**
+   （前台时仍可用主界面「停止」）。根因未定位，需专门排查（overlay attach 时机 / 权限态）。
+2. **超时后提问对话框未关闭**：暂停期间 MainActivity 的 AlertDialog 仍显示「回答 / 不执行」，
+   此时点「不执行」只写入 `askAnswer`，而 `askLatch` 早已在超时后返回——点击被静默丢弃，
+   用户以为任务已停、实际停在暂停态等交还。属 UI 生命周期缺口，修复需引擎通知 UI 关闭弹层。
+
+**测试设施陷阱（本轮实测，非产品缺陷，已固化进脚本注释）**
+
+1. `adb shell su -c 'sed …'` 会剥掉 XML 属性引号（写成 `name=base_url`）→ SharedPreferences
+   解析失败回退重建、注入键全丢，表现为「任务启动」都不出现（UX-1 凭据守卫拦截）。
+   改为主机端拼**完整** XML 后 push + `cat >` 原地写入（保属主）。
+2. mock 的步进若依赖「msgs 里 assistant 计数」会失真：引擎**正常路径不向对话累积 assistant
+   历史**（纯视觉模式每轮重建消息），实测序列停在 `key 4`（BACK）把 app 自己退到桌面后
+   无限打转。改为 mock 侧有状态计数，并由 `DELETE /` 复位——同名场景反复用作对照组时**必须**
+   复位，否则第二轮第一次调用直接拿到序列末项 done（表现为「任务秒完成、零设备动作」）。
+3. logcat 的 main/crash 双缓冲把同一条日志**镜像两份**：拒绝日志与「第 N 步：执行」计数一律
+   ×2，统计前必须去重（否则 3 条拒绝误判 6 条）。
+4. 悬浮窗（`TYPE_APPLICATION_OVERLAY`）不在 uiautomator 枚举范围，`dump` 里只有 AlertDialog
+   节点；定位 overlay 按钮只能靠截图色块（`find_blue_overlay_button`，无 PIL 时降级为 SKIP）。
+5. **备份套娃**：验证脚本的「还原源」若在测试态下重建，会把 mock 配置固化成用户态（实测三份
+   备份层层含 mock 端点，最后分不清真实用户态）。已在脚本加护栏：prefs 含 `127.0.0.1` 或
+   `test-mock-key` 时**拒绝**建立备份并中止。
+
+**真机暴露的 P2 缺陷已修（同日）**：用户主动放弃确认（原「跳过」按钮）与「5 分钟无回答」
+共用 `ASK_TIMEOUT`，日志谎报超时并进入暂停。改为独立终态 `ASK_SKIPPED`（终止任务、不执行
+待确认动作），按钮文案改为语义明确的「不执行」；`action_schema_guard.py` 新增 A7 两条断言（14/0）。
+
+**收尾状态**：验证结束已把设备 prefs 还原为验证前用户态（仅 `intro_shown`）、删除验证期
+`flowmem.json`、还原无障碍绑定、移除 `adb reverse`。设备上运行的 APK 为本轮构建
+（含 `ASK_SKIPPED` 与「不执行」文案，19,574,129 字节，dex 内字符串已核对、旧文案 0 残留）。
+
+
+## 18. 当前进度评估与未来开发入口（2026-10-06）
+
+### 18.1 范围、阶段与证据口径
+
+本次归属 `repo`，以 `agent-lite` 当前工作树为 Android 产品真身；`agent-client` 是另一客户端，`agent-unified/client` 是镜像，不能混用其能力或安装指引。保留原生 Java、SDK 命令行构建、无障碍执行架构。未来规划已存在于[成熟模块整合规划](<docs/MATURE_MODULE_INTEGRATION_PLAN.zh-CN.md>)，本次增量续写其 §23，而非另起手册。服务端专用开发手册不承担全产品规划。
+
+**阶段结论：具备较完整执行链与离线回归的工程原型／受控验证阶段，尚非普通无 root 用户可独立、可靠、安全使用的发布候选。** 可输入文字，调用模型，采集节点/截图，启动应用、输入文字和执行手势，进行有限复验、提问、停止与流程复用。但首用入口、安全授权、成功证据、用户控制与隐私仍有发布阻断项。没有按类数量计算完成率，也没有本轮用户试用或端到端成功率。
+
+- 基准：分支 `shell-command-backend`，HEAD `2c73a9f`（2026-09-18）；工作树已有大量后续修改/新增文件。**本评估针对工作树，不等于提交版、已安装 APK 或线上配置。**不回滚、不提交、不覆盖既有修改。
+- 本轮证据：实际源码、公开默认值、四项静态门禁、桌面 JVM 行为回归、官方公开资料。未读取本地密钥、设备私有备份或真实用户数据；未操作真实账号、购买、充值、部署或发布。
+- 历史证据：早期荣耀无 root 基础通道、§17 生活任务记录、§17.12 root 诊断机 mock 验证分别保留。**基础通道可用 ≠ 当前普通用户完整首跑；root/mock 通过 ≠ 无 root/真实模型任务通过。**本轮未重演历史设备记录。
+- Hindsight 已检索/读取的四页均为 `Generating content...`，未作为实现证据。
+- 状态使用：已实现且有验证证据（注明层级）、已实现但验证不足、部分实现、仅有设计、尚未开始、存在阻塞、信息不足。“未检查”不等于“尚未开始”。
+
+### 18.2 模块进度矩阵
+
+状态评价整个用户能力，不把类存在等同于端到端完成；源码行号改码后应按符号重定位。
+
+| 模块/能力 | 现有能力 | 状态 | 证据与边界 | 主要缺口 | 用户影响 | 下一步 |
+|---|---|---|---|---|---|---|
+| 安装与首次使用 | Android 11+ APK、首启说明、设置入口 | 部分实现 | [Manifest](<agent-lite/AndroidManifest.xml>)；[README](<agent-lite/README.md>)仍有另一客户端目录/包名；UX-1 手工项未验 | 无电脑安装到首成功未闭环 | 装错版本或误以为必须 ADB | T01/T07，统一普通用户入口 |
+| 账号、模型接入与费用 | 登录、网关、自带 Key、官方充值跳转 | 存在阻塞 | [入口:387–390](<agent-lite/src/com/dsh/agentlite/MainActivity.java#L387-L390>)、[默认:170](<agent-lite/src/com/dsh/agentlite/Prefs.java#L170>)与[路由:194–227](<agent-lite/src/com/dsh/agentlite/LlmClient.java#L194-L227>)矛盾；未真机复现 | 默认自带 Key 标志挡住已登录无 Key；密钥不可找回；units 不直观 | 登录后仍被要求配置、害怕扣费 | T02 统一凭据/费用路由 |
+| 权限与运行条件 | 无障碍引导、延迟录音/通知授权、服务恢复 | 部分实现 | [MainActivity:359–405](<agent-lite/src/com/dsh/agentlite/MainActivity.java#L359-L405>)；[A11yGuard:22–28](<agent-lite/src/com/dsh/agentlite/A11yGuard.java#L22-L28>) | `WRITE_SECURE_SETTINGS` 声明不等于普通用户获权；主动撤销需优先 | 系统页迷路、服务状态误解 | T05/T07，分层权限与退出 |
+| 输入与语音 | 文字、录音、显式记忆 | 部分实现 | [AsrRouter:42–87](<agent-lite/src/com/dsh/agentlite/AsrRouter.java#L42-L87>) | 配置云端后先云端，与“离线优先”注释不同；本地库/模型需就绪；本轮未找到 TTS 接线 | 语音失败需文字兜底，不能承诺开箱离线 | T08，识别后可改再执行 |
+| 自然语言与澄清 | 归一化、转译、规划、ask | 已实现但验证不足 | [规划接线:546–560](<agent-lite/src/com/dsh/agentlite/AgentEngine.java#L546-L560>)；[转译回归](<tests/FuzzyTranslatorTest.java>)本轮通过 | 缺口语、否定、重名联系人真实样本；问答自由文本 | 多轮纠错或认错对象 | T08，槽位校验与少量选项 |
+| 屏幕感知与状态 | 多窗口节点、截图、纯视觉降级、密码节点掩码 | 部分实现 | [截图:538–562](<agent-lite/src/com/dsh/agentlite/AgentA11yService.java#L538-L562>)；[节点掩码:58–78](<agent-lite/src/com/dsh/agentlite/NodeInfo.java#L58-L78>) | 截图未见等价掩码；模型返回与当前快照未绑定 | 旧坐标误触、截图泄露 | T03/T06，快照身份与出网控制 |
+| 规划、执行、复验 | 单动作、动作词表、包名/屏幕弱复验、循环上限 | 部分实现 | [AgentEngine:913–1000](<agent-lite/src/com/dsh/agentlite/AgentEngine.java#L913-L1000>)；动作静态门禁通过 | 无证据 done 追问一次后可放行；M3 默认关 | 错报成功并写入流程记忆 | T03/T04，按目标判定终态 |
+| 敏感确认与安全 | 支付/验证关键词接管、协议默认不代点、ask 四态 | 部分实现 | [SensitiveGuard:42–49](<agent-lite/src/com/dsh/agentlite/SensitiveGuard.java#L42-L49>)；[ask:861–911](<agent-lite/src/com/dsh/agentlite/AgentEngine.java#L861-L911>) | 空节点不扫描；发送/发布/删除未统一硬控；批准未绑定对象/金额/内容 | 提示词漏判可产生不可逆副作用 | T03，统一确定性策略 |
+| 暂停、停止、接管 | 停止取消模型请求、接管/交还、超时暂停 | 部分实现 | [停止:283–306](<agent-lite/src/com/dsh/agentlite/AgentEngine.java#L283-L306>)；[问答 UI:624–654](<agent-lite/src/com/dsh/agentlite/MainActivity.java#L624-L654>)；§17.12 悬浮/弹层缺陷 | UI 与引擎超时不联动；复用控制需统一；没有通用撤销 | 停止不可达、旧回答误用、误解“停止=撤销” | T05，统一生命周期 |
+| 历史、记忆与复用 | 历史、事实记忆、操作记忆默认开、删除入口、URL 旧库过滤 | 部分实现 | [FlowMemory:45–83](<agent-lite/src/com/dsh/agentlite/FlowMemory.java#L45-L83>)、[260–282](<agent-lite/src/com/dsh/agentlite/FlowMemory.java#L260-L282>)；静态 45/0、JVM 通过 | 明文任务/文本；成功入库依据不足；rename 失败退直写 | 误学流程、隐私遗留与损坏 | T04/T06/T09 |
+| UI、适老化、可访问性 | 简化主页、状态文案、尺寸令牌 | 部分实现 | [主布局](<agent-lite/res/layout/activity_main.xml>)；[尺寸令牌](<agent-lite/res/values/dimens.xml>)：正文 15sp、常规触控 44dp、主按钮 48dp | 单行省略/固定高度；无 200% 字体/TalkBack 实测 | 确认读不全、停止难找 | T05/T07，列为 P0 |
+| 网络、后台与重启 | 超时、429 重试、取消、前台服务/Job 守护 | 部分实现 | [LlmClient:281–338](<agent-lite/src/com/dsh/agentlite/LlmClient.java#L281-L338>)；[保活:123–138](<agent-lite/src/com/dsh/agentlite/KeepAliveService.java#L123-L138>) | 服务重启不等于任务恢复；关键状态内存化；重试/换端点影响成本 | 长等、重进不知此前结果 | T05/T06，安全恢复不盲重放 |
+| 日志、测试、发布与隐私 | 脱敏日志、纯逻辑回归、账号令牌加密、禁备份 | 部分实现 | [日志:45–74](<agent-lite/src/com/dsh/agentlite/EngineLog.java#L45-L74>)；[TokenStore:109–125](<agent-lite/src/com/dsh/agentlite/TokenStore.java#L109-L125>)；[Makefile](<Makefile>) | API/ASR Key 普通偏好；登录默认同步；缺无 root 发布证据 | 数据/费用误解、故障不可诊断 | T01/T06/T10 |
+| M0/M3 基础切片 | 开关、契约、ToolRegistry/Validation、主循环可选校验 | 已实现且有验证证据（桌面层） | [FeatureFlags](<agent-lite/src/com/dsh/agentlite/FeatureFlags.java>)；[M3 接线:955–976](<agent-lite/src/com/dsh/agentlite/AgentEngine.java#L955-L976>)；本轮 JVM/M3 静态通过 | 不等于完整 Policy/Router；复用直接 exec | 不能称“统一安全层已完成” | 接续 M3-03/04 与 T03 |
+| Policy/Perceptor v2/Trace/ReplayGuard 等完整整合 | 有契约、M1–M10 规划和关闭的开关 | 仅有设计（完整运行时整合） | [整合规划](<docs/MATURE_MODULE_INTEGRATION_PLAN.zh-CN.md>)；开关声明不是接线证明 | 核查范围内未见完整目标架构 | 不能用计划替代实际可用性 | 按 §23 分小切片实施 |
+
+### 18.3 发布阻断项与易被误读的进度
+
+1. **入口矛盾（P0，源码证明，设备复现待补）**：`useOwnKey()` 默认 true，入口先拒绝无 Key；登录收尾 [afterAuthOk](<agent-lite/src/com/dsh/agentlite/LoginActivity.java#L197-L209>)、[saveAccount](<agent-lite/src/com/dsh/agentlite/Prefs.java#L391-L424>)未改变该选择，但模型客户端允许登录网关。需共同解析器与新装/升级真值表。
+2. **完成证据不足（P0）**：[done](<agent-lite/src/com/dsh/agentlite/AgentEngine.java#L913-L947>)二次可接受模型摘要，并写入记忆。屏幕变化仅证明“可能发生动作”，不证明目标达成；证据不足必须“不确定”，不入成功库。
+3. **策略覆盖不足（P0）**：提示词不能代替发送、发布、删除、付款硬闸门。主循环与[复用直接 exec](<agent-lite/src/com/dsh/agentlite/AgentEngine.java#L1250-L1255>)应共用校验/策略。[requestAuth](<agent-lite/src/com/dsh/agentlite/AgentEngine.java#L1666-L1685>)无覆盖层会返回允许；本轮仅定位到定义，不能把其 UI 当作通用授权已接线的证据，需补调用链测试。
+4. **控制生命周期（P0）**：§17.12 的旧 ask 弹层/悬浮窗问题未因静态测试通过而消失；引擎超时而 Activity 仍保留 pendingAsk。需 requestId、失效通知、可达停止和恢复前重新感知。停止不承诺撤销既成动作。
+5. **数据路径告知不实（P0）**：[凭据卡:409–413](<agent-lite/src/com/dsh/agentlite/MainActivity.java#L409-L413>)写“设备与本机”，但云模型会出网；[syncEnabled:291–304](<agent-lite/src/com/dsh/agentlite/Prefs.java#L291-L304>)在未选择且已登录时 true，[登录后](<agent-lite/src/com/dsh/agentlite/LoginActivity.java#L217-L223>)启动同步。登录不能自动替代独立同步同意。
+6. **“已修”需要限定（P1）**：[FlowMemory.save](<agent-lite/src/com/dsh/agentlite/FlowMemory.java#L260-L282>)主路径 tmp/fsync/rename，但 rename 失败退回直写，不是所有路径原子提交。[截图间隔](<agent-lite/src/com/dsh/agentlite/AgentA11yService.java#L550-L562>)当前为 900ms，不能沿用旧 README 数值。[RootShell.ensureA11y](<agent-lite/src/com/dsh/agentlite/RootShell.java#L114-L118>)覆盖服务列表，需验证不影响 TalkBack；此增强不能成为普通恢复路径。
+
+**普通无 root 主链路**：节点/截图/手势/输入有公开 API 路径，不需要 root 才能设计核心流程；但本轮未走通“安装→必要设置→任务→结果”，且默认入口确有控制流矛盾。开发 README 的电脑/ADB、官方充值的离开 App/建 Key/粘贴、无障碍与可选系统设置，都是实际门槛，不能由主页无技术词抵消。
+
+### 18.4 本轮实际检查及未验证项
+
+| 检查 | 结果 | 不可外推的结论 |
+|---|---|---|
+| `pwd`、Git 状态/分支/最近日志 | 工作区与脏树已核对 | 不证明设备 APK 或线上服务相同 |
+| `python3 tests/spec_ux_001_guard.py` | 17 通过、0 失败、1 需真机；退出 0 | 入口“有守卫”未测凭据真值表；“有完成复验”未测假成功；五分钟首成功仍未验 |
+| `python3 tests/action_schema_guard.py` | 14 通过、0 失败、1 警告；退出 0 | 警告是另一客户端缺少 `list_apps/open_api/remote`；不证明设备动作有效 |
+| `python3 tests/flow_memory_guard.py` | 45 通过、0 失败、1 待真机；退出 0 | 不证明全部持久化失败分支或业务终态 |
+| `python3 tests/m3_tool_validation_guard.py` | 29 通过、0 失败；退出 0 | 不证明默认启用或所有执行入口必经 |
+| `make jvm` | 七组桌面 Java 回归通过，退出 0 | 覆盖签名、购买差异、转译、FlowPlan、契约、工具校验、弹窗；无设备/真实网络验证，仅生成检查产物 |
+| 官方资料读取 | 公告、API、视觉、价格/限制、平台协议与隐私政策 | [能力登记见 §23.2](<docs/MATURE_MODULE_INTEGRATION_PLAN.zh-CN.md#232-de-41flash-身份能力与接入边界>)；不是实际模型调用 |
+
+本轮未执行 APK 构建、Go 全套、完整 `make check`、设备脚本、付费模型、性能/成本或目标用户测试；是选择最小相关离线验证集，不表示这些测试失败。未检查线上实际模型配置；未探测设备连接。历史 `26/0/1` 或全套门禁只按原日期/条件引用。后续设备验证使用已授权测试设备与虚构联系人，不操作真实交易。
+
+### 18.5 手册衔接
+
+保留 §16/§17 历史；其“快速、低成本”、实施模型称呼不是本轮效果证据。协议自动代点新装默认 false，旧设备显式 true 不会自动改成 false。下一阶段任务、10 个代表用例、测量口径和发布门禁集中在[整合规划 §23](<docs/MATURE_MODULE_INTEGRATION_PLAN.zh-CN.md#23-面向老年人与手机入门者的开发续篇2026-10-06>)；优先修安全可用主链路，不以更多动作或虚拟屏替代。
+
+### 18.6 T01 凭据切片与 T02 路由修复（2026-10-07）
+
+本次为用户明确选择的代码实施轮，2026-10-08 续接收尾。§18.1–§18.4 保留 10-06 审计快照：其中登录无 Key 的入口矛盾、自动跨付费通道回退和“只在本机处理”文案已在本次修正；其他发布阻断项并未随之完成。
+
+- **入口与请求统一**：[CredentialRoute](<agent-lite/src/com/dsh/agentlite/CredentialRoute.java>)提供纯逻辑结果，[主页](<agent-lite/src/com/dsh/agentlite/MainActivity.java>)与 [LlmClient](<agent-lite/src/com/dsh/agentlite/LlmClient.java>)共用。默认无 Key 但已登录可走账号；显式选择自带而缺 Key 时仍等待用户处理，不擅自换来源。
+- **保存不等于换付费主体**：无显式选择的升级配置保留旧的有 Key 优先规则；保存、清空 Key 和登录不自动换来源。手机/手表设置共用[显式选择卡](<agent-lite/src/com/dsh/agentlite/CredentialRouteUi.java>)，说明账号/自己的服务分别计费及云端数据流。
+- **任务内稳定**：规划器沿用任务客户端的地址、凭据和付费主体快照；设置修改作用于新任务。工厂不登记另一通道作为备用，HTTP 自动重定向关闭；自带服务 402 的指引归到对应服务账号，不引导充错账号。
+- **不替换用户模型**：保留 `de 4.1flash` 原名与配置；本次没有验证网关实际模型映射、远端鉴权、余额或价格。配置齐备只代表可发起请求，不代表服务有效。
+
+| 实际检查 | 结果 | 证据边界 |
+|---|---|---|
+| 初始凭据行为测试，问题版 | 109 通过 / 68 失败 | 真实失败基线；扩充后的最终断言数量不同 |
+| [凭据行为回归](<tests/CredentialRouteTest.java>) | **245 通过 / 0 失败** | 生产 Prefs/路由/请求层和抽取的主页守卫；连接全为内存替身 |
+| `GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local make check` | **退出 0**，含八组 JVM | Go、契约、UI 静态与 JVM；保留手工待验项及既有客户端能力差异警告 |
+| Go 检查细分 | 有测试的 agentd 包命中缓存；其余包/服务端无测试文件 | 执行成功不等于服务端业务覆盖 |
+| Android 34 SDK / Java 11 编译 | **退出 0**，有既有 API 弃用提示 | 使用现有生成资源类；只编译 class，未重新打包资源或安装 APK |
+| 镜像 `sync-sources.sh --check` | 客户端/服务器逐字节一致 | 按脚本排除本地配置、证书 pin、构建产物 |
+
+**阶段判定**：T01 完成凭据切片，重复 `done`、旧 `ask`、空节点敏感页行为用例待后续；T02 完成本地实现与离线检查，零 root 真机首跑、配置选择交互、字体/TalkBack 和真实模型仍待验收。没有安装、部署、购买、充值或调用付费 API，也没有把此修复计为适老化产品发布完成。
+
+重跑命令、路由真值表和迁移说明见[整合规划 §23.11](<docs/MATURE_MODULE_INTEGRATION_PLAN.zh-CN.md#2311-t01-凭据切片与-t02-实施记录2026-10-07>)。保留原工作树的既有改动；镜像从原项目同步，不独立修补。
+
+### 18.7 真机回归：凭据路由在真实设备上的验证（2026-10-08）
+
+用户报告真机已连接后，本轮把上述修复放到真实设备上跑了一遍。**这是 §18.6 的补证，不是新功能**：桌面 JVM 只能证明纯逻辑，证明不了首启把用户推到哪一页、点「运行」是否真的发请求、请求带着哪个凭据去了哪个端点。
+
+- **设备**：OnePlus PKX110（OP60F5L1），Android 16（API 36），arm64-v8a，1216×2640 @560dpi。该机已 root（KernelSU），但**主链路按零 root 执行**——只用 uiautomator dump / input tap / input text（与普通用户操作等价）；root 仅用于布置前置状态与取证（读写 shared_prefs、读任务历史与日志）。应用自身不依赖 root。
+- **方法**：重装本轮构建的 `agent-lite/build/agent-lite.apk`，用[真机回归脚本](<tests/credential_real_device.py>)自带的两个**本机**假端点（19101 = 自己的配置、19102 = 账号网关，经 `adb reverse` 转发）。全程不出公网、不调用付费 API、不操作真实账号。
+- **结果**：**43 通过 / 0 失败**，一次连续运行（A–F）。
+
+| 阶段 | 项数 | 关键结论 |
+|---|---|---|
+| A 首启与登录态 | 9 | **已登录无 Key 且无历史选择 → 任务真启动，请求打到账号网关并带账号令牌**（§18.2 记录的发布阻断项在真机上确认修复）；未登录时准确提示「需要先登录」且零请求 |
+| B 自己的配置 | 8 | 显式自带且有 Key → 只打自己的端点、只带自己的凭据；缺 Key/坏地址停住且**零任务请求**（不自动切账号） |
+| C 账号通道 | 7 | 显式账号未登录时**旧 Key 不兜底**；已登录时只用网关并带账号令牌，而非本机旧 Key |
+| D 模型缺失 | 1 | 模型名为空即前置拦截 |
+| E 故障归因 | 12 | 自带 402 归因到自己的服务账号且不引导应用内充值；401/500 均不跨付费主体；终态文案不泄漏测试凭据 |
+| F 设置页选择卡 | 6 | 保存配置弹出显式选择卡；「暂不切换」保持原主体；主动选择才切换（选账号会重新启用被关掉的网关标志） |
+
+**真机发现并修复的缺陷**：自带通道欠费时，失败卡片的「下一步」建议写的是"在设置里配置自己的接口作为备用通道"——而他正在用自己那份接口，正确出口是给自己的服务账号充值。根因是两处叠加：[UiText.nextStep](<agent-lite/src/com/dsh/agentlite/UiText.java>) 的「账号额度」分支先命中了自带欠费的归因串，[AgentEngine](<agent-lite/src/com/dsh/agentlite/AgentEngine.java>) 又对自带通道无条件追加"（在「设置 → 高级」里填写的那份接口配置）"。已修正并在[文案行为测试](<tests/ui_text_test/UiTextTest.java>)固化三条断言（13 通过 / 0 失败）。
+
+**证据边界（必须连着结论一起读）**：
+
+- 失败结果卡片是**悬浮窗**，不在 uiautomator 能 dump 的窗口树里；脚本断言的是**文案内容**（取自外部存储的 `task_history.jsonl` 与 logcat），视觉呈现只有截图（`.check-tmp/device/` 下 E1/E2/E3）。E1 截图已人工确认为「任务未完成 / 自己的模型服务额度不足…」。
+- 测试注入的"已登录"是本地判定的假令牌（走 prefs 明文迁移路径）；**真实账号登录、真实余额与计费、真实模型输出质量均未验证**。
+- 只覆盖一台机型/ROM（Android 16 定制 ROM）。字号放大、TalkBack、手表圆形屏、重启后状态保持未纳入本轮。
+- 无障碍服务由脚本 `settings put` 代开（普通用户需在系统设置里手动开启；路径等价，但不等于人工操作）。
+- 回归结束后已还原设备用户态：prefs 恢复为回归前内容、测试令牌文件删除、应用停止、无障碍设置复位为 `null`。
+
+### 18.8 三卡最小切片实施与真机回归（2026-10-09）
+
+按 [T03a/T04a/T05a 最小切片方案](<docs/PLAN_T03_T05_DS41FLASH_2026-10-09.zh-CN.md>)（顺序 T05a → T03a → T04a）完成实施，并在真机上跑通行为回归。**本节是 §18.3 发布阻断项第 2 条（完成证据不足）的直接兑现**，也是 §18.7 之后的第二轮真机验证。
+
+- **T05a 任务代际防护**：`OverlayController.taskEnded(keepCard=true)` 的 4 秒收尾回调补上 `taskActive` 守卫（此前它无条件撤胶囊，而 15 秒分支有守卫）；[AgentEngine](<agent-lite/src/com/dsh/agentlite/AgentEngine.java>) 引入 `RUN_SEQ` 代际号，旧任务的延迟回调只在「仍是最新一代」时才改 `KeepAliveService` 状态。
+- **T03a 动作入口收敛（第一刀）**：代点/代勾/代同意三处从裸 `svc.tap`/`svc.tapNode` 改为经 [`exec()`](<agent-lite/src/com/dsh/agentlite/AgentEngine.java>)，获得统一的节点直点、坐标修正与执行日志；失败原因进日志，不再静默落空。`injectViaClipboard` 的 root 聚焦点击登记为**受约束例外**（`DisplaySpec.applyOffset` 非幂等，改 exec 会二次偏移），门禁要求该例外始终处于 `RootShell.available` 守卫下并保留零 root 降级。
+- **T04a done 证据分级**：新增纯静态 [`judgeDone`](<agent-lite/src/com/dsh/agentlite/AgentEngine.java>) → `PROVEN / WEAK / UNPROVEN`；`arrivedExpectPkg` 记住「确实到达过被期望的目标」，让 `PROVEN` 在真机上真正可达；**二次无证据 done 不再放行「完成」**——终态降级为「不确定」，`recordable=false` 不入记忆库，新增琥珀色 `showUncertain` 卡片与绿色 `showDone` 语义位分离。
+
+| 回归 | 结果 |
+|---|---|
+| `make check`（免设备全量） | 通过（新增三个门禁已纳入 `make ui` / `make jvm`） |
+| 凭据路由真机（不回退底线） | A–E **41 通过 / 0 失败**；阶段 F 单跑 **6 通过 / 0 失败** |
+| 三卡真机行为 | **14 通过 / 0 失败 / 1 跳过**（[脚本](<tests/t03_t05_real_device.py>)） |
+
+真机关键结论：任务 A 完成后 **0.2 秒**启动任务 B，B 运行期间保活锁仍持有、覆盖层胶囊仍在、通知仍是运行态（旧回调没有再改写新任务）；连续两次无证据 done → 「不确定」且记忆库文件 344 → 344 字节未增长；`app com.coloros.calculator` 到达后 done → 「完成」且入库（344 → 707 字节）。
+
+**证据边界（必须连着结论一起读）**：
+
+- 跳过 1 项：本机系统已记住「允许打开」，未复现跨应用启动确认框，`autoConfirmLaunch` 代点分支**未被触发**——该路径只有静态结构门禁（15/0）与桌面证据，缺真机行为证据。
+- 结果卡片是 `FLAGS_TOUCH` 覆盖层且创建有延迟：卡片在场期间点「运行」存在竞态（脚本用重试规避）。这是**本轮未改的产品侧问题**，建议另立卡。
+- 真机只覆盖一台机型/ROM（OnePlus PKX110 / Android 16 定制 ROM）；假模型经 `adb reverse` 注入本机 HTTP（不出网不花钱），**真实模型输出质量、真实账号与计费仍未验证**。
+- 主链路只用 `input` / `uiautomator dump` / `am start` 等用户态命令；root 仅用于布前置状态（写 prefs）与取证（读记忆库文件），结束已还原（prefs 恢复、测试令牌删除、`adb reverse` 撤除）。
+- 无障碍服务由脚本用 `settings put` 代开、通知权限由 `pm grant` 预授（普通用户走系统设置/弹窗，路径等价但不等于人工操作）。
+
+---
+
+## 工作日志
+
+<!-- 2026-10-06：补回缺失的日志节标题；以下历史会话原文保留。 -->
+
 ### 2026-09-13 00:54 +08 · 会话 33f50b22 · 新建 project-work-log skill
 - 00:52 考察 skill 机制：~/.dsh/skills 为安装目录、workspace skills/ 为源副本（源:命令:diff/ls）
 - 00:53 编写 skills/project-work-log/SKILL.md 并安装至 ~/.dsh/skills/（源:用户请求）
@@ -1588,3 +2284,401 @@ adb shell "rm /sdcard/Android/data/com.dsh.agentlite/files/project_progress.txt"
 - 21:40 清掉设备上残留的 Mac 端点，语音不再先失败一次；本地直转 5.9s 音频→6.7s（源:命令:adb+engine.log）
 - 21:42 提交 caff7fe；手册 §16.15.1 记录云端接入方式与优先级（源:命令:git+文件:PROJECT_OVERVIEW.zh-CN.md）
 - 21:42 终态: done（待办：base 模型提速选项；离线模型管理 UI；asr_api_key 迁 Keystore）
+
+### 2026-09-19 09:25 +08 · 项目:repo +agent-lite · 会话:local · 模糊语义转译 P0 实施与虚拟机验证
+- 09:25 实现归一化层与转译核心：`TextNormalizer` + `FuzzyFlow`（纯逻辑、零 android 依赖，可桌面回归）（源:文件:agent-lite/src/com/dsh/agentlite/FuzzyFlow.java）
+- 09:28 门禁并入 `make check`（`make ui` + `make jvm`）；桌面回归 85 断言全绿（源:文件:Makefile；测试:tests/FuzzyTranslatorTest.java）
+- 09:30 接线 `AgentEngine.planTask`；修 `LlmClient` 把 `max_tokens` 硬编码 160 —— 会截断整份 FlowSpec 并**静默**废掉转译层（源:文件:agent-lite/src/com/dsh/agentlite/LlmClient.java）
+- 09:31 建本地假模型服务 + 虚拟机 e2e 脚本（离线、可重复、不依赖真 Key）（源:文件:tests/mock_llm_server.py）
+- 09:44 虚拟机抓出产品缺陷：被截断的 JSON 被当散文喂给引擎 → 改为丢弃并回退（源:测试:tests/fuzzy_e2e_mock.py）
+- 09:45 重建 APK 装机；4 场景（good/unsafe/broken/prose）各 **10/10** 通过，含危险流程被拒且不入上下文（源:命令:python3 tests/fuzzy_e2e_mock.py）
+- 09:49 修门禁脚本自身缺陷：朴素括号计数被新增的字符字面量 `'{'` 骗到 → 改为词法感知扫描（源:文件:tests/fuzzy_flow_guard.py）
+- 09:50 `make check` 全绿 + 两端契约对齐；方案附录 D 与手册 §10 入库（源:命令:make check）
+- 09:50 终态: done（待办：**真机 + 真 Key 验证真实模型的 JSON 遵循度**——最大遗留风险；P1 澄清卡片 / P2 流程库复用）
+
+### 2026-09-19 10:06 +08 · 项目:repo +agent-lite · 会话:local · 有/无转译层 A/B 对照实验
+- 10:06 构造对照版本：同源仅回退 `planTask` + 移除三个转译类（`LlmClient` 逐字节相同，唯一变量成立）（源:文件:/tmp/agent-lite-nostl）
+- 10:18 mock 加 `ab` 场景：假模型**只依据提示词内容**决策，两版差异才会传导到行为（源:文件:tests/mock_llm_server.py）
+- 10:31 首轮数据失真：与并发会话共用 emulator-5554（场景被改、mock 被杀、任务被抢）→ 新建独立 AVD `Agent_AB`（emulator-5556）隔离（源:命令:avdmanager+ps+lsof）
+- 10:43 排查设备侧静默失败：无障碍未绑定（`adb root` 清设置）→ 截图 + `dumpsys accessibility` 定位，脚本补 `ensure_a11y()` 绑定校验（源:文件:tests/fuzzy_ab_compare.py）
+- 10:53 实验完成：提示词完备度 A 24 项 / B **0 项**；**B 版对资金与发送任务未确认直接动手，A 版 100% 先 ask**（源:命令:python3 tests/fuzzy_ab_compare.py）
+- 10:53 结论与局限写入方案附录 F（源:文件:docs/FUZZY_SEMANTIC_TO_FLOW_DESIGN.zh-CN.md）
+- 10:53 终态: done（清理：停 mock 与 5556；AVD `Agent_AB` 保留复用）
+
+### 2026-09-19 10:15 +08 · 项目:agent-lite +repo · 会话:local · 操作记忆库：成功路径自动入库并直接复现
+- 10:15 首次运行检查：读项目清单与工作日志尾恢复上下文，确认属 agent-lite +repo（源:文件:docs/PROJECTS.zh-CN.md）
+- 10:16 用户要求「记忆库改成默认的，每步成功操作入库，之后直接复现即可完成」→ 对应设计文档 P2「流程库复用」，骨架/指纹纯函数已随 P0 落地（源:文件:docs/FUZZY_SEMANTIC_TO_FLOW_DESIGN.zh-CN.md）
+- 10:20 新增 `FlowPlan`（纯逻辑：指纹/入库把关/锚点定位/新鲜度与退役/容量淘汰）与 `FlowMemory`（落盘 `flowmem.json`、统计、UI；**不接 SyncClient**）（源:文件:agent-lite/src/com/dsh/agentlite/FlowPlan.java）
+- 10:24 接线 `AgentEngine`：逐步采集 + `done` 入库 + 命中直接复现（`replayFlow`/`stepToAction`/`captureStep`），复用既有 `exec()` 与敏感守卫（源:文件:agent-lite/src/com/dsh/agentlite/AgentEngine.java）
+- 10:25 `Prefs#flowMemory` 默认开；记忆库页把「操作记忆 + 用户记忆」同页，可删/可清空/可关（源:文件:agent-lite/src/com/dsh/agentlite/MainActivity.java）
+- 10:33 回归抓出实现与注释不符：包含匹配未限制锚点长度（单字「搜」会命中「搜索」）→ 改为两边都 ≥2 字（源:测试:tests/FlowMemoryTest.java）
+- 10:35 修时序缺陷：采集原在 `waitForChange` 之前，`app` 启动异步致 `pkgAfter` 记成旧应用、复现首步必判失败（源:文件:agent-lite/src/com/dsh/agentlite/AgentEngine.java）
+- 10:47 e2e 修掉三处**测试设施**缺陷：`font_scale=2.0` 残留挤出输入框；设备端点残留指向另一 mock 实例（18998/18999）；`logcat -d` 全量致 FM-6/FM-9 假通过（源:测试:tests/flow_memory_e2e_mock.py）
+- 10:52 ⚠️ 并发冲突（如实记录）：与上一块「A/B 对照」会话共用 emulator-5554 —— 我 `pkill` 旧 mock、`set_scene(flow)`、重装 APK 打断了对方首轮（对方 10:31 已改用 5556 隔离）；反向干扰亦让我三次 e2e 归因困难（源:文件:PROJECT_OVERVIEW.zh-CN.md:1613）
+- 10:55 虚拟机端到端 **12/12 通过**：同一任务第二次命中记忆库、复现完成、**模型调用数不增加**；APK 构建成功 19.5 MB（源:命令:python3 tests/flow_memory_e2e_mock.py）
+- 10:57 门禁全绿（桌面回归 85+48 断言、转译 22、零门槛 17、动作词表 8、契约 26）；方案 §4.4.1/§5.4.4/§9.3/§10 + 附录 E 与 CHANGELOG 入库（源:测试:各守卫脚本等价执行）
+- 10:58 环境限制：`/usr/bin/make` 与 `/usr/bin/git` 因**未同意 Xcode 许可**一律退出 69 → 门禁改用脚本等价执行；本次**未能提交**（源:命令:make --version）
+- 10:59 终态: done（待办：真机+真 Key 长周期观察命中率与复现成功率；P1 澄清卡片 / 实体账本未做）
+
+### 2026-09-19 10:52 +08 · 项目:agent-lite +repo · 会话:local · 突发界面守则与门禁
+- 10:52 定位缺口：SCHEMA 对弹窗/广告仅一句「跳过 tap」，无权限分层/运营弹窗/登录墙/异常跳转规则（源:文件:agent-lite/src/com/dsh/agentlite/AgentEngine.java:338）
+- 10:56 SCHEMA 新增守则 4「突发界面优先处置」：权限最小必要/广告只点退出按钮严禁点主体/运营弹窗不点改变态按钮/登录墙先绕后 fail「需要登录」/系统对话框拒绝/异常跳转 key4 返回复验；原守则 4~9 顺延 5~10（源:文件:同上）
+- 10:58 新增 tests/popup_ad_guard.py（22 断言）并入 make ui；初版编号正则失配、修正后 22/22 绿（源:测试:python3 tests/popup_ad_guard.py）
+- 10:59 APK 构建 19.5MB；dex grep「突发界面优先处置」1 命中；11:00 装 emulator-5554 启动零 FATAL（两个并发会话已终态，无干扰）（源:命令:build-mac.sh+adb）
+- 11:01 Skill §3 环境态表扩五类+§8 清单+§9 溯源；SPEC 升 v1.0.4 §4.2 同步；CHANGELOG 入库（源:文件:skills/software-interaction-logic/SKILL.md）
+- 11:02 make 同样被 Xcode license 挡（EXIT 69，与上块 10:58 同因）→ 脚本等价直跑：词表/UX/文案/转译/记忆库门禁全绿（源:命令:各门禁脚本）
+- 11:02 契约 1 失败＝镜像未同步（改源码未跑 sync）→ sync-sources.sh 后 26/0/0 对齐（源:命令:verify-contract.py）
+- 11:03 终态: done（待办：真机弹窗/广告场景回归；Xcode license 同意后整跑 make check 与 git 提交）
+
+### 2026-09-19 11:04 +08 · 项目:agent-lite +repo · 会话:local · 软件引导跟随守则
+- 11:04 SCHEMA 守则 4 标题加「新手引导」类别，新增 g) 分步指引双策略：任务相关跟随（点高亮元素/下一步、每步复验）、无关快跳（跳过/×优先，无跳过连续下一步 3~6 步）；红线不豁免；超 6 步循环 → fail「引导无法完成」（源:文件:agent-lite/src/com/dsh/agentlite/AgentEngine.java:318）
+- 11:05 门禁新增 PU-11 八项断言 → 30/30 绿；Skill §3 表加引导行+§8 清单；SPEC v1.0.5；CHANGELOG 入库（源:测试:python3 tests/popup_ad_guard.py）
+- 11:06 APK 19.5MB；dex「跟随引导」「引导无法完成」各 1 命中；sync 后契约 26/0/0；词表/UX/文案门禁全绿；模拟器 5554 装机零 FATAL（源:命令:build-mac.sh+adb）
+- 11:06 终态: done（待办：真机引导场景回归；上一块 3 处预估时间戳已按真实时钟修正）（源:步骤3）
+
+### 2026-09-19 12:15 +08 · 项目:repo +agent-lite · 会话:local · 真机 + 真模型验证（销掉最大遗留风险）
+- 12:15 真机接入：OnePlus 13T（PKX110 / Android 16 / root=KernelSU），已装 v0.6.0；配置 model=deepseek-flash 且 single_model_mode=true（源:命令:adb+su cat prefs）
+- 12:18 打通中文注入：`input text` 不支持非 ASCII、剪贴板 cmd 不可用 → 改用项目自带 FlorisBoard 缝合桥广播 `com.dsh.agent.IME_COMMIT`（源:文件:agent-client/floris-merge/AgentImeBridge.java）
+- 12:20 首轮 8 个中文模糊任务：转译结构化 **7/8**，风险识别 **3/3**（含把「点个奶茶送到公司」判为 money）（源:命令:python3 tests/fuzzy_real_device.py）
+- 12:22 定位唯一失败：模型把「去公司怎么走」过度标成 personal_info 却无确认点 → 被 FF-1 硬约束拦下**（此类问题只有真模型会暴露）**（源:文件:/tmp/real_device_result.json）
+- 12:24 修提示词 risk 边界（明确「纯查询不算风险」）→ `make check` 全绿 → 重建装机（源:文件:agent-lite/src/com/dsh/agentlite/SemanticTranslator.java）
+- 12:28 复测 **8/8**：R5 转为 navigate/none，风险判定仍 3/3 无漏判（源:命令:python3 tests/fuzzy_real_device.py）
+- 12:30 结论入方案附录 G；恢复真机默认输入法（测试期曾切 FlorisBoard 桥）（源:文件:docs/FUZZY_SEMANTIC_TO_FLOW_DESIGN.zh-CN.md）
+- 12:30 终态: done（待查：R4 转译成功但步数=0、耗时 45.9s；未测：端到端完成率、语音 ASR 链路）
+
+### 2026-09-19 12:46 +08 · 项目:agent-lite +repo · 会话:local · 三大功能整合：复现路径突发处置
+- 12:46 首次运行检查：读日志尾恢复上下文；用户确认整合范围＝协同缺口修补＋全链路验证（源:用户请求）
+- 12:52 定位三处协同缺口：①replayFlow 零模型往返、无弹窗处置，遇弹窗必定位失败且无差别 markFail（两次即误退役好记录）；②采集侧把模型关弹窗的 tap 记入库，下次弹窗不再现该步必定位失败；③无三者一体 e2e（源:文件:agent-lite/src/com/dsh/agentlite/AgentEngine.java:1016）
+- 14:16 续: 上次未收尾；复核补丁并跑门禁，确认全跳过伪成功、弹窗上限误贬值及旧签名门禁（源:测试）
+
+### 2026-09-20 19:40 +08 · 项目:repo · 会话:session- · 下载同定位开源项目
+- 19:40 首次运行检查并明确定位：Android 视觉/语义感知、自然语言规划、操作复验闭环（源:文件:README.zh-CN.md:15）
+- 19:40 筛选 4 个同类候选；确认 Open-AutoGLM/Apache-2.0、MobileAgent/MIT 等许可（源:web:github.com）
+- 19:46 下载 4 个 main 源码快照至 _local/reference-projects，共 458MB/3057 文件，来源说明齐全（源:命令:curl+tar）
+- 19:46 核验四项目均含 README、LICENSE、.source-info，且无归档/解包临时文件残留（源:测试）
+- 19:46 终态: done（系统 git 受 Xcode License 阻断，故快照不含 .git 历史）（源:步骤3）
+
+### 2026-09-20 20:02 +08 · 项目:repo · 会话:session- · 拆解同类成熟模块
+- 20:02 首次运行检查：恢复上次下载结果；建立 Agent Lite 感知、执行、记忆、安全与测试基线（源:文件:agent-lite/README.md:6）
+- 20:02 建立「同类手机 Agent 成熟模块拆解」知识页，隔离提取且不直接合并源码（源:记忆）
+- 20:19 对比四项目与现有基线，筛出感知、安全策略、轨迹、技能、复现守卫、模型层、虚拟屏、评测等模块（源:文件:_local/mature-modules/README.md）
+- 20:21 隔离提取 9 个候选模块至 _local/mature-modules，共 13MB；逐项标注用途、证据、依赖、风险与优先级（源:步骤3）
+- 20:21 核验 724 个文件、9 份模块说明及全部 Apache-2.0/MIT 许可证齐全；未修改 Agent Lite 运行源码（源:测试）
+- 20:21 终态: done（候选均为研究副本，后续须逐模块适配与验证后才能集成）（源:步骤5）
+
+### 2026-09-20 21:13 +08 · 项目:repo · 会话:local · 制定成熟模块全面整合规划
+- 21:13 读取工作日志尾部并确认本次属于共享文档项目，基线为 agent-lite 纯 Java、零第三方依赖与 make check 门禁（源:文件:PROJECT_OVERVIEW.zh-CN.md:1672）
+- 21:13 汇总 9 类隔离候选模块，规划按安全、感知、复现、轨迹、评测、技能、知识、模型、虚拟屏分阶段整合（源:文件:_local/mature-modules/README.md）
+- 21:48 编写 22 节全面整合手册，覆盖 M0–M11、契约、迁移、测试、灰度、发布、回滚与收尾验收（源:文件:docs/MATURE_MODULE_INTEGRATION_PLAN.zh-CN.md）
+- 21:48 覆盖核验通过；git diff 检查受本机 Xcode license 未接受阻断，未执行代码构建（源:测试）
+- 21:48 终态: done（完成规划文档，下一步按 M0-01 开始逐卡实现）（源:步骤3）
+
+### 2026-09-20 21:59 +08 · 项目:repo · 会话:local · 三功能整合真机闭环（模糊语意 + 记忆库 + 弹窗治理）
+- 21:59 读工作日志尾部恢复上下文；确认本次目标是把语义转译、操作记忆库、突发界面治理打通在同一条任务路径上（源:文件:PROJECT_OVERVIEW.zh-CN.md）
+- 21:59 定位并修复 mock 假模型的多模态崩溃：vision 请求 content 是 list，`re.search` 抛 TypeError → mock 500 → 引擎静默切同步服务网关、真模型接管（此前「主模型不经过 mock」悬案的根因）（源:日志:/tmp/mock_server.log）
+- 21:59 定位真机测试纯净性缺口：`LlmClient.forPrefs` 对已登录账号会挂网关 fallback；测试期清空 `sync_token`/`account_id` 掐断（源:文件:agent-lite/src/com/dsh/agentlite/LlmClient.java:205）
+- 21:59 定位引擎首步感知残缺：a11y 服务 bound 后窗口枚举未就绪，`getWindows()` 只回 SystemUI，模型只能在状态栏瞎点；服务热身后再提交（源:日志:AgentEngine 第1步感知6节点）
+- 21:59 定位提交通道时序：夹具弹窗须在**提交成功之后**补弹才能进入首步感知窗口（提交前弹会被 MainActivity 的 NEW_TASK 盖掉）（源:日志:补弹夹具后窗口现场）
+- 21:59 加固测试脚本：主机侧备份且不覆盖首次（设备端备份曾被下一轮覆盖，一次 USB 掉线把 mock 配置写回用户机）、恢复链逐条容错、测试期挂起 USB 抢台的 com.microsoft.appmanager（源:文件:tests/integrated_features_e2e.py）
+- 21:59 真机端到端 16/16 全绿：转译成功 → 弹窗步识别且不入库 → 业务步入库带骨架指纹 → 第二次命中记忆库直接完成 → 零模型往返 → 噪音不加失败计数（源:测试:tests/integrated_features_e2e.py）
+- 21:59 门禁全绿：`make check` 契约 26 项 + 守卫 + JVM 测试通过；镜像 `sync-sources.sh` 已同步（源:命令:make check）
+- 21:59 文档同步：SPEC 升 v1.0.6（§4.4 R-1~R-6 + 附录 C）、Skill §9 三条溯源行 + §7.5 机制说明、CHANGELOG 整合条目（源:文件:docs/INTERACTION_LOGIC_SPEC.zh-CN.md）
+- 21:59 真机用户态复核还原：prefs（deepseek 端点/真实 Key/同步令牌）、a11y 绑定、appmanager 挂起状态、夹具卸载、测试记忆清理（源:命令:adb su cat prefs）
+- 21:59 终态: done（三功能整合闭环，真机 e2e 与免设备门禁全绿）（源:测试）
+
+### 2026-09-20 22:25 +08 · 项目:repo · 会话:local · 全局代码复核与高风险修复
+- 22:20 完成全局审查：确认无障碍节点释放与账号保存一致性为高风险缺陷，未将既有警告误报为代码失败（源:文件:agent-lite/src/com/dsh/agentlite/AgentA11yService.java:131）
+- 22:23 修复服务解绑/销毁、前台包名、主屏/虚拟屏输入、校准与节点点击路径的 `AccessibilityNodeInfo` 释放边界（源:文件:agent-lite/src/com/dsh/agentlite/AgentA11yService.java:90）
+- 22:24 修复账号登录原子性：令牌密文同步提交并校验，账号元数据后提交，失败时回滚令牌（源:文件:agent-lite/src/com/dsh/agentlite/Prefs.java:387）
+- 22:24 新增全局复核回归门禁，覆盖节点生命周期与账号一致性 9 项断言（源:文件:tests/global_review_guard.py:1）
+- 22:24 门禁通过：全局复核 9/9、动作/交互/文案/记忆/弹窗守卫无失败；存在既有真机 MANUAL 项与 agent-client 差异警告（源:测试）
+- 22:25 Android 自定义构建成功，生成 `agent-lite/build/agent-lite.apk`（19,574,129 bytes）；编译仅有过时 API 警告（源:命令:sh agent-lite/build-mac.sh）
+- 22:24 `make jvm` 与聚合 `make check` 受本机 Xcode license 未接受阻断，已改跑各核心 Python/JVM 守卫；源码构建不受该限制（源:命令:make check）
+- 22:25 终态: done（完成全局复核、高风险修复、回归门禁与 Android 构建）
+
+### 2026-09-20 23:06 +08 · 项目:repo · 会话:local · M0-01 功能开关基线整合
+- 22:40 读取整合手册与候选模块清单，确认首卡为 M0-01，默认不接入新运行时行为（源:文件:docs/MATURE_MODULE_INTEGRATION_PLAN.zh-CN.md:408）
+- 22:48 新增 `FeatureFlags` 与 `Prefs.featureFlags()`，冻结 8 个模块开关、2 个影子模式和契约版本 1（源:文件:agent-lite/src/com/dsh/agentlite/FeatureFlags.java:1）
+- 22:52 新增 M0-01 门禁并入 `make ui`，覆盖默认值、入口、版本和 AgentEngine 未接入边界（源:文件:tests/m0_feature_flags_guard.py:1）
+- 22:57 新增 ADR 与 CHANGELOG 条目，记录兼容边界、风险和关闭开关回滚方式（源:文件:docs/ADR-001-FEATURE-FLAGS.zh-CN.md:1）
+- 23:00 M0-01 门禁 30/30 通过；既有 UI、交互、安全、记忆、弹窗、全局复核门禁均无失败（源:测试）
+- 23:01 Android APK 构建与可读性检查通过，未发现 API Key/令牌明文；真机人工项未执行（源:命令:sh agent-lite/build-mac.sh）
+- 23:04 同步 `agent-unified/client` 镜像成功；未改动镜像真相源（源:命令:bash agent-unified/scripts/sync-sources.sh）
+- 23:05 聚合 `make ui`/`make contract` 受本机 Xcode license 未接受阻断，已保留独立门禁结果（源:命令:make ui）
+- 23:06 更新整合规划：M0-01 已完成，唯一下一卡为 M0-02（源:文件:docs/MATURE_MODULE_INTEGRATION_PLAN.zh-CN.md:1573）
+- 23:06 终态: done（完成 M0-01 功能开关基线整合；M0-02 待执行）
+
+### 2026-09-20 23:21 +08 · 项目:repo · 会话:local · M0-02 契约冻结整合
+- 23:21 读取 M0-02 四类契约、项目手册和现有动作/节点模型，确认本卡只冻结纯 Java 契约不接入主循环（源:文件:docs/MATURE_MODULE_INTEGRATION_PLAN.zh-CN.md:218）
+- 23:25 取得用户决策：仅密码脱敏、默认保留脱敏截图快照、本地固定轮转、旧流程仅低风险直放、手写稳定渲染（源:用户请求）
+- 23:34 新增四类契约模型、版本常量和稳定字段渲染器，保持零 Android/第三方运行时依赖（源:文件:agent-lite/src/com/dsh/agentlite/contracts/ScreenSnapshot.java:1）
+- 23:38 新增 M0-02 静态门禁 29 项与 JVM 行为测试 25 项，覆盖掩码、终态不可逆、事件白名单和旧流程兼容（源:测试）
+- 23:43 修正旧流程未知/空风险直放缺口，改为仅明确 `LOW`/`NORMAL` 允许直放并同步 ADR/CHANGELOG（源:文件:agent-lite/src/com/dsh/agentlite/contracts/ScreenState.java:37）
+- 23:48 规范升至 1.0.7，新增结构化契约章节、门禁核对项和 Trace 本地轮转边界（源:文件:docs/INTERACTION_LOGIC_SPEC.zh-CN.md:11）
+- 23:52 M0-02 静态门禁 29/29、JVM 测试 25/25、规范同步检查全部通过（源:测试）
+- 23:54 Android APK 构建成功，产物 `agent-lite/build/agent-lite.apk` 为 19,574,129 bytes（源:命令:sh agent-lite/build-mac.sh）
+- 23:56 APK 可读性检查通过，未发现 API Key/令牌明文；真机未执行（源:测试）
+- 23:57 同步 `agent-unified/client` 镜像成功；`git diff --check` 受本机 Xcode license 未接受阻断（源:命令:bash agent-unified/scripts/sync-sources.sh）
+- 23:57 更新整合规划：M0-02 已完成，唯一下一卡为 M0-03（源:文件:docs/MATURE_MODULE_INTEGRATION_PLAN.zh-CN.md:1575）
+- 23:57 终态: done（完成 M0-02 契约冻结整合；M0-03 待执行）
+
+### 2026-09-21 06:32 +08 · 项目:repo · 会话:local · M3-01 工具注册表整合
+- 06:32 读取 M3 阶段和现有 `ActionSchema`/`AgentEngine.exec()` 边界，确认先做纯 Java ToolSpec/ToolRegistry，不接入执行路径（源:文件:docs/MATURE_MODULE_INTEGRATION_PLAN.zh-CN.md:663）
+- 06:34 取得用户决策：严格覆盖 25 动作、最小参数 schema、重复注册拒绝、ask/done/fail 登记为控制工具（源:用户请求）
+- 06:38 新增 `ToolParameter`、`ToolSpec`、`ToolRegistry`，从 `ActionSchema` 双集合生成完整声明，M3 开关保持默认关闭（源:文件:agent-lite/src/com/dsh/agentlite/tools/ToolRegistry.java:1）
+- 06:41 新增 M3-01 静态门禁和 JVM 测试，首轮发现并修正门禁匹配错误（源:测试）
+- 06:44 发现并修正长按 schema 与旧 `exec()` 不一致：`longpress` 补齐 index/比例坐标/像素坐标可选路径（源:文件:agent-lite/src/com/dsh/agentlite/AgentEngine.java:1924）
+- 06:46 M3-01 静态门禁 22/22、JVM 测试 47/47；动作词表 8 项通过、保留既有 agent-client 能力差异警告，全局复核 9/9、弹窗守卫 35/35（源:测试）
+- 06:48 Android APK 重建成功，产物 `agent-lite/build/agent-lite.apk` 为 19,574,129 bytes（源:命令:sh agent-lite/build-mac.sh）
+- 06:49 APK 可读性检查通过，未发现 API Key/令牌明文；无实体机，ToolRouter/设备执行取消/旧 exec 对等性留待后续卡和真机（源:测试）
+- 06:50 同步 `agent-unified/client` 镜像成功；门禁脚本语法检查通过（源:命令:bash agent-unified/scripts/sync-sources.sh）
+- 06:50 更新整合规划：M3-01 已完成，唯一下一卡为 M3-02（源:文件:docs/MATURE_MODULE_INTEGRATION_PLAN.zh-CN.md:1603）
+- 06:50 终态: done（完成 M3-01 工具注册表整合；M3-02 待执行）
+
+### 2026-09-21 18:05 +08 · 项目:repo +agent-lite · 会话:local · 真机设备验证（只记录不改码）
+- 18:05 设备接入 PKX110/Android 16，备份 prefs 后覆盖安装最新 APK 并重绑无障碍（源:命令:adb install -r）
+- 18:06 冷启 204ms 无 FATAL；无障碍自愈通过：force-stop 后保持、kill -9 后自动重绑（源:命令:adb am start -W + dumpsys accessibility）
+- 18:13 真机首成功：任务「Open the Calculator」5 秒完成 2 步，`app com.coloros.calculator` 直达（源:文件:engine.log）
+- 18:13 记忆库闭环通过：第二次命中复现且**零模型往返**（无「流程转译」记录，`flowmem.json` 落盘）（源:文件:engine.log）
+- 18:15 用户停止 1.5s 响应且不记失败；进程死亡恢复后账号/模型/设备 ID/记忆库全部保持（源:测试）
+- 18:16 缺陷①（P1）：额度显示二次扣减共 5 处，服务端 `quota=144` 而界面显示「剩余 0 units」，用户误判额度耗尽（源:文件:agent-lite/src/com/dsh/agentlite/MainActivity.java:262）
+- 18:16 缺陷②（P2）：软键盘遮挡输入框与「运行」按钮，manifest 缺 `windowSoftInputMode`，实测点击落在键盘上导致任务未启动（源:文件:agent-lite/AndroidManifest.xml）
+- 18:17 辨明 a11y 反复掉线为 `uiautomator dump` 抢占绑定所致（静默 60s 零掉线零新增），非产品缺陷（源:测试）
+- 18:18 排除缺陷①的「数据陈旧」解释：重启后缓存刷新为与服务端一致的 144/956，界面**仍显示 0 units**，确认为纯计算错误（源:命令:adb + su cat prefs）
+- 18:18 清理工作区凭据风险：删除验证期复制的 `prefs-now.xml`/`cred-now.xml`/`backup/`（含 API Key 与令牌），仅保留无凭据截图（源:命令:find + grep）
+- 18:18 设备恢复干净态：输入框已清空、a11y 绑定在位、账号/模型/设备 ID/记忆库完好（源:命令:adb force-stop + am start）
+- 18:19 手册新增 §17 真机验证记录（矩阵/缺陷/测试设施注意事项/未验证项）及 §9 三条速查行（源:文件:PROJECT_OVERVIEW.zh-CN.md:1136）
+- 18:19 终态: done（设备验证完成；2 项缺陷已入册未修，按用户要求不改代码）
+
+### 2026-09-21 19:32 +08 · 项目:agent-lite +repo · 会话:local · 续接 M3-02 参数校验
+- 19:32 读取上一会话日志与整合计划，确认 M3-01 已完成、M3-02 参数 Validation 为当前唯一下一卡（源:文件:PROJECT_OVERVIEW.zh-CN.md:1813）
+- 19:46 新增 `ValidationResult` 与 `ToolSpec/ToolRegistry.validate`，覆盖必填、未知字段、null、类型、范围、枚举，错误不回显输入值（源:文件:agent-lite/src/com/dsh/agentlite/tools/ValidationResult.java）
+- 19:50 扩展 JVM 测试至 58 项并修正整数严格十进制校验；M3-02 门禁 28/28、M3-01 门禁 31/31（源:测试）
+- 19:56 APK 构建成功，`agent-lite/build/agent-lite.apk` 为 19,574,129 bytes；源码镜像同步成功（源:命令:sh agent-lite/build-mac.sh + sync-sources.sh）
+- 20:02 完整 `make jvm` 受本机 Xcode license 未接受阻断；直接 M3 JVM 回归 58/58，通过门禁与脚本语法检查；未上真机（源:测试）
+- 20:03 终态: done（M3-02 完成；M3-03 ToolInvocation/ToolCallState 待执行）
+
+### 2026-09-21 20:05 +08 · 项目:agent-lite · 会话:local · 真机验证（第二轮，只记录不改码）
+- 20:05 设备 PKX110/Android 16 接入，备份 prefs+flowmem 到 /tmp 后覆盖安装本轮 APK，登录态/a11y/记忆库全保留（源:命令:adb install -r）
+- 20:06 冷启 465ms 无 FATAL；a11y 绑定保持；界面实测缺陷①已不成立：显示「剩余 144 units」= prefs account_quota（源:命令:am start -W + screencap）
+- 20:06 真机任务通过：「Open _the _Calculator」4.0s 完成（转译 open_app → app com.coloros.calculator）（源:文件:logcat AgentEngine 20:06:49）
+- 20:10 记忆库闭环复现通过：命中「1 步 → 打开计算器」→ 复现 1/1 → 直接完成，**1.2s 零模型往返**、无转译记录（源:文件:logcat AgentEngine 20:10:24）
+- 20:10 新增实测结论：记忆库要求归一化文本精确相等，下划线变体不命中且另存独立条目（hits=0 oks=1）（源:文件:flowmem.json）
+- 20:10 缺陷②仍成立：键盘顶部 y≈1568，输入框/运行按钮仅露 60px 上沿（源:命令:screencap + 亮度扫描）
+- 20:11 补充测试陷阱 4 条：input text 空格变下划线、DEL 仍无法清空、坐标点击前须确认前台（本轮误点计算器白花 3 轮）、cmd clipboard 不可用（源:测试）
+- 20:11 清理临时凭据备份与设备 ui.xml；仓库无凭据残留；git 提交因本机 Xcode license 拦截跳过（源:命令:rm + git status）
+- 20:11 手册新增 §17.5 第二轮验证、§17.6 陷阱补充，并给缺陷①加状态更新（源:文件:PROJECT_OVERVIEW.zh-CN.md:1199）
+- 20:12 终态: done（真机验证完成：核心链路与记忆库零往返通过，缺陷②遗留，M3-02 无设备行为可验）
+
+### 2026-09-21 20:16 +08 · 项目:agent-lite · 会话:local · 高难度任务实测（朋友圈点赞，只记录不改码）
+- 20:16 采集基线：朋友圈第一条=「9.28 龙玥彤·孩子用不到俩月给自己吃胖五斤」，点赞区仅「田一涵,来子晨」，确认本机未点赞（源:命令:screencap）
+- 20:16 实测微信无障碍树被完全屏蔽：uiautomator 仅 1 个空节点；`input text` 注入中文直接抛 NPE（源:测试）
+- 20:19 任务 1 失败：第 7 步被指纹看门狗终止「屏幕连续 6 步无变化」，微信确实被启动但停在奶奶聊天页，0 次点击（源:文件:logcat AgentEngine）
+- 20:19 定位缺陷A：32/32 次 `collectNodes` 只拿到 systemui 状态栏（type=3），微信应用窗口 root=null（源:文件:logcat AgentA11y）
+- 20:21 定位缺陷C：`NodeInfo.fingerprint` 只算节点 text/desc/id、不含截图，状态栏 5 节点恒定→必然误杀（源:文件:agent-lite/src/com/dsh/agentlite/NodeInfo.java:82）
+- 20:22 任务 2 对照复现：前置态改微信主页仍第 6 步被同一看门狗终止，步序逐字相同，2/2 系统性复现（源:文件:logcat AgentEngine 20:21:28）
+- 20:22 手册新增 §17.7（基线/步骤表/缺陷 A–D/4 项修复候选）与 §17.6 陷阱 5–6（中文注入 NPE、运行按钮坐标随行数变化）（源:文件:PROJECT_OVERVIEW.zh-CN.md:1230）
+- 20:22 清理设备导出文件与临时截图；记忆库仍 2 条未污染；归档基线/失败现场图至 _local/verify-20260921-moments（源:命令:rm + scp）
+- 20:22 终态: done（高难度任务按预期暴露引擎缺陷；点赞未执行，待高级模型修复缺陷 A–D 后复验）
+
+### 2026-09-21 20:24 +08 · 项目:repo · 会话:local · 补「全项目禁止依赖 root」底线
+- 20:20 首次运行检查：读项目清单与手册工作日志尾，确认本次属共享文档项目 repo（源:文件:docs/PROJECTS.zh-CN.md:27）
+- 20:21 核查 root 现状：agent-client 52 / agent-lite 18 / tools 3 / agentd-go 1 处引用，ios 与服务端为 0；两份 README 已声明「不需要 root」（源:命令:grep 统计）
+- 20:23 用户裁定：语义=零 root 为唯一必需基线、root 仅可选增强；落点=手册 §12 + 新建 AGENTS.md（源:用户请求）
+- 20:23 手册 §12 第三条升格为 §12.1 完整底线（5 条禁止 + 例外登记表 + 验证方式）（源:文件:PROJECT_OVERVIEW.zh-CN.md:286）
+- 20:24 新建仓库根 AGENTS.md 承载同规则，本会话运行时已自动加载生效（源:文件:AGENTS.md:6）
+- 20:24 §7 加边界声明，避免「沙盒必须 root」被误读为全项目前置（源:文件:PROJECT_OVERVIEW.zh-CN.md:132）
+
+### 2026-09-21 20:30 +08 · 项目:agent-lite +repo · 会话:local · 修复纯视觉看门狗误杀
+- 20:30 读取项目清单、工作日志尾与相关实现，确认微信问题集中在系统状态栏节点污染、纯视觉未触发、节点指纹看门狗误判（源:文件:AgentEngine.java:622）
+- 21:29 零 root 真机安装复验成功：检测 `top=com.android.systemui` 后切换纯视觉，第 2 步完成 `Open WeChat`，未再触发第 6 步看门狗误杀（源:命令:adb logcat）
+- 21:34 清理设备 XML 残留，确认前台 `com.tencent.mm/.ui.LauncherUI` 与无障碍绑定在位；§17.8 记录修复后真机结果（源:命令:adb）
+- 21:44 校正本会话日志时间，仅保留可由构建、门禁、同步和真机日志证明的结果（源:步骤1）
+- 22:21 续: 开始朋友圈点赞端到端验证，采基线首条=traever-旅行者「退抖音前最后一个点赞」（无点赞条目）（源:命令:adb screencap）
+- 22:17 修复前 2 次失败：动作在 tap@766,2442 与另一坐标 A/B 震荡，最多 45 步仍未进入朋友圈（源:文件:logcat AgentEngine）
+- 22:24 定位缺陷E：胶囊窗口 frame=[264,2437]-[952,2542] 压住微信「发现」Tab 且用 FLAGS_TOUCH 吃点击（源:命令:dumpsys window）
+- 22:24 对照实验：同坐标 tap(766,2442) 无悬浮窗变化 36.6%、有胶囊 0.0%（源:测试）
+- 22:25 胶囊改 FLAGS_DISPLAY（不可触）+ 移除点击监听；构建 APK 并覆盖安装（源:文件:OverlayController.java:107）
+- 22:27 端到端复验成功：19 步完成点赞，首条动态出现「❤ 报道北方」，基线该位置无任何点赞（源:命令:adb screencap + logcat）
+- 22:30 手册新增 §17.9（缺陷 E + 对照实验 + 步序表 + 独立核验）；镜像同步与门禁 9/9、17/0 通过（源:步骤7）
+- 22:30 终态: done（缺陷 A–E 修复；朋友圈点赞端到端打通，用户可自行取消该赞）
+
+### 2026-09-23 00:04 +08 · 项目:repo · 会话:a700e9c2 · NPU 小主机永久离线（登记·无影响）
+- 00:04 用户告知 NPU 小主机（yylamd / 192.168.5.11）永久离线（源:用户请求）
+- 00:04 核查本项目零引用该机：真机验证走本机 adb + OnePlus 设备，无远端 Windows 依赖（源:命令:grep -rn 192.168.5.11）
+- 00:04 终态: done（仅登记备查，无动作）
+
+### 2026-10-02 12:36 +08 · 项目:repo · 会话:local · AgentLite 更新审计
+- 12:36 复核新增模块、执行链、零 root 规则与真机证据边界（源:文件:docs/PROJECTS.zh-CN.md:27）
+- 12:40 首轮 make check 揭示 ToolRegistryTest 漏编 ValidationResult，修正 Makefile（源:命令:make check）
+- 12:48 记录 open_url 回放、ask 超时、M3 未接线及 root 集成测试问题（源:文件:PROJECT_OVERVIEW.zh-CN.md:1440）
+- 12:54 补记忆库明文/非原子写入、快照脱敏边界与能力评估（源:文件:agent-lite/src/com/dsh/agentlite/FlowMemory.java:231）
+- 13:00 make check 全过；记忆门禁 40/0、M3 门禁 31/0、源码镜像同步通过（源:测试）
+- 13:09 §17.10 完成，记录当前缺陷、残余风险及 DeepSeek 4.1 Flash 指导（源:步骤4）
+- 13:09 终态: done
+
+### 2026-10-02 13:52 +08 · 项目:agent-lite +repo · 会话:local · 修复 §17.10 五项 P1
+- 13:52 首次运行检查：读项目清单与工作日志尾，确认目标 = §17.10 五项 P1 + 记忆库落盘（源:文件:PROJECT_OVERVIEW.zh-CN.md:1440）
+- 13:55 P1-1 open_url 移出 REPLAYABLE，采集/还原分支拆除、旧记录加载过滤（源:文件:agent-lite/src/com/dsh/agentlite/FlowPlan.java:68）
+- 13:58 P1-1 同步门禁与用例：flow_memory_guard 45/0、FlowMemoryTest 56/0、设计文档 §9.3 补 open_url（源:测试）
+- 14:00 P1-2 ask 改 AskResult 三态：超时暂停+连续 2 次终止+USER_TIMEOUT 标签；A6 门禁 12/0（源:文件:AgentEngine.java:852）
+- 14:02 P1-3 M3 网关接线：TOOL_REGISTRY+actionToArgs+exec 前校验，toolRouter 开关默认关；APK 构建通过（源:文件:AgentEngine.java:897）
+- 14:03 P1-3 门禁契约同步：M3 两门禁反转、M0:57 改「仅 toolRouter 判定」；33/0·29/0·31/0（源:步骤4）
+- 14:04 P1-4 root E2E 文件头降级为「root 专属增强诊断，非门禁非基线证据」（源:文件:tests/integrated_features_e2e.py:1）
+- 14:04 P1-5 autoAcceptTerms 默认 true→false，Prefs/引擎 javadoc 记录两次决策脉络（源:文件:Prefs.java:44）
+- 14:05 P1-B FlowMemory 原子写（tmp+fsync+rename）+损坏备份 .corrupt+写失败留痕；FM-11 门禁（源:文件:FlowMemory.java:259）
+- 14:05 make check 全绿（契约 26/0、FlowMemory 45/0、FlowMemoryTest 56/0 等）；镜像同步 client=23（源:命令:make check + sync-sources.sh）
+- 14:05 手册新增 §17.11；无真机在线，ask/M3/open_url 行为级验证列为待真机项（源:步骤8）
+- 14:05 终态: done
+
+### 2026-10-02 16:37 +08 · 项目:agent-lite +repo · 会话:local · §17.11 待真机项行为级验证
+- 15:35 真机上线（OnePlus PKX110，root 诊断机）；按 §17.11 待真机清单定 A–E 验证矩阵（源:用户:已有真机链接）
+- 15:40 新增 tests/p1_device_verify.py（A–E、26 断言、PASS/FAIL/SKIP 三分类）与 mock 三场景 openurl/ask/m3invalid（源:文件:tests/p1_device_verify.py）
+- 15:42 排障：su -c 剥 XML 属性引号致 prefs 注入失效（任务启动都不出现）→ 改主机端完整 XML 推写（源:命令:adb shell su -c sed）
+- 15:44 排障：mock 按 assistant 计数失真（引擎正常路径不累积历史），序列停 key 4 把 app 退到桌面打转 → 改服务端计数 + DELETE 复位（源:文件:tests/mock_llm_server.py）
+- 15:50 真机暴露 P2：主动放弃确认与 5 分钟超时混淆（谎报超时+误暂停）→ 新增 ASK_SKIPPED 独立终态、按钮「跳过」改「不执行」（源:文件:AgentEngine.java:167）
+- 15:51 action_schema_guard 新增 A7 两条断言（14/0）；APK 重建，dex 核对含新文案、旧文案 0 残留（源:命令:build-mac.sh）
+- 16:05 A 组通过：flow 入库 + 二次零模型往返复现；open_url 执行成功但无入库日志、库无步骤、计数不变（源:测试:p1_device_verify A）
+- 16:10 B 组通过：网关开时三种非法动作各拒一次（OUT_OF_RANGE/UNKNOWN_PARAMETER/MISSING_REQUIRED），设备动作仅剩合法 key 1 个（源:测试:p1_device_verify B）
+- 16:18 C1/C2 通过：放弃确认→独立终态且待确认操作未执行；回答以「用户回答：」进模型上下文（源:测试:p1_device_verify C）
+- 16:19 C3 通过：真实静置 5 分钟 → 结构化 TIMEOUT（第 1 次）+ 暂停 + 窗口内零设备动作（源:测试:p1_device_verify C3）
+- 16:20 C3-4 人工补验通过：截图色块定位悬浮窗「我已完成，交还 AI」→ 交还后 USER_TIMEOUT 以系统事件回灌，完成任务摘要「已收到超时事件」（源:命令:adb exec-out screencap + input tap）
+- 16:22 C3-4 自动化（find_blue_overlay_button）并加备份护栏：prefs 含 mock 端点时拒绝建立还原源，防测试态套娃固化成用户态（源:文件:tests/p1_device_verify.py）
+- 16:30 真机发现 2 项新缺陷（未修，留待下轮主题）：悬浮窗卡片渲染不稳定（一次显示一次未显示，appops default）；超时后提问弹层未关闭、点「不执行」被静默丢弃（源:测试:截图 + appops get）
+- 16:36 完整回归 A–E：26 通过 / 0 失败 / 1 需人工（C3-4 脚本轮 SKIP，人工证据已闭环）；验证后还原设备 prefs/flowmem/无障碍与 adb reverse（源:测试:p1_device_verify 全量）
+- 16:37 手册新增 §17.12，§17.11 验证边界改为指向已闭环结论；make check 全绿、镜像 client=23（源:文件:PROJECT_OVERVIEW.zh-CN.md）
+- 16:37 终态: done
+
+### 2026-10-02 16:44 +08 · 项目:agent-lite +repo · 会话:local · 手册复读与状态一致性修正
+- 16:40 复读手册最新三节（§17.10–§17.12）与三个 2026-10-02 日志块，核对结论是否与已修事实一致（源:文件:PROJECT_OVERVIEW.zh-CN.md:1440）
+- 16:42 发现缺口：§17.10 五项 P1 与 B 节残余风险仍以「现存缺陷」语气记载，C/D/E 节结论亦过时 → 加「状态更新」总表 + 四处行内标注（保留审计原文不改写）（源:文件:PROJECT_OVERVIEW.zh-CN.md:1444）
+- 16:43 核实两处声明：make check = go+contract+ui+jvm 不含任何真机脚本；ui 目标为显式脚本白名单（非 glob），新增真机脚本不会误入门禁（源:命令:grep Makefile + make check）
+- 16:43 记录一处未落地项：§17.10.E-2 要求的结构化标签中 TOOL_INVALID 尚未实现（M3 拒绝回灌仍为自然语言句子），与 USER_TIMEOUT 已实现形成不一致（源:文件:AgentEngine.java:962）
+- 16:44 手册改动后 make check 复验全绿（契约 26/0、A6+A7 14/0、FlowMemory 45/0、M3 33/0·29/0、M0 31/0）（源:命令:make check）
+- 16:44 终态: done
+
+### 2026-10-05 23:14 +08 · 项目:repo · 会话:local · 适老化未来开发手册续写
+- 23:14 完成首次运行检查：读项目清单与日志尾；确认仅改共享文档，保留已有脏树（源:命令:git status --short）
+- 23:14 核查 Hindsight 四页均为生成占位，未作为实现证据；确定以工作树源码与测试为准（源:记忆）
+
+### 2026-10-06 04:10 +08 · 项目:repo · 会话:local · 续写适老化开发手册
+- 04:10 续: 上次未收尾；复读日志与工作树，接续只读核查并保留原有修改（源:命令:git status --short）
+- 04:10 核实官方 deepseek-flash 映射 V4.1 Flash 与视觉等接口；产品效果、语音及数据条款边界分列（源:web:api-docs.deepseek.com）
+- 04:10 查明登录无 Key 入口与客户端路由矛盾、done 复验放行及确认生命周期风险（源:文件:agent-lite/src/com/dsh/agentlite/AgentEngine.java:913）
+- 14:08 续: 中断后复读日志；复核四项静态门禁及七组 JVM 均通过，不外推为无 root 真机成功（源:命令:make jvm）
+- 14:08 已增全景 §18 进度矩阵；规划 §23 含模型边界、十张任务卡、十个场景与验收线（源:文档:§18/§23）
+- 14:08 已修正 UX 协议默认关及新装/升级区别；保留历史决策，未改业务代码（源:文档:UX-001 §1.1）
+- 14:11 校验新增区块 90 个本地链接、10 张任务卡与 10 个场景均通过；UX 复验 17/0/1（源:命令:文档自检）
+- 14:11 git diff --check 通过；本轮仅改三份文档，保留既有脏树；真机、用户和付费模型验证未执行（源:命令:git diff）
+- 14:11 终态: done（文档核查与续写完成；T01–T10 为待实施计划，不代表业务缺陷已修）
+
+### 2026-10-06 19:09 +08 · 项目:agent-lite +repo +agent-unified · 会话:local · 凭据路由回归与首跑修复
+- 19:09 完成首次检查并获准扩展到测试与代码；复读日志、保留已有脏树，不访问真实账号或付费接口（源:用户请求）
+- 19:09 确认入口误用默认偏好、请求层自动跨付费通道回退；登录本身不改用户选择（源:文件:agent-lite/src/com/dsh/agentlite/LlmClient.java:194）
+
+### 2026-10-07 11:57 +08 · 项目:agent-lite +repo +agent-unified · 会话:local · 续完凭据路由修复
+- 11:57 续: 上轮未收尾；复读日志，已落地离线测试及解析器，继续接线而非重复规划（源:文件:tests/credential_route_guard.py）
+- 11:57 核对问题版回归为 109 通过/68 失败；全用内存连接与假凭据，未访问真实服务（源:测试:凭据回归基线）
+
+### 2026-10-08 19:02 +08 · 项目:agent-lite +repo +agent-unified · 会话:local · 凭据路由修复收尾
+- 19:02 续: 复读前两轮日志；核对 10-07 已完成接线，今日更新手册并重新执行离线验收（源:用户请求）
+- 19:02 确认共用路由、显式选择、保存/清 Key 保持主体、规划快照及欠费归因已接通（源:代码复核）
+- 19:02 最终凭据行为回归 245/0，内存连接覆盖正常与故障响应，不访问真实模型（源:测试:凭据回归）
+- 19:02 完整 make check 退出 0；Go 缓存/无测试包、UI 手工项与既有差异警告保留（源:命令:make check）
+- 19:02 Android 34/Java 11 编译退出 0，仅有弃用提示；未打包、签名或安装（源:命令:javac）
+- 19:02 原项目与镜像逐字节检查通过，未独立改镜像；工作树既有修改保留（源:命令:sync-sources --check）
+- 19:02 全景 §18.6、规划 §23.11、凭据规范已同步；新增章节 17 个本地链接通过（源:检查:文档链接）
+- 19:02 终态: done（T01 凭据切片/T02 本地实现完成；其余行为夹具和零 root 真机首跑待验）（源:本轮验收）
+
+### 2026-10-08 21:25 +08 · 项目:agent-lite +repo +agent-unified · 会话:local · 凭据路由真机回归
+- 20:15 用户报告真机已连接；设备 OnePlus PKX110 安卓16/API36，已装版本是 10-02 旧包故重建安装（源:用户请求）
+- 20:26 新增真机回归脚本，自带两个本机假端点经 adb reverse，全程不出网不花钱（源:文件:tests/credential_real_device.py）
+- 20:26 零 root 主链路：只走 uiautomator+input，root 仅布前置状态与取证；设备用户态先备份后还原（源:测试:真机准备）
+- 20:39 阶段 A/B/C/D 全通过：已登录无 Key 原缺陷修复得到真机证实，请求到网关并带账号令牌（源:测试:真机ABCD）
+- 20:45 阶段 E 全通过：自带 402 归自己的服务账号、401/500 不跨付费主体、终态不泄漏测试凭据（源:测试:真机E）
+- 20:50 阶段 F 全通过：保存配置弹选择卡、暂不切换保持主体、主动选择才切换（源:测试:真机F）
+- 21:10 真机暴露文案错向：自带欠费却建议"配置自己的接口作为备用通道"；修 UiText/AgentEngine（源:代码:UiText.java:76）
+- 21:12 桌面固化 3 条「下一步」断言，ui_text_guard 13/0；make ui jvm 全通过（源:测试:UiTextTest）
+- 21:24 最终连续 A–F 真机回归 43 通过/0 失败；镜像逐字节一致，设备用户态已还原（源:测试:真机最终）
+- 21:25 终态: done（T01/T02 经零 root 真机主链路验证；真实账号/余额、其他机型、字号与无障碍朗读仍待验）（源:本轮验收）
+
+### 2026-10-09 16:41 +08 · 项目:repo · 会话:local · 真机无线 adb 连接打通
+- 16:33 目标 192.168.1.106:41061 直连报 No route to host；nc/curl 可连证明端口在线（源:命令:adb connect）
+- 16:36 对照定位根因：蓝猫VPN 系统扩展拦第三方进程直连局域网，nc/curl/bash/perl 不受影响（源:命令:python3/node 对照）
+- 16:38 USB 连上 PKX110；切 adbd tcpip 5555，perl 中继 5599→192.168.1.106:5555 后无线连接成功（源:命令:adb connect 127.0.0.1:5599）
+- 16:40 固化 tools/adb-wifi/ 一键与守护脚本，--stop/重建复测通过（源:文件:tools/adb-wifi/adb-wifi.sh）
+- 16:41 终态: done（无线通道 127.0.0.1:5599 可用；拔线独立性、手机重启后需重跑 tcpip 待用户验证）
+
+### 2026-10-09 16:44 +08 · 项目:repo · 会话:local · 手机检查与Flash修改方案
+- 16:47 恢复上轮基线：真机凭据43/0、桌面245/0；本轮仅检查与方案撰写，保留既有工作树（源:文件:PROJECT_OVERVIEW.zh-CN.md:2569）
+- 16:47 核实PKX110经127.0.0.1:5599在线，API36、应用0.6.0；当前shell为uid=0，另列严格无root验收（源:命令:adb只读核验）
+- 16:55 复跑凭据离线回归245/0、镜像--check一致、UiText行为13/0；子代理中断遗留的行号发现逐条亲核属实（源:测试:凭据复跑）
+- 16:57 固化三卡证据：代点绕过exec、二次done放行并入库、胶囊4秒分支缺taskActive守卫、finally延迟回调无代际（源:文件:agent-lite/src/com/dsh/agentlite/AgentEngine.java:1712）
+- 16:59 产出DS4.1 Flash三卡最小切片方案（T05a→T03a→T04a，含回归与回滚），文档链接9项目标全过（源:文件:docs/PLAN_T03_T05_DS41FLASH_2026-10-09.zh-CN.md）
+- 16:59 终态: done（检查与方案撰写完成，未改业务代码；实施留待后续会话）
+
+### 2026-10-09 17:03 +08 · 项目:agent-lite +repo +agent-unified · 会话:local · T05a代际防护/T03a入口收敛/T04a证据分级
+- 17:01 复读方案与日志尾；认领 agent-lite+repo+agent-unified，按 T05a→T03a→T04a 顺序实施（源:文件:docs/PLAN_T03_T05_DS41FLASH_2026-10-09.zh-CN.md）
+- 17:02 T05a 先写 tests/generation_guard.py，旧代码跑出 9 通过/5 失败（4秒分支缺守卫、无 RUN_SEQ、finally无代际）（源:测试:代际门禁）
+- 17:03 T05a 修复：taskEnded 4秒分支补 taskActive 守卫；AgentEngine 加 RUN_SEQ 代际，finally 回调改 mySeq==RUN_SEQ.get()（源:文件:agent-lite/src/com/dsh/agentlite/AgentEngine.java:283）
+- 17:03 门禁转 14/0；make ui jvm 全绿（凭据 245/0 未回退）；镜像同步后 --check 逐字节一致（源:命令:make ui jvm）
+- 17:08 T03a 先写 tests/auto_tap_guard.py + 公共 tests/java_source_util.py（剥注释，防"把守卫写进注释"假绿），旧代码 FAIL 点为 1718/1751/1759 三处（源:测试:入口门禁）
+- 17:08 T03a 改造：代点/代勾/代同意三处改为 exec(svc,{tap,index},nodes)，失败原因进日志不再静默（源:文件:agent-lite/src/com/dsh/agentlite/AgentEngine.java:1721）
+- 17:08 injectViaClipboard 的 root 聚焦点击登记为受约束例外（applyOffset 非幂等，改 exec 会二次偏移；例外须在 RootShell 守卫下且保留 clipPending 降级）（源:文件:tests/auto_tap_guard.py）
+- 17:08 门禁转 15/0；make ui 全绿（含既有 9 项）；make jvm 凭据 245/0；镜像 --check 一致（源:命令:make ui）
+- 17:08 T04a 先写 tests/DoneEvidenceTest.java + tests/done_evidence_guard.py（抽取真实 judgeDone），旧代码 5 通过/7 失败（源:测试:证据门禁）
+- 17:08 T04a 落地：三档 PROVEN/WEAK/UNPROVEN + arrivedExpectPkg 强证据源；UNPROVEN 终态「不确定」、recordable=false、不入库；新增 showUncertain 琥珀卡（源:文件:agent-lite/src/com/dsh/agentlite/AgentEngine.java:938）
+- 17:08 复跑：真值表 18/0、结构守卫 18/0；make ui jvm 全绿；APK 重建退出 0（19.6MB）；镜像 --check 一致（源:命令:bash agent-lite/build-mac.sh）
+- 17:12 真机前置：用户解锁后恢复 a11y 绑定（装 APK 会被系统摘除），安装本轮包（sha256 d5262e9f…）（源:命令:adb install）
+- 17:20 凭据真机回归 A–E **41 通过 / 0 失败**；阶段 F 两次都在收尾的 uiautomator dump 上超时崩溃（脚本脆弱点，非断言失败）→ 单跑 F **6 通过 / 0 失败**（源:测试:真机凭据）
+- 17:35 新增 tests/t03_t05_real_device.py：自带本机假模型（19111，经 adb reverse）+ 零 root 主链路（input / uiautomator dump / am start），root 仅布前置态与取证并还原（源:文件:tests/t03_t05_real_device.py）
+- 17:45 真机首轮 6 通过/4 失败：T05a 六项全绿；「有证据 done」假失败连查四处**测试侧**真凶——dump 挤掉 a11y 致服务重连初期只枚举 SystemUI、首跑通知弹窗把前台变 systemui、mock 的 app 参数写成 target（词表要 package）、mock 未分流转译/规划请求（源:测试:真机三卡）
+- 17:52 另两处注入坑：点「运行」前弹出的 IME 盖住按钮（ESC 收键盘）；任务结束后布局整体下移 24px（改点按钮下缘上方 1/4）（源:文件:tests/t03_t05_real_device.py）
+- 18:04 真机终轮 **14 通过 / 0 失败 / 1 跳过**：A 完成后 0.2 秒启动 B，B 的保活锁/覆盖层胶囊/运行态通知均未被旧回调破坏；无证据 done → 记忆库 344→344 未增长；有证据 done → 「完成」且入库 344→707（源:测试:真机终轮）
+- 18:05 make check 全绿；镜像 --check 逐字节一致；git diff --check 干净（源:命令:make check）
+- 18:06 规范三处同步：守则升 1.0.8（第四种终态「不确定」/ T-3a 完成语义位独占 / T-3b 不入库 / DEV-10·DEV-11）、Skill 补 I-5 与四条溯源、规划 §23.12、全景 §18.8、CHANGELOG（源:文件:docs/INTERACTION_LOGIC_SPEC.zh-CN.md:11）
+- 18:09 终态: done（三卡实施 + 真机回归 14/0/1；未做 T04b 与 T03a 第二刀；真机暴露的「结果卡片挡运行」竞态已登记 DEV-11）（源:本轮验收）
+
+### 2026-10-09 17:37 +08 · 项目:dsh-env · 会话:local · SSH 链路与隧道体检
+- 17:35 到 ECS 8.133.225.105 免密登录正常（uptime 14 天，agentlite-server 监听 *:18443）（源:命令:ssh aliyun-ecs）
+- 17:36 六条隧道实测：19001/19003/19004/8417/19005/19006 均通；19002→18446 无监听为死链路（源:命令:curl 127.0.0.1 各端口）
+- 17:36 19001 的 404 与 ECS 本机 8888 行为一致（BT-Panel），非隧道故障；18446 属手册所述历史临时实例（源:文件:docs/DEVELOPMENT_MANUAL.zh-CN.md:518）
+- 17:37 手机端无 sshd（22/8022 refused）、本机 sshd 未监听；utm-dev(19010) 未起系 UTM 虚拟机未运行（源:命令:nc/adb devices）
+- 17:37 终态: done（隧道体检完成；19002 目标端口未改，修复命令已交付用户自行决定）
+
+### 2026-10-09 21:27 +08 · 项目:repo · 会话:local · 功能接口与最小架构审计
+- 21:27 读取项目清单与日志尾，确认源码及未提交工作树为审计基线，仅交付文档（源:用户请求）
+- 21:40 自查完成全局拓扑：7 子项目职责、服务端 23 路由、agent-lite 动作词表与网络客户端分布（源:自查）
+- 22:10 四路并行子代理深挖（iOS/服务器/agent-lite/agent-client+agentd），三份首报告回收；agent-client 首任务失败重派收窄范围（源:子代理报告）
+- 22:20 核实两处子代理报告偏差：BailianClient 非第 4 份 LLM 客户端（纯 Key 管理面）但确认为 ≈933 行死链路；contracts/ 整包零接线改判死代码，修正 §8.5 裁决（源:grep 验证）
+- 22:34 文档 docs/INTERFACE_AUDIT_2026-10-09.zh-CN.md 定稿 459 行：§1-§9（拓扑/路由与契约清单/词表/分项发现 S17+I24+A25+X16/第一性分析/重构建议 R1-R9）（源:文档核读）
+- 终态:完成——审计文档交付，源码零改动；最高优先级建议 R1-R4（HTTP 栈收敛为单实现/兑换码单入口/push 批量合并/网关解码 4→1），死代码清除 R5 ≈2600+ 行
+
+### 2026-10-10 00:26 +08 · 项目:repo · 会话:local · 功能接口与架构证据复核
+- 00:26 确认七子项目及现有审计，基于含未提交变更的工作树复核，保留业务源码（源:命令:git status --short）
+- 05:33 完成功能边界及关键链路源码复核：22 个服务端方法路由、Android 25 动作（计数于05:40校正）；确认同步游标跳页、SSE 包装能力丢失、ASR 重走失败端点，纠正旧审计的静态接线判断（源:文件:agentlite-server/main.go:95-130；文件:ios/Sources/AgentLiteCore/SyncService.swift:72-82；文件:agent-lite/src/com/dsh/agentlite/AsrRouter.java:42-87）
+- 05:40 完成401行接口审计文档：七子项目功能映射、14项有源码证据的问题、数据搬运账本及最短实施顺序；旧版已添加纠正指引（源:文件:docs/INTERFACE_AUDIT_2026-10-10.zh-CN.md）
+- 05:40 机械校验通过：191个源码引用路径及行号、22个服务端HTTP操作、25个Android动作；仅静态审计，未运行全项目测试/真机/压测（源:命令:Python文档覆盖校验，exit 0）
+- 05:40 终态: done（接口清单与去冗余架构文档交付；业务源码未改；文档范围git diff --check通过；无遗留后台作业）（源:本轮文档验收）
+
+### 2026-10-10 16:54 +08 · 项目:repo +agentlite-server +agent-lite +ios +agentd · 会话:local · 审计方案实施
+- 16:54 读取日志与审计，确认38个已有变更文件并保留；恢复免设备验证入口（源:命令:git status --short；make帮助）
+- 17:03 基线make check通过；四项新增服务端回归先红后绿，修正next_since分页、账号域fingerprint、任务终态保留与幂等ACK（源:测试:agentlite-server/interface_correctness_test.go；命令:go test）
+- 17:23 完成单日志账务原子提交与日志wrapper流式透传，12项Go动态测试及race全过；iOS新增15项同步/账号隔离/请求计数回归通过，Android请求合并与结果接线进行中（源:命令:go test -race ./...；swift test；工具:time）
+- 02:59 续至10月11日：收齐独立实现回归；Go存储/网关与单帧感知race通过，Android账号60场景通过（源:命令:go test -race；测试）
+- 02:59 收敛HTTP、ASR与LAN批处理；补三来源字节预算，修正四向翻页旧测试预期（源:文件:agent-lite/src/com/dsh/agentlite/SyncClient.java）
+- 13:49 续至10月11日：已回收全量make check绿、服务端32测试与两Go模块race/vet、Swift57项含10真实环回TLS E2E全过；Android账号66场景1125断言及动作51断言通过（源:命令:make check；go test -race ./...；swift test；后台作业结果）
+- 13:49 Android真实APK与iOS真App不签名构建通过，未安装/部署；实施报告215行覆盖F01–F14与迁移/回滚边界，现行手册对齐新分页/指令/单日志契约（源:文件:docs/INTERFACE_IMPLEMENTATION_2026-10-11.zh-CN.md；命令:bash agent-lite/build-mac.sh；xcodebuild）
+- 13:55 最终镜像同步/逐字节检查、make check、git diff --check全过；文档校验243本地路径、17现行源码行锚点、5标题锚点，历史审计140旧行锚点保留快照不重编号，APK指纹复核一致（源:命令:后台作业bash-361，exit 0；Python文档/产物校验）
+- 13:55 终态: done（F01–F14源码收敛、回归、两端构建、镜像和实施文档交付；既有工作树保留；无遗留后台作业；未自动提交、线上部署或设备安装）（源:本轮验收；工具:time）
+
+### 2026-10-16 19:30 +08 · 项目:repo · 会话:local · Agent Lite 参赛演示 PPT 制作
+- 18:26 加载 ppt-master skill，完成 Stage1/Stage2 确认与设计规格落盘（深色发布、15 页、Speaker Notes 开启）（源:文件:~/ppt-master/projects/agentlite-ppt_20261016/design_spec.md；文件:spec_lock.md）
+- 19:20 产出 15 页 SVG 并通过最终质量门禁 0 错误；修复 §VIII 图片 Type Source→Diagram 与 p15 组边界溢出（源:命令:svg_quality_checker.py --canonical-authoring --stage final，exit 0）
+- 19:25 拆分 15 段演讲备注、生成自包含预览并导出原生 PPTX（15 页 + 15 备注；zip 完整性、字体可移植、外链图片检查全过）（源:命令:total_md_split.py；finalize_svg.py；svg_to_pptx.py）
+- 19:30 产物复制至 竞赛材料/Agent Lite 参赛演示.pptx；画布越界校验 117 bounds 全过（源:命令:Python 边界校验）
+- 19:30 终态: done（PPT 交付：15 页深色发布风格 + 15 段答辩备注；未提交 Git、未部署）（源:本轮验收）
+- 19:45 按用户反馈（m00618「这几个图片文字出来了」→ m00634 选方案 1）将 P04 开发流程图、P05 运行原理图由嵌入位图改为原生矢量重画：53 个 DrawingML 预设形状（roundRect 39 + downArrow 14）+ 可编辑文字，节点文字 16px、卡标题 22px（源:文件:~/ppt-master/projects/agentlite-ppt_20261016/svg_output/p04.svg；p05.svg）
+- 19:55 门禁重跑 EXIT=0（blocking 0、errors 0，关系页 2，未声明字号与 p01 组溢出已修）；finalize_svg + svg_to_pptx 重导出 PPTX 81674B（较上版 267180B 减少 217738B 即两张被移除位图），postflight quality_gate=passed（源:命令:svg_quality_checker.py --canonical-authoring --stage final；finalize_svg.py；svg_to_pptx.py）
+- 20:00 交付副本与总览图更新至 竞赛材料/；design_spec §VIII 图片清单清空为「不使用外部位图」说明、§IX Part 2 改写为原生矢量（源:文件:竞赛材料/Agent Lite 参赛演示.pptx；文件:竞赛材料/Agent Lite 参赛演示_15页总览.png）
+- 20:00 终态: done（P04/P05 位图改矢量完成并重导出，15 页交付更新；未提交 Git、未部署）（源:本轮验收）

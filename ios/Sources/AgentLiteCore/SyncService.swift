@@ -1,23 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// 信息同步（服务端流）。契约见 agentlite-server/main.go:97-98：
-//   POST /api/v1/sync/push  → {accepted, rejected, next_seq}
-//   GET  /api/v1/sync/pull?since=<seq>&limit=<n> → {records, next_seq, has_more}
+// 信息同步（服务端流）。
+//   POST /api/v1/sync/push → {accepted, duplicates, rejected, server_seq}
+//   GET /api/v1/sync/pull?since=<seq>&limit=<n> → {records, server_seq, next_since?, has_more}
 //
-// 关键设计（照抄服务端取舍，不自行发明）：
-//   - `seq` 由服务端**按账号**单调分配，客户端只把它当游标。绝不能拿本地时间当游标
-//     ——多设备时钟不同步，会静默丢记录。
-//   - `data` 是不透明 JSON，服务端不解释。因此 iOS 端也**原样保存**，
-//     只保证「从哪台设备来、什么类型、什么 id」这三件事不丢。
-//   - push 前必须带 `origin_device_id`：否则服务端会记成「本机产生」，
-//     数据不丢但溯源错了（SyncClient.java:451 记录过这个坑）。
+// seq 在账号内单调递增。server_seq 是高水位，不是消费位置；只在消费完成后
+// 保存实际记录的最后 seq。data 为不透明 JSON，客户端保留全部字段。
 
 import Foundation
 
 public actor SyncService {
     private let http: HTTPClient
     private let cursorStore: SecureStore
-    private static let cursorKey = "sync.cursor.v1"
 
     public init(http: HTTPClient, cursorStore: SecureStore) {
         self.http = http
@@ -26,21 +20,33 @@ public actor SyncService {
 
     // MARK: - 游标
 
-    /// 已拉取到的位置。持久化到 Keychain 而不是 UserDefaults：
-    /// 它决定了「哪些记录已经收过」，丢了会导致重复处理下行记录。
-    public func cursor() throws -> Int64 {
-        guard let d = try cursorStore.get(Self.cursorKey),
-              let s = String(data: d, encoding: .utf8),
-              let v = Int64(s) else { return 0 }
-        return v
+    /// 当前账号已经成功消费的位置。旧版无账号归属的 sync.cursor.v1 不作迁移，
+    /// 以免继承其它账号的高水位；首次升级会从 0 重放，消费方需按记录 ID 幂等保存。
+    public func cursor() async throws -> Int64 {
+        let session = try await http.syncSession()
+        return try cursor(for: session.accountID)
     }
 
-    private func saveCursor(_ v: Int64) throws {
-        try cursorStore.set(Data("\(v)".utf8), for: Self.cursorKey)
+    private func cursorKey(for accountID: String) -> String {
+        "sync.cursor.v2.\(accountID)"
     }
 
-    public func resetCursor() throws {
-        try cursorStore.remove(Self.cursorKey)
+    private func cursor(for accountID: String) throws -> Int64 {
+        guard let data = try cursorStore.get(cursorKey(for: accountID)),
+              let value = String(data: data, encoding: .utf8).flatMap(Int64.init),
+              value >= 0 else { return 0 }
+        return value
+    }
+
+    private func saveCursor(_ value: Int64, for accountID: String) throws {
+        // 并发消费同一页时，较迟完成的旧页也不回退已经成功消费的位置。
+        let consumed = max(try cursor(for: accountID), value)
+        try cursorStore.set(Data("\(consumed)".utf8), for: cursorKey(for: accountID))
+    }
+
+    public func resetCursor() async throws {
+        let session = try await http.syncSession()
+        try cursorStore.remove(cursorKey(for: session.accountID))
     }
 
     // MARK: - 上行
@@ -67,33 +73,84 @@ public actor SyncService {
 
     // MARK: - 下行
 
-    /// 拉取一次增量。**自动推进游标**，调用方不必关心游标管理。
+    /// 拉取一页。传入 consume 后，只有消费闭包成功返回才持久化该页游标。
+    /// 闭包需完成该页全部记录的幂等持久化，不要只将工作放入异步队列后返回。
+    /// 保留旧 pull(limit:) 调用方式，但纯拉取不代表消费，不再自动推进游标。
     @discardableResult
-    public func pull(limit: Int = 200) async throws -> PullResult {
-        let since = try cursor()
-        let res: PullResult = try await http.send(
+    public func pull(
+        limit: Int = 200,
+        consume: (@Sendable ([SyncRecord]) async throws -> Void)? = nil
+    ) async throws -> PullResult {
+        let session = try await http.syncSession()
+        let since = try cursor(for: session.accountID)
+        return try await pull(since: since, limit: limit, session: session, consume: consume)
+    }
+
+    /// 按页消费并提交；某页失败时保留此前成功页的位置，重试从失败页开始。
+    /// 旧 drain(maxRounds:limit:) 仍返回完整记录，用局部游标分页，但不持久化。
+    /// maxRounds 是一次调用的分页预算，达到预算后后续调用可接续已消费位置。
+    public func drain(
+        maxRounds: Int = 20,
+        limit: Int = 200,
+        consume: (@Sendable ([SyncRecord]) async throws -> Void)? = nil
+    ) async throws -> [SyncRecord] {
+        let session = try await http.syncSession()
+        var since = try cursor(for: session.accountID)
+        var all: [SyncRecord] = []
+        for _ in 0..<max(0, maxRounds) {
+            let result = try await pull(since: since, limit: limit, session: session, consume: consume)
+            all.append(contentsOf: result.records)
+            guard let last = result.records.last else { break }
+            since = last.seq
+            if !result.hasMore { break }
+        }
+        return all
+    }
+
+    private func pull(
+        since: Int64,
+        limit: Int,
+        session: HTTPClient.SyncSession,
+        consume: (@Sendable ([SyncRecord]) async throws -> Void)?
+    ) async throws -> PullResult {
+        var options = HTTPClient.Options(
+            deviceScoped: true,
+            query: ["since": "\(since)", "limit": "\(limit)"]
+        )
+        options.syncSession = session
+        let result: PullResult = try await http.send(
             method: "GET",
             path: "/api/v1/sync/pull",
             body: EmptyBody?.none,
-            options: .init(deviceScoped: true, query: ["since": "\(since)", "limit": "\(limit)"]),
+            options: options,
             as: PullResult.self
         )
-        try saveCursor(res.serverSeq)
-        return res
-    }
+        // 发出请求前及返回后均校验同一会话；切账号时不给消费方旧账号的记录。
+        try await http.requireSession(session)
 
-    /// 反复拉取直到服务端说没有更多。
-    ///
-    /// - Parameter maxRounds: 防御性上限。服务端若因缺陷永远回 `has_more=true`，
-    ///   没有上限的循环会把电量烧干（iOS 后台预算尤其经不起这个）。
-    public func drain(maxRounds: Int = 20, limit: Int = 200) async throws -> [SyncRecord] {
-        var all: [SyncRecord] = []
-        for _ in 0..<maxRounds {
-            let res = try await pull(limit: limit)
-            all.append(contentsOf: res.records)
-            if !res.hasMore || res.records.isEmpty { break }
+        var delivered = since
+        for record in result.records {
+            guard record.seq > delivered else {
+                throw AgentLiteError.decoding("同步记录 seq 未按账号游标递增")
+            }
+            delivered = record.seq
         }
-        return all
+        // 旧服务端没有 next_since；新版字段只校验与实际已交付记录一致，
+        // 不用它代替消费事实，更不把 server_seq 高水位当成下一页起点。
+        if let nextSince = result.nextSince, nextSince != delivered {
+            throw AgentLiteError.decoding("同步 next_since 与本页已交付记录不一致")
+        }
+        if result.hasMore && result.records.isEmpty {
+            throw AgentLiteError.decoding("同步 has_more 为真但本页没有记录")
+        }
+
+        if let consume, !result.records.isEmpty {
+            try await consume(result.records)
+            try Task.checkCancellation()
+            try await http.requireSession(session)
+            try saveCursor(delivered, for: session.accountID)
+        }
+        return result
     }
 
     /// 服务端 `/api/v1/config` 下发的配置（若有）。

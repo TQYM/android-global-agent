@@ -95,7 +95,8 @@ final class AppModel: ObservableObject {
         do {
             let profile = try await client.profile()
             quota = (profile.quotaUsed, profile.quota)
-            devices = try await client.peerDevices()
+            let localDeviceID = await client.http.currentDeviceID
+            devices = profile.peerDevices(excluding: localDeviceID)
         } catch {
             lastMessage = "刷新失败：\(error)"
         }
@@ -110,7 +111,7 @@ final class AppModel: ObservableObject {
         defer { isBusy = false }
         do {
             let cmd = try await client.sendRemoteTask(toDeviceID: deviceID, task: task)
-            lastMessage = "已下发（\(cmd.commandID.prefix(8))）。注意：对方执行完后，服务端会立刻删除该指令，本机无法再查到结果 —— 这是服务端现状。"
+            lastMessage = "已下发（\(cmd.commandID.prefix(8))）。完成或失败的结果保留 24 小时，可按指令编号查询。"
         } catch {
             lastMessage = "下发失败：\(error)"
         }

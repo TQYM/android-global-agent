@@ -406,16 +406,19 @@ ssh aliyun-ecs 'source /etc/agentlite-server/env && \
 
 ## 6. 数据与备份
 
+**以下为 2026-10-11 当前源码布局，本次未部署。** 旧线上实例可能仍使用 JSON 表；升级与回滚必须按[实施报告的迁移边界](<INTERFACE_IMPLEMENTATION_2026-10-11.zh-CN.md#4-唯一存储事实源与升级边界>)在数据副本上先验收——**该副本验收本机已完成**（`make drill`：首次迁移、停机核对、重开幂等、孤儿设备认领、迁移后写入、回滚与损坏边界，外加支付竞争 smoke，共 48 项断言；脚本见 `tests/migration_drill.py`）。**零 root 真机行为验收也已在真机跑通**：`tests/credential_real_device.py` 44 通过 / 0 失败（首启与登录态、自带配置、账号通道、故障归因不跨通道、设置页显式选择卡），`tests/t03_t05_real_device.py` 15 通过 / 0 失败 / 1 跳过（任务代际、证据分级、代点分支）。
+
 ```text
 /var/lib/agentlite-server/           # 目录 0700
-├── accounts.json                   账号表（PBKDF2 派生值 + 盐，0600）
-├── devices.json                    设备表（归属账号、局域网位置、状态快照）
-├── records/<account_id>.jsonl      账号级记录流，append-only
-├── redeem_codes.json               未核销的兑换码
-├── quota_ledger.jsonl              额度流水（每次变动一条）
-├── commands.jsonl                  跨设备指令审计流水（见 §7.2）
-└── config.json                     下发配置（改它即生效）
+├── billing.jsonl                   账号/令牌/余额、兑换码、订单、额度流水的事务日志
+├── devices.jsonl                   设备归属、局域网位置、状态快照的变更日志
+├── records/<account_id>.jsonl      账号记录事实源；启动重建内存页索引
+├── commands.jsonl                  跨设备指令审计；启动不恢复指令队列（见 §7.2）
+├── config.json                     下发配置（改它即生效）
+└── packs.json                      可选套餐配置
 ```
+
+首次缺少新日志时，一次导入旧 `accounts.json` / `redeem_codes.json` / `orders.json` 与 `devices.json`；原文件保留历史归档，随后不双写。旧 `quota_ledger.jsonl` 保留历史流水，不重新入账。写入、fsync 成功后才发布内存状态；完整坏日志报错，未完成尾部按未提交恢复。
 
 **备份**：打包这个目录即可。**恢复**：停服务 → 覆盖 → 启服务。
 
@@ -423,14 +426,15 @@ ssh aliyun-ecs 'source /etc/agentlite-server/env && \
 ssh aliyun-ecs 'tar czf /tmp/alt-backup-$(date +%F).tgz -C /var/lib agentlite-server && ls -la /tmp/alt-backup-*.tgz'
 ```
 
-> 记录与流水**不做服务端淘汰**，长期运行需要加 logrotate 式清理。
-> `Pull` 每次全量扫描该账号 JSONL 做过滤（O(n)），单账号数万条内无感，再大需索引。
+> 记录与日志仍不自动淘汰，尚未实现 compaction；活跃 append-only 文件不直接外部 logrotate/截断。
+> 当前 `Pull` 用启动重建的 seq→字节区间索引定位后只读本页，不再每请求全流扫描。索引与 ID 集合随数据增长，启动重建仍为 O(n)。
+> 新日志接收写入后旧 JSON 不再更新；回滚须恢复配套数据备份并处理新增数据，单换旧二进制会读取过期表。
 
 ---
 
-## 7. 接口清单（线上权威）
+## 7. 接口清单（当前源码；线上版本另验）
 
-以下路由**逐条取自 `main.go` 的 `mux.HandleFunc` 注册**，与线上一致。
+以下路由取自当前源码的注册；2026-10-11 本次未部署，旧线上版本是否具有新分页/回执契约需升级后实测。方法/路径共 22 个显式操作，未新建 batch 或结果旁路。
 
 ### 7.1 已有接口
 
@@ -438,11 +442,11 @@ ssh aliyun-ecs 'tar czf /tmp/alt-backup-$(date +%F).tgz -C /var/lib agentlite-se
 |---|---|---|---|
 | GET | `/health` | 无 | 健康检查 |
 | POST | `/api/v1/account/register` | 无（按 IP 限流） | `{name,key}` → `{account_id,token,quota,lan_key_params}` |
-| POST | `/api/v1/account/login` | 无（按 IP 限流） | **每次登录轮换令牌，旧令牌立即失效** |
+| POST | `/api/v1/account/login` | 无（按 IP 限流） | 返回新 token；最多保留10个并行 token，超额删除最旧项 |
 | GET | `/api/v1/account/me` | Bearer | 账号信息、额度、名下设备 |
-| POST | `/api/v1/device/bind` | **仅 Bearer**（`authMW`） | 同指纹幂等复用；**设备身份取自 body 的 `fingerprint`，不需要 `X-Device-Id` 头** |
+| POST | `/api/v1/device/bind` | **仅 Bearer**（`authMW`） | 同账号域内同指纹幂等复用；另一已归属账号不接管；身份取自 body 的 `fingerprint`，不需要 `X-Device-Id` |
 | POST | `/api/v1/sync/push` | Bearer + `X-Device-Id` | `{tasks,memories,status}` → `{accepted,duplicates,rejected,server_seq}` |
-| GET | `/api/v1/sync/pull?since=N` | Bearer + `X-Device-Id` | `{records:[…],server_seq,config}` |
+| GET | `/api/v1/sync/pull?since=N&limit=200` | Bearer + `X-Device-Id` | `{records:[…],server_seq,next_since,has_more,config}`；高水位与已交付游标分离 |
 | GET | `/api/v1/config` | Bearer | 单独取配置（轻量轮询） |
 | POST | `/api/v1/lan/rendezvous` | Bearer + `X-Device-Id` | 局域网会合，判据是服务端观测的公网出口 IP |
 | POST | `/api/v1/redeem` | Bearer | `{code}` → `{units_added,quota}` |
@@ -461,10 +465,10 @@ ssh aliyun-ecs 'tar czf /tmp/alt-backup-$(date +%F).tgz -C /var/lib agentlite-se
 账号相关约定：账号名 3–32 位小写字母/数字/`_`/`-`（服务端转小写），重名 `409 account_exists`；
 账号密钥 ≥8 位；PBKDF2-HMAC-SHA256 / 210000 次 / 32 字节；新账号赠 500 units（1 unit = 1000 tokens）。
 
-### 7.2 跨设备指令通道（**服务端 README 尚未收录**）
+### 7.2 跨设备指令通道
 
-场景：用户在设备 1 上说「让设备 2 打开 B 站」，设备 2 自动执行。
-实现在 `command.go`，**当前 `agentlite-server/README.md` 没有写这一节**——接手时注意别以为不存在。
+场景：用户在设备 1 上说「让设备 2 打开 B 站」，设备 2 执行并回报原 command。
+由[command.go](<../agentlite-server/command.go>)实现；入口同步见[服务端 README §3.5](<../agentlite-server/README.md#35-跨设备指令>)。
 
 | 方法 | 路径 | 鉴权 | 说明 |
 |---|---|---|---|
@@ -476,7 +480,8 @@ ssh aliyun-ecs 'tar czf /tmp/alt-backup-$(date +%F).tgz -C /var/lib agentlite-se
 设计约束（实现里是硬规则，改功能时不要拆掉）：
 
 - **拉取式投递**，不用长连接——国产 ROM 杀后台导致长连接不可靠，拉取天然自愈；
-- **指令是瞬态的**：`CommandTTL = 5 分钟`，存在内存里，**重启即丢**；落盘的只有审计流水 `commands.jsonl`；
+- **指令是进程内瞬态**：领取期限 `CommandTTL = 5 分钟`；终态保留 `CommandResultTTL = 24 小时`可查，同目标/同终态/同截断 detail 的 ACK 幂等且不延长保留期，冲突终态返回409。
+- **重启即丢队列**：仅审计流水 `commands.jsonl` 落盘，启动不重放；保留期结束或重启后可404。不另经 `/sync/push` 建一份结果通道。
 - **只允许定向，不支持广播**——广播等于让一个失陷账号一次控制全部设备；
 - 目标设备必须属于**同一账号**，且 **ack 只能由目标设备自己发出**（防冒领/防伪造结果）；
 - 限流：**每账号每分钟最多 10 条**；`task` 长度 1–512；
