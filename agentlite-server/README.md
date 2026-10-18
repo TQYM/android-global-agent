@@ -4,6 +4,8 @@
 独立部署在阿里云 ECS `8.133.225.105`，与 `_local/SERVER_TECHNICAL_HANDBOOK` 描述的
 LLM 中继站（`23.185.168.190`）**是两套互不相干的系统**，不要混用。
 
+> **2026-10-11 本地源码更新**：[接口收敛实施报告](<../docs/INTERFACE_IMPLEMENTATION_2026-10-11.zh-CN.md>)记录分页、指令结果、账务事务和存储索引的新契约及验证。本轮未部署；线上实例版本另行实测确认。
+
 ## 1. 能力范围
 
 | 能力 | 说明 |
@@ -29,7 +31,7 @@ LLM 中继站（`23.185.168.190`）**是两套互不相干的系统**，不要�
 | 方法 | 路径 | 鉴权 | 说明 |
 |---|---|---|---|
 | POST | `/api/v1/account/register` | 无（按 IP 限流） | `{name,key}` → `{account_id,token,quota,lan_key_params}` |
-| POST | `/api/v1/account/login` | 无（按 IP 限流） | 同上；**每次登录轮换令牌，旧令牌立即失效** |
+| POST | `/api/v1/account/login` | 无（按 IP 限流） | 同上；最多保留10个并行 token，超额删除最旧项 |
 | GET | `/api/v1/account/me` | Bearer | 账号信息、额度、名下设备列表 |
 
 - 账号名：3–32 位，仅小写字母/数字/`_`/`-`（服务端会转小写）。重名 → `409 account_exists`。
@@ -39,14 +41,16 @@ LLM 中继站（`23.185.168.190`）**是两套互不相干的系统**，不要�
 
 ### 3.2 设备与同步
 
-所有设备相关接口需 `Authorization: Bearer <account_token>` **且** `X-Device-Id: <device_id>`。
+绑定只需 `Authorization: Bearer <account_token>`；同步、会合及设备指令接口还需 `X-Device-Id: <device_id>`。配置与单条指令查询仅需 Bearer。
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| POST | `/api/v1/device/bind` | `{fingerprint,...}` → `{device_id,created}`；同指纹幂等复用 |
-| POST | `/api/v1/sync/push` | `{tasks,memories,status}` → `{accepted,duplicates,rejected,server_seq}` |
-| GET | `/api/v1/sync/pull?since=N` | `{records:[{seq,device_id,kind,id,ts,data}],server_seq,config}` |
-| GET | `/api/v1/config` | 单独取配置（轻量轮询用） |
+| POST | `/api/v1/device/bind` | `{fingerprint,...}` → `{device_id,created}`；只在同账号域幂等复用，不接管另一已归属账号的设备 |
+| POST | `/api/v1/sync/push` | `{tasks,memories,status}` → `{accepted,duplicates,rejected,server_seq}`；可合并多来源一次上传 |
+| GET | `/api/v1/sync/pull?since=N&limit=200` | `{records:[{seq,device_id,kind,id,ts,data}],server_seq,next_since,has_more,config}` |
+| GET | `/api/v1/config` | `{config,server_time}`；只取配置的客户端不下载 records |
+
+`server_seq` 是账号流高水位，`next_since` 是本页最后已交付 seq（空页保留请求 since）；客户端处理成功后才提交 records 最后 seq，避免跳过中间页。
 
 - 服务端**校验 `device_id` 确实属于该账号**，否则 `403 device_not_bound`。跨账号返回同一错误，避免探测设备 ID。
 - 记录以客户端提供的 `id` 去重，**重推安全**（幂等）。
@@ -79,6 +83,17 @@ LLM 中继站（`23.185.168.190`）**是两套互不相干的系统**，不要�
 
 > 已知边界：额度是「先检查后扣减」，**并发请求可能小幅超支**。本服务面向单用户级规模，
 > 可接受；若将来对外规模化，需改成预扣 + 结算。
+
+### 3.5 跨设备指令
+
+| 方法 | 路径 | 鉴权 | 说明 |
+|---|---|---|---|
+| POST | `/api/v1/device/command` | Bearer + `X-Device-Id` | `{to_device,task}` 下发定向指令 |
+| GET | `/api/v1/device/commands` | Bearer + `X-Device-Id` | 目标设备领取 pending 指令 |
+| POST | `/api/v1/device/command/ack` | Bearer + `X-Device-Id` | 目标设备回报 `running` / `done` / `failed` |
+| GET | `/api/v1/device/command?id=...` | Bearer | 同账号查询原 command 的 status/detail |
+
+领取 TTL 为5分钟，终态保留24小时。相同目标设备、终态和截断 detail 的重复 ACK 幂等，不延长保留期；冲突终态返回409。指令仍为进程内队列，审计不在启动时重放，重启或保留期结束后可能404。结果直接查询原 command，不另建 `/sync/push` 回执旁路。
 
 ## 4. 局域网 P2P 线协议（v1）
 
@@ -114,17 +129,21 @@ Java 侧用 `SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")` + `PBEKeySpec
 - 端点：`POST /lan/v1/sync`
 - 请求体 / 响应体一律为 **base64( nonce(12B) || ciphertext )**，
   `ciphertext = AES-256-GCM(plaintext, key, nonce, aad)`，GCM tag 128 位。
-- `aad = "agentlite-lan-v1|" + account_id + "|" + device_id`（请求用发送方 id，响应用接收方 id）
-- `plaintext`（请求）：
+- 当前 v1 `aad = "agentlite-lan-v1|" + account_id`；请求/响应相同。device_id 位于 GCM 保护的正文，解密后校验；不按原手册的 device_id 后缀另造不兼容 AAD。
+- `plaintext`（请求；游标作为不透明对象原样回传）：
   ```json
   {"ts": 1757690000, "device_id": "d_xxx", "since": 12,
+   "lan_cursor": {"local": 0, "peer": 0},
    "push": {"tasks": [{"id": "...", "ts": "...", "data": {}}], "memories": []}}
   ```
-- `plaintext`（响应）：
+- `plaintext`（当前 Android 响应）：
   ```json
-  {"ts": 1757690001, "server_seq": 37,
-   "records": [{"seq": 13, "device_id": "d_yyy", "kind": "task", "id": "...", "ts": "...", "data": {}}]}
+  {"ts": 1757690001, "device_id": "d_yyy", "server_seq": 12, "merged": 0,
+   "records": [{"origin_device_id": "d_yyy", "id": "...", "ts": "...", "data": {}}],
+   "lan_cursor": {"local": 1, "peer": 0, "local_id": "...", "peer_id": "", "next_peer": true},
+   "lan_has_more": true}
   ```
+  `server_seq` 仅沿用兼容字段，不代表 LAN 页的进度；本机/转发两文件由 `lan_cursor` 各自跟踪，成功合入 records 后才保存它。旧对端不带新游标时，Android 服务端轮转有界页。
 
 ### 4.3 抗重放
 
@@ -200,15 +219,15 @@ curl -sk https://127.0.0.1:18443/api/v1/admin/codes \
 数据目录 `/var/lib/agentlite-server/`（0700）：
 
 ```
-accounts.json              账号表（PBKDF2 派生值 + 盐，0600）
-devices.json               设备表（含归属账号、局域网位置、状态快照）
-records/<account_id>.jsonl 账号级记录流，append-only
-redeem_codes.json          未核销的兑换码
-quota_ledger.jsonl         额度流水（每次变动一条）
-config.json                下发配置（改它即生效）
+billing.jsonl             账号/令牌/余额、兑换码、订单、流水的唯一事务日志
+devices.jsonl             设备归属、局域网位置、状态快照的变更日志
+records/<account_id>.jsonl 账号记录事实源；启动重建内存页索引
+commands.jsonl            指令审计；启动不恢复指令队列
+config.json               下发配置（改它即生效）
+packs.json                可选套餐配置
 ```
 
-备份就是打包这个目录；恢复时停服务、覆盖、启服务。
+备份就是打包完整目录；恢复时停服务、覆盖、启服务。首次升级从旧账号/兑换码/订单与设备 JSON 一次导入，旧文件保留归档但不再更新；旧额度流水不重复入账。新日志已有写入后，回滚需配套数据备份，单换旧二进制会读到过期表。活跃日志不直接外部截断，压实/淘汰尚未实现。
 
 ## 7. 安全设计
 
@@ -232,8 +251,8 @@ config.json                下发配置（改它即生效）
 - 账号令牌存于 App 的 SharedPreferences（应用私有目录，未加密）。设备已 root 时可被读取。
 - 无 TLS 客户端证书；服务端无法密码学地确认设备身份，仅靠令牌。
 - 额度「先检查后扣减」，并发下可能小幅超支（见 §3.4）。
-- `Pull` 每次全量扫描该账号 JSONL 做过滤（O(n)）。单账号数万条内无感，再大需索引。
-- 记录与流水不做服务端淘汰，长期运行需加 logrotate 式清理。
+- 当前 `Pull` 按启动重建的 seq→字节区间索引只读本页，不再每请求扫描整流；索引/ID 集合随数据增长，启动重建 O(n)。
+- 日志压实与自动淘汰尚未实现，fsync 仍在单 Store 锁内串行；活跃 append-only 日志不直接外部 logrotate/截断。
 - **局域网判定依赖公网出口 IP**：同账号设备若走不同出口（双 WAN、部分设备走流量、
   或一方仅 IPv6），即使物理同网也不会被判为同内网，会退回云端同步。这是刻意的
   保守取舍——宁可少走 P2P，也不用可伪造的客户端自报地址。
@@ -301,8 +320,7 @@ config.json                下发配置（改它即生效）
 - 局域网判定的 `same_lan` 依据是**服务端观测到的公网出口 IP**，因此
   双 WAN、部分设备走移动数据、或一方仅 IPv6 时，物理同网也不会被判为同内网。
   这是刻意的保守取舍——不采信可伪造的客户端自报。
-- 对端回传**不按 `since` 过滤**：请求方的 `since` 是**云端游标**，与对端本地记录序列无关。
-  改为全量回传 + 内容哈希去重，语义更稳。
+- 云端 `since` 不作对端本地记录下标。当前使用独立 `lan_cursor` 为本机/转发两个来源分页；总回包最多500条、加密信封最多4MiB，ID集合一批读取、追加一次 writer。按实际交付页推进，不再无限追加全部转发记录。
 - 内容哈希（`sha256Hex(原始行).substring(0,32)`）在 `SyncClient` 与 `LanSync` 里
   **必须完全一致**，否则同一条记录会被当成两条，局域网拉取与云端幂等同时失效。
 

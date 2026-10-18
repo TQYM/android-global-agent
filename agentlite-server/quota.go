@@ -77,18 +77,6 @@ func (s *Store) loadCodes() error {
 	return nil
 }
 
-func (s *Store) saveCodesLocked() error {
-	list := make([]RedeemCode, 0, len(s.codes))
-	for _, c := range s.codes {
-		list = append(list, *c)
-	}
-	raw, err := json.MarshalIndent(list, "", "  ")
-	if err != nil {
-		return err
-	}
-	return atomicWrite(s.codesPath(), raw, 0o600)
-}
-
 // generateCode 产出形如 AGT-7K2M-9QXP-4RTW 的兑换码。
 func generateCode() (string, error) {
 	const groups, groupLen = 3, 4
@@ -120,6 +108,8 @@ func (s *Store) CreateCodes(n int, units int64, batch string) ([]string, error) 
 	defer s.mu.Unlock()
 
 	out := make([]string, 0, n)
+	tx := billingTxn{}
+	pending := make(map[string]bool, n)
 	now := time.Now().UTC()
 	for i := 0; i < n; i++ {
 		var code string
@@ -129,7 +119,7 @@ func (s *Store) CreateCodes(n int, units int64, batch string) ([]string, error) 
 			if err != nil {
 				return nil, err
 			}
-			if _, exists := s.codes[c]; !exists {
+			if _, exists := s.codes[c]; !exists && !pending[c] {
 				code = c
 				break
 			}
@@ -137,12 +127,11 @@ func (s *Store) CreateCodes(n int, units int64, batch string) ([]string, error) 
 		if code == "" {
 			return nil, fmt.Errorf("生成兑换码失败（连续碰撞）")
 		}
-		s.codes[code] = &RedeemCode{
-			Code: code, Units: units, Batch: truncate(batch, 32), CreatedAt: now,
-		}
+		tx.Codes = append(tx.Codes, RedeemCode{Code: code, Units: units, Batch: truncate(batch, 32), CreatedAt: now})
+		pending[code] = true
 		out = append(out, code)
 	}
-	if err := s.saveCodesLocked(); err != nil {
+	if err := s.commitBillingLocked(tx); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -152,12 +141,18 @@ func (s *Store) CreateCodes(n int, units int64, batch string) ([]string, error) 
 //
 // 核销与记账在同一把锁内完成——否则并发提交同一张码可能双花。
 func (s *Store) Redeem(accountID, rawCode string) (int64, int64, error) {
-	code := strings.ToUpper(strings.TrimSpace(rawCode))
-	code = strings.ReplaceAll(code, " ", "")
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.redeemLocked(accountID, rawCode, nil)
+}
 
+func normalizeCode(code string) string {
+	return strings.ReplaceAll(strings.ToUpper(strings.TrimSpace(code)), " ", "")
+}
+
+// 直接兑换与订单支付共用同一次核销；调用方持 Store.mu，未落盘不修改活状态。
+func (s *Store) redeemLocked(accountID, rawCode string, order *Order) (int64, int64, error) {
+	code := normalizeCode(rawCode)
 	c, ok := s.codes[code]
 	if !ok {
 		return 0, 0, ErrCodeNotFound
@@ -169,94 +164,53 @@ func (s *Store) Redeem(accountID, rawCode string) (int64, int64, error) {
 	if !ok {
 		return 0, 0, ErrNotFound
 	}
-
 	now := time.Now().UTC()
-	c.UsedBy = accountID
-	c.UsedAt = now
-	a.Quota += c.Units
-	// 兑换成功，删除已核销的码，避免文件无限膨胀（流水里仍有记录）
-	delete(s.codes, code)
-
-	if err := s.saveCodesLocked(); err != nil {
+	nextCode, nextAccount := *c, *a
+	nextCode.UsedBy, nextCode.UsedAt = accountID, now
+	nextAccount.Quota += c.Units
+	tx := billingTxn{Accounts: []Account{nextAccount}, Codes: []RedeemCode{nextCode}, Ledger: &Ledger{
+		Time: now, AccountID: accountID, Delta: c.Units, Reason: "redeem:" + code, Balance: nextAccount.Quota,
+	}}
+	if order != nil {
+		next := *order
+		next.Status, next.Method, next.RedeemCode = orderPaid, methodRedeem, code
+		next.Units, next.PaidAt = c.Units, now
+		tx.Orders = []Order{next}
+	}
+	if err := s.commitBillingLocked(tx); err != nil {
 		return 0, 0, err
 	}
-	if err := s.saveAccountsLocked(); err != nil {
-		return 0, 0, err
-	}
-	if err := s.appendLedgerLocked(Ledger{
-		Time: now, AccountID: accountID, Delta: c.Units,
-		Reason: "redeem:" + code, Balance: a.Quota,
-	}); err != nil {
-		return 0, 0, err
-	}
-	return c.Units, a.Quota, nil
+	return c.Units, nextAccount.Quota, nil
 }
 
 // ConsumeQuota 扣减额度，返回扣减后的余额。额度不足返回 ErrQuotaEmpty。
 func (s *Store) ConsumeQuota(accountID string, units int64, reason string) (int64, error) {
 	if units <= 0 {
-		units = 1 // 最小计费单位，避免零成本无限调用
+		units = 1
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
 	a, ok := s.accounts[accountID]
 	if !ok {
 		return 0, ErrNotFound
 	}
-	if a.Quota < units {
-		// 余额不足时**照扣并允许透支到 0 以下**，而不是拒绝扣款。
-		//
-		// 早期版本在这里直接 return 不扣，后果极其隐蔽：余额为 1..units-1 的账号
-		// 永远扣不动、余额永远停在 >0，而网关的 402 闸门只认 quota<=0 ——
-		// 于是这类账号可以**无限免费调用**。实测：余额 2、单次成本 4，连发 3 次
-		// 全部 HTTP 200 且余额纹丝不动。
-		//
-		// 透支上限就是单次请求的成本（扣费发生在响应之后，无法事先知道确切用量），
-		// 这远好于"永久免费"。下一次请求会被网关的 402 闸门挡下。
-		a.Quota -= units
-		a.QuotaUsed += units
-		if err := s.saveAccountsLocked(); err != nil {
-			return a.Quota, err
-		}
-		if err := s.appendLedgerLocked(Ledger{
-			Time: time.Now().UTC(), AccountID: accountID, Delta: -units,
-			Reason: reason + "|overdraft", Balance: a.Quota,
-		}); err != nil {
-			return a.Quota, err
-		}
-		return a.Quota, ErrQuotaEmpty
+	next := *a
+	next.Quota -= units
+	next.QuotaUsed += units
+	overdraft := a.Quota < units
+	if overdraft {
+		reason += "|overdraft"
 	}
-	a.Quota -= units
-	a.QuotaUsed += units
-
-	if err := s.saveAccountsLocked(); err != nil {
+	if err := s.commitBillingLocked(billingTxn{Accounts: []Account{next}, Ledger: &Ledger{
+		Time: time.Now().UTC(), AccountID: accountID, Delta: -units, Reason: reason, Balance: next.Quota,
+	}}); err != nil {
 		return 0, err
 	}
-	if err := s.appendLedgerLocked(Ledger{
-		Time: time.Now().UTC(), AccountID: accountID, Delta: -units,
-		Reason: reason, Balance: a.Quota,
-	}); err != nil {
-		return 0, err
+	// 保留实际用量扣到负数的既有口径；后续网关请求由 quota<=0 拦截。
+	if overdraft {
+		return next.Quota, ErrQuotaEmpty
 	}
-	return a.Quota, nil
-}
-
-// appendLedgerLocked 追加一条额度流水。调用方须持写锁。
-func (s *Store) appendLedgerLocked(e Ledger) error {
-	f, err := os.OpenFile(s.ledgerPath(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	line, err := json.Marshal(e)
-	if err != nil {
-		return err
-	}
-	if _, err := f.Write(append(line, '\n')); err != nil {
-		return err
-	}
-	return f.Sync()
+	return next.Quota, nil
 }
 
 // CodeStats 返回兑换码统计（管理视图用）。
@@ -265,7 +219,11 @@ func (s *Store) CodeStats() (total, used int, unusedUnits int64) {
 	defer s.mu.RUnlock()
 	for _, c := range s.codes {
 		total++
-		unusedUnits += c.Units
+		if c.UsedBy != "" {
+			used++
+		} else {
+			unusedUnits += c.Units
+		}
 	}
 	return total, used, unusedUnits
 }

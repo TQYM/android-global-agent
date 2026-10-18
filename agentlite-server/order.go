@@ -27,7 +27,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -78,7 +77,6 @@ type Order struct {
 }
 
 type orderStore struct {
-	mu   sync.Mutex
 	byID map[string]*Order
 }
 
@@ -158,19 +156,6 @@ func (s *Store) LoadOrders() error {
 	return nil
 }
 
-// saveOrdersLocked 原子重写订单表（调用方须持锁）。
-func (s *Store) saveOrdersLocked() error {
-	list := make([]Order, 0, len(s.orders.byID))
-	for _, o := range s.orders.byID {
-		list = append(list, *o)
-	}
-	raw, err := json.MarshalIndent(list, "", "  ")
-	if err != nil {
-		return err
-	}
-	return atomicWrite(s.ordersPath(), raw, 0o600)
-}
-
 // CreateOrder 创建一笔待支付订单。
 func (s *Store) CreateOrder(accountID, packID string) (*Order, error) {
 	pack, ok := s.packByID(strings.TrimSpace(packID))
@@ -183,8 +168,8 @@ func (s *Store) CreateOrder(accountID, packID string) (*Order, error) {
 	}
 	now := time.Now().UTC()
 
-	s.orders.mu.Lock()
-	defer s.orders.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	o := &Order{
 		OrderID: id, AccountID: accountID,
@@ -192,8 +177,7 @@ func (s *Store) CreateOrder(accountID, packID string) (*Order, error) {
 		Units: pack.TotalUnits(), PriceCNY: pack.PriceCNY,
 		Status: orderPending, CreatedAt: now, ExpiresAt: now.Add(orderTTL),
 	}
-	s.orders.byID[id] = o
-	if err := s.saveOrdersLocked(); err != nil {
+	if err := s.commitBillingLocked(billingTxn{Orders: []Order{*o}}); err != nil {
 		return nil, err
 	}
 	cp := *o
@@ -202,8 +186,8 @@ func (s *Store) CreateOrder(accountID, packID string) (*Order, error) {
 
 // ListOrders 返回账号的订单，最新在前。
 func (s *Store) ListOrders(accountID string) []Order {
-	s.orders.mu.Lock()
-	defer s.orders.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	now := time.Now().UTC()
 	out := []Order{}
 	for _, o := range s.orders.byID {
@@ -211,11 +195,11 @@ func (s *Store) ListOrders(accountID string) []Order {
 			continue
 		}
 		// 顺手处理超时（惰性过期，不另起定时器）
-		if o.Status == orderPending && now.After(o.ExpiresAt) {
-			o.Status = orderExpired
-			_ = s.saveOrdersLocked()
+		cp := *o
+		if cp.Status == orderPending && now.After(cp.ExpiresAt) {
+			cp.Status = orderExpired
 		}
-		out = append(out, *o)
+		out = append(out, cp)
 	}
 	// 最新在前（OrderID 随机，按创建时间排）
 	for i := 1; i < len(out); i++ {
@@ -228,8 +212,8 @@ func (s *Store) ListOrders(accountID string) []Order {
 
 // CancelOrder 用户取消待支付订单。
 func (s *Store) CancelOrder(accountID, orderID string) (*Order, error) {
-	s.orders.mu.Lock()
-	defer s.orders.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	o, ok := s.orders.byID[orderID]
 	if !ok || o.AccountID != accountID {
 		return nil, ErrOrderNotFound
@@ -237,11 +221,14 @@ func (s *Store) CancelOrder(accountID, orderID string) (*Order, error) {
 	if o.Status != orderPending {
 		return nil, ErrOrderClosed
 	}
-	o.Status = orderCancelled
-	if err := s.saveOrdersLocked(); err != nil {
-		return nil, err
+	if time.Now().UTC().After(o.ExpiresAt) {
+		return nil, ErrOrderClosed
 	}
 	cp := *o
+	cp.Status = orderCancelled
+	if err := s.commitBillingLocked(billingTxn{Orders: []Order{cp}}); err != nil {
+		return nil, err
+	}
 	return &cp, nil
 }
 
@@ -250,49 +237,24 @@ func (s *Store) CancelOrder(accountID, orderID string) (*Order, error) {
 // 记账口径：**以兑换码实际带来的 units 为准**写入订单。若用户拿一张小码付大套餐，
 // 入账的是小码的额度——不会凭空产生额度。订单里保留所选套餐名与展示价供对账。
 func (s *Store) PayOrderWithCode(accountID, orderID, code string) (*Order, int64, error) {
-	s.orders.mu.Lock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	o, ok := s.orders.byID[orderID]
 	if !ok || o.AccountID != accountID {
-		s.orders.mu.Unlock()
 		return nil, 0, ErrOrderNotFound
 	}
-	if o.Status != orderPending {
-		s.orders.mu.Unlock()
+	if o.Status == orderPaid && o.RedeemCode == normalizeCode(code) {
+		cp := *o
+		return &cp, s.accounts[accountID].Quota, nil // 同订单、同码重试不再次记账
+	}
+	if o.Status != orderPending || time.Now().UTC().After(o.ExpiresAt) {
 		return nil, 0, ErrOrderClosed
 	}
-	if time.Now().UTC().After(o.ExpiresAt) {
-		o.Status = orderExpired
-		_ = s.saveOrdersLocked()
-		s.orders.mu.Unlock()
-		return nil, 0, ErrOrderClosed
-	}
-	packID, packName, price := o.PackID, o.PackName, o.PriceCNY
-	s.orders.mu.Unlock()
-
-	// 核销（Redeem 内部自持锁，且核销与记账在同一把锁内，防双花）
-	units, balance, err := s.Redeem(accountID, code)
+	units, balance, err := s.redeemLocked(accountID, code, o)
 	if err != nil {
 		return nil, 0, err
 	}
-
-	s.orders.mu.Lock()
-	defer s.orders.mu.Unlock()
-	o = s.orders.byID[orderID] // 重新取，防止并发期间被改
-	if o == nil || o.Status != orderPending {
-		return nil, 0, ErrOrderClosed
-	}
-	now := time.Now().UTC()
-	o.Status = orderPaid
-	o.Method = methodRedeem
-	o.RedeemCode = strings.ToUpper(strings.TrimSpace(code))
-	o.Units = units // 实际入账
-	o.PaidAt = now
-	o.PackID, o.PackName, o.PriceCNY = packID, packName, price
-	if err := s.saveOrdersLocked(); err != nil {
-		return nil, 0, err
-	}
-	cp := *o
-	logInfo("order paid %s account=%s pack=%s units=%d balance=%d",
-		cp.OrderID, accountID, cp.PackID, units, balance)
+	cp := *s.orders.byID[orderID]
+	logInfo("order paid %s account=%s pack=%s units=%d balance=%d", cp.OrderID, accountID, cp.PackID, units, balance)
 	return &cp, balance, nil
 }

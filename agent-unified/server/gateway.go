@@ -18,6 +18,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -29,7 +30,7 @@ import (
 type gatewayConfig struct {
 	baseURL string
 	apiKey  string
-	// upstreamModel 非空时，把客户端请求里的 model 统一改写为它（见 adaptRequest）。
+	// upstreamModel 非空时，把客户端请求里的 model 统一改写为它（见 prepareChatRequest）。
 	// 用途：换上游后客户端配置里的模型名（如 qwen3.5-omni-plus）在上游不存在，
 	// 由服务端做映射，用户端**不需要改任何设置**（手册 §16：降低技术门槛）。
 	upstreamModel string
@@ -124,22 +125,12 @@ func (s *server) handleChatCompletions(w http.ResponseWriter, r *http.Request, a
 		writeErr(w, http.StatusRequestEntityTooLarge, "body_too_large", "请求体过大")
 		return
 	}
-	var probe struct {
-		Stream bool   `json:"stream"`
-		Model  string `json:"model"`
-	}
-	if err := json.Unmarshal(body, &probe); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_json", "请求体不是合法 JSON")
+	// 顶层只解析一次；messages、tools 等扩展字段保持 RawMessage，直传上游。
+	body, model, stream, err := s.gateway.prepareChatRequest(body)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_json", "请求体不是合法 JSON 对象或字段类型错误")
 		return
 	}
-
-	// 流式必须显式要用量，否则拿不到 usage，只能按最小单位计费（见 ensureIncludeUsage）
-	if probe.Stream {
-		body = ensureIncludeUsage(body)
-	}
-
-	// 上游适配：模型名映射 + 关闭思考链（换上游后客户端零改动）
-	body, probe.Model = s.gateway.adaptRequest(body, probe.Model)
 
 	upReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
 		s.gateway.baseURL+"/chat/completions", bytes.NewReader(body))
@@ -165,11 +156,11 @@ func (s *server) handleChatCompletions(w http.ResponseWriter, r *http.Request, a
 		w.WriteHeader(resp.StatusCode)
 		_, _ = io.Copy(w, io.LimitReader(resp.Body, 64*1024))
 		logInfo("gateway upstream %d account=%s model=%s（未计费）",
-			resp.StatusCode, a.AccountID, probe.Model)
+			resp.StatusCode, a.AccountID, model)
 		return
 	}
 
-	if !probe.Stream {
+	if !stream {
 		data, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
 		if err != nil {
 			writeErr(w, http.StatusBadGateway, "upstream_read", "读取上游响应失败")
@@ -178,7 +169,7 @@ func (s *server) handleChatCompletions(w http.ResponseWriter, r *http.Request, a
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(data)
-		s.chargeQuota(a.AccountID, extractUsageTokens(data), probe.Model)
+		s.chargeQuota(a.AccountID, extractUsageTokens(data), model)
 		return
 	}
 
@@ -188,7 +179,6 @@ func (s *server) handleChatCompletions(w http.ResponseWriter, r *http.Request, a
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 
-	flusher, _ := w.(http.Flusher)
 	var tokens int
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
@@ -205,11 +195,11 @@ func (s *server) handleChatCompletions(w http.ResponseWriter, r *http.Request, a
 		if _, err := w.Write([]byte("\n")); err != nil {
 			break
 		}
-		if flusher != nil {
-			flusher.Flush()
+		if err := rc.Flush(); err != nil {
+			break
 		}
 	}
-	s.chargeQuota(a.AccountID, tokens, probe.Model)
+	s.chargeQuota(a.AccountID, tokens, model)
 }
 
 // handleModels 透传模型列表，便于客户端发现可用模型。
@@ -236,84 +226,75 @@ func (s *server) handleModels(w http.ResponseWriter, r *http.Request, a *Account
 	_, _ = io.Copy(w, io.LimitReader(resp.Body, 1<<20))
 }
 
-// extractUsageTokens 从响应体（或单个 SSE 行）里取 usage.total_tokens。
-// 取不到返回 0，由 chargeQuota 兜底为最小计费单位。
-// adaptRequest 对上游请求体做两处适配（2026-09-15）：
-//
-//  1. **模型名映射**：upstreamModel 非空时改写 body 的 model。客户端配置里的
-//     模型名是给「原来那个上游」用的，换上游后必然不存在；映射放在服务端，
-//     用户端零改动。
-//  2. **关闭思考链**：DeepSeek 系模型默认先吐 reasoning_content，UI Agent 那套
-//     「只输出一个 JSON 动作」的提示词会被思考吃满 token，content 变成空串。
-//     实测 `{"thinking":{"type":"disabled"}}` 有效（`reasoning_effort:"none"` 同样有效，
-//     `enable_thinking:false` 与 `chat_template_kwargs` 无效）。
-//
-// 只在需要时改写；解析失败就原样转发（绝不因为适配把请求弄坏）。
-// 返回新的请求体与**实际生效**的模型名（计费与日志用后者）。
-func (g *gatewayConfig) adaptRequest(body []byte, model string) ([]byte, string) {
-	var m map[string]interface{}
-	if err := json.Unmarshal(body, &m); err != nil {
-		return body, model
+// prepareChatRequest 只解码一次顶层对象，再局部读取 model/stream。
+// messages、tools 及未来扩展字段以 RawMessage 保留，避免重建嵌套对象、浮点化数字。
+// 流式用量开关与上游模型/思考模式适配在同一份 map 上完成，最多编码一次整份请求。
+func (g *gatewayConfig) prepareChatRequest(body []byte) ([]byte, string, bool, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
+		return nil, "", false, err
+	}
+	if fields == nil {
+		return nil, "", false, fmt.Errorf("请求体须为 JSON 对象")
+	}
+	var model string
+	var stream bool
+	if raw, ok := fields["model"]; ok {
+		if err := json.Unmarshal(raw, &model); err != nil {
+			return nil, "", false, fmt.Errorf("model: %w", err)
+		}
+	}
+	if raw, ok := fields["stream"]; ok {
+		if err := json.Unmarshal(raw, &stream); err != nil {
+			return nil, "", false, fmt.Errorf("stream: %w", err)
+		}
 	}
 	changed := false
+	if stream {
+		var opts map[string]json.RawMessage
+		if raw, ok := fields["stream_options"]; ok {
+			if err := json.Unmarshal(raw, &opts); err != nil {
+				return nil, "", false, fmt.Errorf("stream_options: %w", err)
+			}
+		}
+		if opts == nil {
+			opts = map[string]json.RawMessage{}
+		}
+		// 用量由上游计量，客户端的 false 或 null 都须改为 true。
+		if !bytes.Equal(bytes.TrimSpace(opts["include_usage"]), []byte("true")) {
+			opts["include_usage"] = json.RawMessage("true")
+			raw, err := json.Marshal(opts)
+			if err != nil {
+				return nil, "", false, err
+			}
+			fields["stream_options"] = raw
+			changed = true
+		}
+	}
 	if g.upstreamModel != "" && model != g.upstreamModel {
-		m["model"] = g.upstreamModel
 		model = g.upstreamModel
+		raw, err := json.Marshal(model)
+		if err != nil {
+			return nil, "", false, err
+		}
+		fields["model"] = raw
 		changed = true
 	}
 	if strings.Contains(strings.ToLower(g.baseURL), "deepseek") {
-		if _, ok := m["thinking"]; !ok {
-			m["thinking"] = map[string]string{"type": "disabled"}
+		if _, ok := fields["thinking"]; !ok {
+			fields["thinking"] = json.RawMessage(`{"type":"disabled"}`)
 			changed = true
 		}
 	}
 	if !changed {
-		return body, model
+		return body, model, stream, nil
 	}
-	out, err := json.Marshal(m)
-	if err != nil {
-		return body, model
-	}
-	return out, model
+	out, err := json.Marshal(fields)
+	return out, model, stream, err
 }
 
-// ensureIncludeUsage 给流式请求注入 stream_options.include_usage=true。
-//
-// 为什么必须注入：DashScope 的 OpenAI 兼容流式**默认不回传用量**——每个 chunk
-// 的 usage 都是 null，只有显式要求才会在最后一个 chunk 给出真实 usage。
-// 不注入的话网关拿不到用量，只能按最小计费单位兜底，实测 3600 tokens 的流式请求
-// 只扣了 1 unit，等于流式调用近乎免费。
-// 若调用方已显式指定 include_usage，则尊重其选择，不覆盖。
-func ensureIncludeUsage(body []byte) []byte {
-	var m map[string]json.RawMessage
-	if err := json.Unmarshal(body, &m); err != nil {
-		return body
-	}
-	if raw, ok := m["stream_options"]; ok {
-		var opts map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &opts); err == nil {
-			// **强制 true，不尊重调用方的选择**（安全审查 2026-09-15 P0-S1）：
-			// 此前"若调用方已显式指定 include_usage 则尊重"，等于把计费开关交给客户端——
-			// 只要带 {"stream_options":{"include_usage":false}}，网关拿不到 usage，
-			// 流式调用就近乎免费。计费依据不能由被计费方关闭。
-			if opts == nil { // `"stream_options": null` 会解出 nil map，赋值即 panic（P1-1）
-				opts = map[string]json.RawMessage{}
-			}
-			opts["include_usage"] = json.RawMessage("true")
-			if b, err := json.Marshal(opts); err == nil {
-				m["stream_options"] = b
-			}
-		}
-	} else {
-		m["stream_options"] = json.RawMessage(`{"include_usage":true}`)
-	}
-	out, err := json.Marshal(m)
-	if err != nil {
-		return body
-	}
-	return out
-}
-
+// extractUsageTokens 从响应体（或单个 SSE 行）里取 usage.total_tokens。
+// 取不到返回 0，由 chargeQuota 按最小计费单位处理。
 func extractUsageTokens(b []byte) int {
 	// 必须匹配 `"usage"` **后面跟对象**的情况：流式 chunk 里普遍是 `"usage":null`，
 	// 早期版本在 "usage" 之后找第一个 '{'，结果抓到的是后面 "choices":[{...}] 那个对象，

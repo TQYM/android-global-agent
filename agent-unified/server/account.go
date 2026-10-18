@@ -84,19 +84,11 @@ type AccountToken struct {
 // （避免无限增长，同时满足正常用户的多设备场景）。
 const maxTokensPerAccount = 10
 
-// addTokenLocked 追加一把令牌并维护索引（调用方需持锁）。
-func (s *Store) addTokenLocked(a *Account, token string) {
-	a.Tokens = append(a.Tokens, AccountToken{Hash: hashToken(token), CreatedAt: time.Now().UTC()})
-	evicted := ""
+// appendAccountToken 只修改待提交的账号副本；持久化成功才发布令牌索引。
+func appendAccountToken(a *Account, token string) {
+	a.Tokens = append(append([]AccountToken(nil), a.Tokens...), AccountToken{Hash: hashToken(token), CreatedAt: time.Now().UTC()})
 	if len(a.Tokens) > maxTokensPerAccount {
-		evicted = a.Tokens[0].Hash
 		a.Tokens = a.Tokens[len(a.Tokens)-maxTokensPerAccount:]
-	}
-	for _, tk := range a.Tokens {
-		s.acctByToken[tk.Hash] = a.AccountID
-	}
-	if evicted != "" {
-		delete(s.acctByToken, evicted)
 	}
 }
 
@@ -197,19 +189,6 @@ func (s *Store) loadAccounts() error {
 	return nil
 }
 
-// saveAccountsLocked 原子重写账号表。调用方须持写锁。
-func (s *Store) saveAccountsLocked() error {
-	list := make([]Account, 0, len(s.accounts))
-	for _, a := range s.accounts {
-		list = append(list, *a)
-	}
-	raw, err := json.MarshalIndent(list, "", "  ")
-	if err != nil {
-		return err
-	}
-	return atomicWrite(s.accountsPath(), raw, 0o600)
-}
-
 // ---------- 注册 / 登录 ----------
 
 // RegisterAccount 创建账号并直接签发令牌。
@@ -255,40 +234,40 @@ func (s *Store) RegisterAccount(name, key string) (*Account, string, error) {
 		LastLoginAt: now,
 		Quota:       newAccountGrant, // 新账号赠送额度，便于开箱试用
 	}
-	s.accounts[id] = a
-	s.acctByName[n] = id
-	s.addTokenLocked(a, token)
-	if err := s.saveAccountsLocked(); err != nil {
+	appendAccountToken(a, token)
+	if err := s.commitBillingLocked(billingTxn{Accounts: []Account{*a}}); err != nil {
 		return nil, "", err
 	}
 	cp := *a
 	return &cp, token, nil
 }
 
-// LoginAccount 校验凭据并轮换令牌（旧令牌立即失效）。
+// LoginAccount 在锁外校验密钥，提交时追加令牌并保留其他设备的令牌。
 func (s *Store) LoginAccount(name, key string) (*Account, string, error) {
 	n, err := normalizeAccountName(name)
 	if err != nil {
-		// 名字不合法与凭据错误统一返回，避免账号枚举
 		return nil, "", ErrBadCredentials
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
+	s.mu.RLock()
 	id, ok := s.acctByName[n]
+	var snapshot Account
+	if a := s.accounts[id]; ok && a != nil {
+		snapshot = *a
+	} else {
+		ok = false
+	}
+	s.mu.RUnlock()
 	if !ok {
-		// 抵御账号枚举：仍做一次等价开销的派生
-		salt := make([]byte, acctSaltLen)
-		_, _ = hashAccountKey(key, salt, acctKeyIterations)
+		// 未知账号仍做等价派生，但不阻塞全局存储锁。
+		_, _ = hashAccountKey(key, make([]byte, acctSaltLen), acctKeyIterations)
 		return nil, "", ErrBadCredentials
 	}
-	a := s.accounts[id]
-	salt, err := base64.StdEncoding.DecodeString(a.KeySalt)
+	salt, err := base64.StdEncoding.DecodeString(snapshot.KeySalt)
 	if err != nil {
 		return nil, "", ErrBadCredentials
 	}
-	iter := a.KeyIter
+	iter := snapshot.KeyIter
 	if iter <= 0 {
 		iter = acctKeyIterations
 	}
@@ -296,29 +275,32 @@ func (s *Store) LoginAccount(name, key string) (*Account, string, error) {
 	if err != nil {
 		return nil, "", ErrBadCredentials
 	}
-	want, err := base64.StdEncoding.DecodeString(a.KeyHash)
-	if err != nil {
+	want, err := base64.StdEncoding.DecodeString(snapshot.KeyHash)
+	if err != nil || subtle.ConstantTimeCompare(got, want) != 1 {
 		return nil, "", ErrBadCredentials
 	}
-	if subtle.ConstantTimeCompare(got, want) != 1 {
+	token, err := randomB64(32)
+	if err != nil {
+		return nil, "", err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.accounts[id]
+	// 派生期间凭据或归属变化时不签发令牌；禁用状态以提交时为准。
+	if a == nil || s.acctByName[n] != id || a.KeyHash != snapshot.KeyHash || a.KeySalt != snapshot.KeySalt || a.KeyIter != snapshot.KeyIter {
 		return nil, "", ErrBadCredentials
 	}
 	if a.Disabled {
 		return nil, "", ErrAccountDisabled
 	}
-
-	token, err := randomB64(32)
-	if err != nil {
-		return nil, "", err
-	}
-	// **追加**一把新令牌，不动其它设备已有的令牌——
-	// 这是跨设备（手机 / 手表同账号同时在线）能工作的前提。
-	// 旧实现是 delete 旧 + 换新，后果是同账号第二台设备一登录就把第一台踢下线。
-	s.addTokenLocked(a, token)
-	if err := s.saveAccountsLocked(); err != nil {
-		return nil, "", err
-	}
+	// 从当前状态复制，保留派生期间其他登录/账务更新，避免用旧快照覆盖余额。
 	cp := *a
+	appendAccountToken(&cp, token)
+	cp.LastLoginAt = time.Now().UTC()
+	if err := s.commitBillingLocked(billingTxn{Accounts: []Account{cp}}); err != nil {
+		return nil, "", err
+	}
 	return &cp, token, nil
 }
 
@@ -333,6 +315,11 @@ func (s *Store) AccountByToken(token string) (*Account, error) {
 	var a *Account
 	if ok {
 		a = s.accounts[id]
+	}
+	if a != nil {
+		cp := *a
+		cp.Tokens = append([]AccountToken(nil), a.Tokens...)
+		a = &cp
 	}
 	s.mu.RUnlock()
 	if !ok || a == nil {
@@ -353,9 +340,12 @@ func (s *Store) AddQuota(accountID string, units int64, used int64) error {
 	if !ok {
 		return ErrNotFound
 	}
-	a.Quota += units
-	a.QuotaUsed += used
-	return s.saveAccountsLocked()
+	next := *a
+	next.Quota += units
+	next.QuotaUsed += used
+	return s.commitBillingLocked(billingTxn{Accounts: []Account{next}, Ledger: &Ledger{
+		Time: time.Now().UTC(), AccountID: accountID, Delta: units, Reason: "adjust", Balance: next.Quota,
+	}})
 }
 
 // ---------- 局域网会合 ----------
@@ -388,11 +378,12 @@ func (s *Store) RecordLANPresence(deviceID, publicIP string, lanIPs []string, po
 			break
 		}
 	}
-	d.LANIPs = clean
-	d.LANPort = port
-	d.PublicIP = publicIP
-	d.LANSeenAt = time.Now().UTC()
-	return s.saveDevicesLocked()
+	next := cloneDevice(d)
+	next.LANIPs = clean
+	next.LANPort = port
+	next.PublicIP = publicIP
+	next.LANSeenAt = time.Now().UTC()
+	return s.commitDeviceLocked(&next)
 }
 
 // LANPeers 返回同账号、同公网出口、且最近仍活跃的其他设备。

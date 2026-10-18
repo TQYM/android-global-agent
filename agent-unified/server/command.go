@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// AgentLite 同步服务 — 跨设备指令队列
+// # AgentLite 同步服务 — 跨设备指令队列
 //
 // 场景：用户在设备 1 上说「让设备 2 打开 B 站」，设备 2 自动执行。
 //
@@ -31,6 +31,8 @@ const (
 	// 指令有效期：超时未领取即作废。用户不会等太久，过期执行反而危险
 	//（比如十分钟后才打开某个页面，用户早已不在那个语境里）。
 	CommandTTL = 5 * time.Minute
+	// 终态在同一进程内保留一天供发起设备查询与重试 ACK；不再投递。
+	CommandResultTTL = 24 * time.Hour
 
 	cmdStatusPending = "pending"
 	cmdStatusRunning = "running"
@@ -142,7 +144,8 @@ func (s *Store) PendingFor(accountID, deviceID string) []DeviceCommand {
 
 	now := time.Now().UTC()
 	out := []DeviceCommand{}
-	for id, c := range s.cmds.byID {
+	s.pruneCommandResultsLocked(now)
+	for _, c := range s.cmds.byID {
 		if c.AccountID != accountID || c.ToDevice != deviceID {
 			continue
 		}
@@ -154,7 +157,6 @@ func (s *Store) PendingFor(accountID, deviceID string) []DeviceCommand {
 			c.UpdatedAt = now
 			c.Detail = "超过有效期未被领取"
 			s.auditCommand(c)
-			delete(s.cmds.byID, id)
 			continue
 		}
 		out = append(out, *c)
@@ -173,6 +175,7 @@ func (s *Store) AckCommand(accountID, deviceID, commandID, status, detail string
 	s.cmds.mu.Lock()
 	defer s.cmds.mu.Unlock()
 
+	s.pruneCommandResultsLocked(time.Now().UTC())
 	c, ok := s.cmds.byID[commandID]
 	if !ok {
 		return nil, ErrCommandNotFound
@@ -183,17 +186,21 @@ func (s *Store) AckCommand(accountID, deviceID, commandID, status, detail string
 	if c.ToDevice != deviceID {
 		return nil, ErrNotTargetDevice
 	}
-	if c.Status == cmdStatusDone || c.Status == cmdStatusFailed {
+	if c.Status == cmdStatusDone || c.Status == cmdStatusFailed || c.Status == cmdStatusExpired {
+		if c.Status == status && c.Detail == truncate(detail, 256) {
+			cp := *c
+			return &cp, nil // 相同终态 ACK 重试不改写结果或延长保留期
+		}
 		return nil, ErrCommandConsumed
+	}
+	if c.Status == cmdStatusPending && time.Now().UTC().After(c.ExpiresAt) {
+		return nil, ErrCommandNotFound
 	}
 	now := time.Now().UTC()
 	c.Status = status
 	c.Detail = truncate(detail, 256)
 	c.UpdatedAt = now
 	s.auditCommand(c)
-	if status == cmdStatusDone || status == cmdStatusFailed {
-		delete(s.cmds.byID, commandID)
-	}
 	cp := *c
 	return &cp, nil
 }
@@ -202,12 +209,22 @@ func (s *Store) AckCommand(accountID, deviceID, commandID, status, detail string
 func (s *Store) GetCommand(accountID, commandID string) (*DeviceCommand, error) {
 	s.cmds.mu.Lock()
 	defer s.cmds.mu.Unlock()
+	s.pruneCommandResultsLocked(time.Now().UTC())
 	c, ok := s.cmds.byID[commandID]
 	if !ok || c.AccountID != accountID {
 		return nil, ErrCommandNotFound
 	}
 	cp := *c
 	return &cp, nil
+}
+
+// pruneCommandResultsLocked 只淘汰超过查询保留期的终态，不重新投递。
+func (s *Store) pruneCommandResultsLocked(now time.Time) {
+	for id, c := range s.cmds.byID {
+		if (c.Status == cmdStatusDone || c.Status == cmdStatusFailed || c.Status == cmdStatusExpired) && now.Sub(c.UpdatedAt) > CommandResultTTL {
+			delete(s.cmds.byID, id)
+		}
+	}
 }
 
 // auditCommand 追加一条审计流水（内存锁内调用，失败只记日志不打断主流程）。

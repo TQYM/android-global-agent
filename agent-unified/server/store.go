@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// AgentLite 同步服务 — 存储层
+// # AgentLite 同步服务 — 存储层
 //
 // 设计约束（刻意为之）：
 //   - 纯标准库，零第三方依赖（与 agentd-go / 无 Gradle 构建一脉相承）
@@ -12,6 +12,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -19,8 +20,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -111,15 +115,27 @@ type Config struct {
 	Values  json.RawMessage `json:"values"`
 }
 
-// Store 是全部持久状态的持有者。
-type Store struct {
-	dir string
+// recordPosition 只保存序号及文件区间；记录正文仍只在账号 JSONL 中。
+type recordPosition struct {
+	Seq    int64
+	Offset int64
+	Size   int64
+}
 
-	mu       sync.RWMutex
-	devices  map[string]*Device             // device_id -> Device
-	byFinger map[string]string              // fingerprint -> device_id
-	lastSeq  map[string]int64               // account_id -> 最新 seq
-	seenIDs  map[string]map[string]struct{} // account_id -> {"kind:id"} 去重集
+// Store 是全部持久状态的持有者，写入统一由 mu 串行提交。
+type Store struct {
+	dir        string
+	billingErr error // 账务尾部回滚失败时阻断后续写入
+	storageErr error // 同步日志尾部回滚失败时阻断后续写入
+	// 测试可注入 fsync 故障；生产始终直接使用 os.File.Sync。
+	storageSync func(*os.File) error
+
+	mu          sync.RWMutex
+	devices     map[string]*Device             // device_id -> Device
+	byFinger    map[string]string              // account_id + NUL + fingerprint -> device_id
+	lastSeq     map[string]int64               // account_id -> 最新 seq
+	seenIDs     map[string]map[string]struct{} // account_id -> {"kind:id"} 去重集
+	recordIndex map[string][]recordPosition    // account_id -> 按 seq 递增的字节区间
 
 	// 账号（见 account.go）
 	accounts    map[string]*Account // account_id -> Account
@@ -151,6 +167,7 @@ func NewStore(dir string) (*Store, error) {
 		byFinger:    map[string]string{},
 		lastSeq:     map[string]int64{},
 		seenIDs:     map[string]map[string]struct{}{},
+		recordIndex: map[string][]recordPosition{},
 		accounts:    map[string]*Account{},
 		acctByName:  map[string]string{},
 		acctByToken: map[string]string{},
@@ -164,19 +181,13 @@ func NewStore(dir string) (*Store, error) {
 			return nil, fmt.Errorf("创建数据目录 %s: %w", sub, err)
 		}
 	}
-	if err := s.loadAccounts(); err != nil {
-		return nil, err
-	}
-	if err := s.loadCodes(); err != nil {
+	if err := s.loadBilling(); err != nil {
 		return nil, err
 	}
 	if err := s.loadDevices(); err != nil {
 		return nil, err
 	}
 	if err := s.loadRecordIndex(); err != nil {
-		return nil, err
-	}
-	if err := s.LoadOrders(); err != nil {
 		return nil, err
 	}
 	return s, nil
@@ -230,19 +241,24 @@ func (s *Store) BindDevice(accountID string, req RegisterRequest) (*Device, bool
 	now := time.Now().UTC()
 	var dev *Device
 	created := false
-	if id, ok := s.byFinger[fp]; ok {
-		dev = s.devices[id]
+	fingerKey := accountID + "\x00" + fp
+	id, ok := s.byFinger[fingerKey]
+	if !ok {
+		// 只认领尚未归属账号的历史设备；有账号的设备始终留在原账号。
+		id, ok = s.byFinger["\x00"+fp]
+	}
+	if ok {
+		next := cloneDevice(s.devices[id])
+		dev = &next
 	} else {
 		id, err := newDeviceID()
 		if err != nil {
 			return nil, false, err
 		}
 		dev = &Device{DeviceID: id, Fingerprint: fp, CreatedAt: now}
-		s.devices[id] = dev
-		s.byFinger[fp] = id
 		created = true
 	}
-	// 换账号登录时把设备改挂到新账号（同一台设备不应同时属于两个账号）
+	// fingerprint 只标识同一账号下的安装；换账号创建新归属，不搬运状态。
 	dev.AccountID = accountID
 	dev.Name = truncate(req.Name, 64)
 	dev.Model = truncate(req.Model, 64)
@@ -252,7 +268,7 @@ func (s *Store) BindDevice(accountID string, req RegisterRequest) (*Device, bool
 	dev.LastSeenAt = now
 	dev.Disabled = false
 
-	if err := s.saveDevicesLocked(); err != nil {
+	if err := s.commitDeviceLocked(dev); err != nil {
 		return nil, false, err
 	}
 	// 迁移旧记录**不能**只看 created：
@@ -266,7 +282,7 @@ func (s *Store) BindDevice(accountID string, req RegisterRequest) (*Device, bool
 	} else if n > 0 {
 		logInfo("已迁移旧记录到账号流 device=%s account=%s 条数=%d", dev.DeviceID, accountID, n)
 	}
-	cp := *dev
+	cp := cloneDevice(dev)
 	return &cp, created, nil
 }
 
@@ -281,7 +297,7 @@ func (s *Store) DeviceOfAccount(accountID, deviceID string) (*Device, error) {
 	if d.Disabled {
 		return nil, ErrDisabled
 	}
-	cp := *d
+	cp := cloneDevice(d)
 	return &cp, nil
 }
 
@@ -293,13 +309,14 @@ func (s *Store) Touch(deviceID string, status json.RawMessage) error {
 	if !ok {
 		return ErrNotFound
 	}
+	next := cloneDevice(dev)
 	now := time.Now().UTC()
-	dev.LastSeenAt = now
+	next.LastSeenAt = now
 	if len(status) > 0 {
-		dev.LastStatus = status
-		dev.LastStatusAt = now
+		next.LastStatus = append(json.RawMessage(nil), status...)
+		next.LastStatusAt = now
 	}
-	return s.saveDevicesLocked()
+	return s.commitDeviceLocked(&next)
 }
 
 // Devices 返回全部设备快照（供 /health 与管理视图）。
@@ -308,8 +325,7 @@ func (s *Store) Devices() []Device {
 	defer s.mu.RUnlock()
 	out := make([]Device, 0, len(s.devices))
 	for _, d := range s.devices {
-		cp := *d
-		out = append(out, cp)
+		out = append(out, cloneDevice(d))
 	}
 	return out
 }
@@ -322,8 +338,9 @@ func (s *Store) SetDisabled(deviceID string, disabled bool) error {
 	if !ok {
 		return ErrNotFound
 	}
-	dev.Disabled = disabled
-	return s.saveDevicesLocked()
+	next := cloneDevice(dev)
+	next.Disabled = disabled
+	return s.commitDeviceLocked(&next)
 }
 
 // ---------- 记录追加与拉取（账号维度） ----------
@@ -345,110 +362,122 @@ func (s *Store) Append(accountID, deviceID string, items []PendingItem) (AppendR
 
 // appendLocked 是 Append 的无锁内核，供持锁调用方（旧记录迁移）复用。
 func (s *Store) appendLocked(accountID, deviceID string, items []PendingItem) (AppendResult, error) {
-	res := AppendResult{}
-
+	res := AppendResult{Seq: s.lastSeq[accountID]}
 	seen := s.seenIDs[accountID]
-	if seen == nil {
-		seen = map[string]struct{}{}
-		s.seenIDs[accountID] = seen
-	}
-
-	f, err := os.OpenFile(s.recordPath(accountID), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
-	if err != nil {
-		return res, err
-	}
-	defer f.Close()
-
-	seq := s.lastSeq[accountID]
-	w := bufio.NewWriter(f)
+	staged := make(map[string]struct{}, len(items))
+	positions := make([]recordPosition, 0, len(items))
+	var data bytes.Buffer
+	seq := res.Seq
 	for _, it := range items {
 		kind := strings.TrimSpace(it.Kind)
 		id := strings.TrimSpace(it.Item.ID)
-		if kind == "" || len(kind) > maxKindLen || id == "" || len(id) > maxIDLen {
-			res.Rejected++
-			continue
-		}
-		if len(it.Item.Data) > maxPayloadB {
+		if kind == "" || len(kind) > maxKindLen || id == "" || len(id) > maxIDLen || len(it.Item.Data) > maxPayloadB {
 			res.Rejected++
 			continue
 		}
 		key := kind + ":" + id
-		if _, dup := seen[key]; dup {
+		_, dup := seen[key]
+		_, batchDup := staged[key]
+		if dup || batchDup {
 			res.Duplicates++
 			continue
 		}
-		seq++
-		// 来源设备优先取 Origin（局域网转发场景，已由 api 层校验归属同一账号）
 		origin := deviceID
 		if it.Origin != "" {
-			origin = it.Origin
+			origin = it.Origin // api 层已核验同账号归属
+		}
+		if seq == math.MaxInt64 {
+			return res, fmt.Errorf("账号 %s 记录序号已耗尽", accountID)
 		}
 		rec := Record{
-			Seq: seq, DeviceID: origin, Kind: kind, ID: id,
+			Seq: seq + 1, DeviceID: origin, Kind: kind, ID: id,
 			TS: truncate(it.Item.TS, 40), Data: it.Item.Data,
 		}
 		line, err := json.Marshal(rec)
 		if err != nil {
 			res.Rejected++
-			continue
+			continue // 序号与去重状态都尚未发布
 		}
-		if _, err := w.Write(append(line, '\n')); err != nil {
-			return res, err
-		}
+		seq++
+		positions = append(positions, recordPosition{Seq: seq, Offset: int64(data.Len()), Size: int64(len(line) + 1)})
+		data.Write(line)
+		data.WriteByte('\n')
+		staged[key] = struct{}{}
+	}
+	if len(positions) == 0 {
+		return res, nil // 空、全重复或全拒绝批次不打开文件、不 fsync
+	}
+	start, err := s.appendStorageLocked(s.recordPath(accountID), data.Bytes())
+	if err != nil {
+		return res, err
+	}
+	// 完整写入并 fsync 后一次发布；重试失败批次仍可获得相同序号。
+	if seen == nil {
+		seen = map[string]struct{}{}
+		s.seenIDs[accountID] = seen
+	}
+	for key := range staged {
 		seen[key] = struct{}{}
-		res.Accepted++
 	}
-	if err := w.Flush(); err != nil {
-		return res, err
+	for i := range positions {
+		positions[i].Offset += start
 	}
-	if err := f.Sync(); err != nil {
-		return res, err
-	}
+	s.recordIndex[accountID] = append(s.recordIndex[accountID], positions...)
 	s.lastSeq[accountID] = seq
+	res.Accepted = len(positions)
 	res.Seq = seq
 	return res, nil
 }
 
-// Pull 返回账号流中 seq > since 的记录，最多 limit 条。
+// Pull 按账号序列索引定位当前页，只读取已提交的字节区间。
+// 高水位和页边界在同一读锁下取快照，正文读取不持有全局锁。
 func (s *Store) Pull(accountID string, since int64, limit int) ([]Record, int64, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 500
 	}
 	s.mu.RLock()
 	last := s.lastSeq[accountID]
+	index := s.recordIndex[accountID]
+	start := sort.Search(len(index), func(i int) bool { return index[i].Seq > since })
+	stop := min(start+limit, len(index))
+	var begin, end int64
+	if start < stop {
+		begin = index[start].Offset
+		end = index[stop-1].Offset + index[stop-1].Size
+	}
 	s.mu.RUnlock()
-
+	if start == stop {
+		return []Record{}, last, nil
+	}
 	f, err := os.Open(s.recordPath(accountID))
 	if err != nil {
-		if os.IsNotExist(err) {
-			return []Record{}, last, nil
-		}
 		return nil, 0, err
 	}
 	defer f.Close()
-
-	out := make([]Record, 0, 64)
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), maxPayloadB+64*1024)
+	out := make([]Record, 0, stop-start)
+	sc := bufio.NewScanner(io.NewSectionReader(f, begin, end-begin))
+	sc.Buffer(make([]byte, 0, 64*1024), maxPayloadB*6+64*1024)
+	prev := since
 	for sc.Scan() {
 		line := sc.Bytes()
-		if len(line) == 0 {
+		if len(bytes.TrimSpace(line)) == 0 {
 			continue
 		}
 		var rec Record
 		if err := json.Unmarshal(line, &rec); err != nil {
-			continue // 跳过损坏行，不让单行拖垮整次拉取
+			return nil, 0, err
 		}
-		if rec.Seq <= since {
-			continue
+		if rec.Seq <= prev || rec.Seq > last {
+			return nil, 0, fmt.Errorf("账号 %s 记录序列与已提交索引不一致", accountID)
 		}
 		out = append(out, rec)
-		if len(out) >= limit {
-			break
-		}
+		prev = rec.Seq
 	}
 	if err := sc.Err(); err != nil {
 		return nil, 0, err
+	}
+	if len(out) != stop-start {
+		return nil, 0, io.ErrUnexpectedEOF
 	}
 	return out, last, nil
 }
@@ -513,42 +542,180 @@ func sanitizeID(id string) string {
 	}, id)
 }
 
-func (s *Store) loadDevices() error {
-	raw, err := os.ReadFile(filepath.Join(s.dir, "devices.json"))
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
+func (s *Store) devicesPath() string { return filepath.Join(s.dir, "devices.jsonl") }
+
+func cloneDevice(d *Device) Device {
+	cp := *d
+	cp.LastStatus = append(json.RawMessage(nil), d.LastStatus...)
+	cp.LANIPs = append([]string(nil), d.LANIPs...)
+	return cp
+}
+
+func (s *Store) applyDeviceLocked(next *Device) {
+	if old := s.devices[next.DeviceID]; old != nil {
+		key := old.AccountID + "\x00" + old.Fingerprint
+		if s.byFinger[key] == old.DeviceID {
+			delete(s.byFinger, key)
 		}
+	}
+	cp := cloneDevice(next)
+	s.devices[cp.DeviceID] = &cp
+	if cp.Fingerprint != "" {
+		s.byFinger[cp.AccountID+"\x00"+cp.Fingerprint] = cp.DeviceID
+	}
+}
+
+// loadDevices 仅首次导入 devices.json；日志存在后它就是唯一事实源。
+func (s *Store) loadDevices() error {
+	f, err := os.OpenFile(s.devicesPath(), os.O_RDWR, 0o600)
+	if errors.Is(err, os.ErrNotExist) {
+		raw, err := os.ReadFile(filepath.Join(s.dir, "devices.json"))
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		var list []Device
+		if err == nil {
+			if err := json.Unmarshal(raw, &list); err != nil {
+				return fmt.Errorf("devices.json 损坏: %w", err)
+			}
+		}
+		var data bytes.Buffer
+		for i := range list {
+			line, err := json.Marshal(list[i])
+			if err != nil {
+				return err
+			}
+			data.Write(line)
+			data.WriteByte('\n')
+		}
+		if err := atomicWrite(s.devicesPath(), data.Bytes(), 0o600); err != nil {
+			return err
+		}
+		for i := range list {
+			s.applyDeviceLocked(&list[i])
+		}
+		return nil
+	}
+	if err != nil {
 		return err
 	}
-	var list []Device
-	if err := json.Unmarshal(raw, &list); err != nil {
-		return fmt.Errorf("devices.json 损坏: %w", err)
-	}
-	for i := range list {
-		d := list[i]
-		s.devices[d.DeviceID] = &d
-		if d.Fingerprint != "" {
-			s.byFinger[d.Fingerprint] = d.DeviceID
+	defer f.Close()
+	r := bufio.NewReader(f)
+	var good int64
+	for {
+		line, err := readStorageLine(r, maxBodyBytes*6+64*1024)
+		if err == io.EOF {
+			return trimStorageTail(f, good, len(line) > 0)
 		}
+		if err != nil {
+			return err
+		}
+		if len(bytes.TrimSpace(line)) > 0 {
+			var d Device
+			if err := json.Unmarshal(line, &d); err != nil {
+				return fmt.Errorf("devices.jsonl offset=%d: %w", good, err)
+			}
+			if d.DeviceID == "" {
+				return fmt.Errorf("devices.jsonl offset=%d: 缺少 device_id", good)
+			}
+			s.applyDeviceLocked(&d)
+		}
+		good += int64(len(line))
 	}
+}
+
+func (s *Store) commitDeviceLocked(next *Device) error {
+	line, err := json.Marshal(next)
+	if err != nil {
+		return err
+	}
+	if _, err := s.appendStorageLocked(s.devicesPath(), append(line, '\n')); err != nil {
+		return err
+	}
+	s.applyDeviceLocked(next)
 	return nil
 }
 
-// saveDevicesLocked 原子重写设备表（临时文件 + rename）。调用方必须持有写锁。
-func (s *Store) saveDevicesLocked() error {
-	list := make([]Device, 0, len(s.devices))
-	for _, d := range s.devices {
-		list = append(list, *d)
+// appendStorageLocked 是设备与记录共用的同步日志写内核；Store.mu 是唯一写锁。
+// fsync 失败则截回原长度；连回滚也失败时停止写入，不发布内存状态。
+func (s *Store) appendStorageLocked(path string, data []byte) (int64, error) {
+	if s.storageErr != nil {
+		return 0, s.storageErr
 	}
-	raw, err := json.MarshalIndent(list, "", "  ")
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	return atomicWrite(filepath.Join(s.dir, "devices.json"), raw, 0o600)
+	defer f.Close()
+	start, err := f.Seek(0, io.SeekEnd)
+	if err != nil {
+		return 0, err
+	}
+	n, err := f.Write(data)
+	if err == nil && n != len(data) {
+		err = io.ErrShortWrite
+	}
+	if err == nil {
+		err = s.syncStorageFile(f)
+	}
+	if err == nil && start == 0 {
+		// 首次创建账号流时也保证目录项落盘。
+		dir, openErr := os.Open(filepath.Dir(path))
+		if openErr != nil {
+			err = openErr
+		} else {
+			err = s.syncStorageFile(dir)
+			_ = dir.Close()
+		}
+	}
+	if err != nil {
+		undo := f.Truncate(start)
+		if undo == nil {
+			undo = s.syncStorageFile(f)
+		}
+		if undo != nil {
+			s.storageErr = fmt.Errorf("同步日志写入与回滚失败: %w", errors.Join(err, undo))
+			return 0, s.storageErr
+		}
+		return 0, err
+	}
+	return start, nil
 }
 
-// loadRecordIndex 重放各账号的 JSONL，恢复 lastSeq 与去重集。
+func (s *Store) syncStorageFile(f *os.File) error {
+	if s.storageSync != nil {
+		return s.storageSync(f)
+	}
+	return f.Sync()
+}
+
+// readStorageLine 保留换行符，以便精确恢复字节区间；上限覆盖 RawMessage 的 HTML 转义。
+func readStorageLine(r *bufio.Reader, max int) ([]byte, error) {
+	var line []byte
+	for {
+		part, err := r.ReadSlice('\n')
+		if len(line)+len(part) > max {
+			return nil, fmt.Errorf("同步日志单行超过 %d 字节", max)
+		}
+		line = append(line, part...)
+		if err != bufio.ErrBufferFull {
+			return line, err
+		}
+	}
+}
+
+func trimStorageTail(f *os.File, good int64, partial bool) error {
+	if !partial {
+		return nil
+	}
+	if err := f.Truncate(good); err != nil {
+		return err
+	}
+	return f.Sync()
+}
+
+// loadRecordIndex 启动时重放一次，重建序号、去重和 seq→字节区间索引。
+// 不另写索引文件，记录 JSONL 始终是唯一事实源。
 func (s *Store) loadRecordIndex() error {
 	entries, err := os.ReadDir(filepath.Join(s.dir, "records"))
 	if err != nil {
@@ -559,42 +726,49 @@ func (s *Store) loadRecordIndex() error {
 			continue
 		}
 		owner := strings.TrimSuffix(e.Name(), ".jsonl")
-		last, seen, err := scanRecordFile(filepath.Join(s.dir, "records", e.Name()))
-		if err != nil {
+		if err := s.indexRecordFile(owner, filepath.Join(s.dir, "records", e.Name())); err != nil {
 			return err
 		}
-		s.lastSeq[owner] = last
-		s.seenIDs[owner] = seen
 	}
 	return nil
 }
 
-// scanRecordFile 读一遍记录文件，返回最大 seq 与去重集。
-func scanRecordFile(path string) (int64, map[string]struct{}, error) {
-	seen := map[string]struct{}{}
-	f, err := os.Open(path)
+func (s *Store) indexRecordFile(owner, path string) error {
+	f, err := os.OpenFile(path, os.O_RDWR, 0o600)
 	if err != nil {
-		return 0, seen, err
+		return err
 	}
 	defer f.Close()
-	var last int64
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), maxPayloadB+64*1024)
-	for sc.Scan() {
-		line := sc.Bytes()
-		if len(line) == 0 {
-			continue
+	r := bufio.NewReader(f)
+	seen := map[string]struct{}{}
+	var index []recordPosition
+	var last, good int64
+	for {
+		line, err := readStorageLine(r, maxPayloadB*6+64*1024)
+		if err == io.EOF {
+			if err := trimStorageTail(f, good, len(line) > 0); err != nil {
+				return err
+			}
+			s.lastSeq[owner], s.seenIDs[owner], s.recordIndex[owner] = last, seen, index
+			return nil
 		}
-		var rec Record
-		if err := json.Unmarshal(line, &rec); err != nil {
-			continue
+		if err != nil {
+			return err
 		}
-		if rec.Seq > last {
+		if len(bytes.TrimSpace(line)) > 0 {
+			var rec Record
+			if err := json.Unmarshal(line, &rec); err != nil {
+				return fmt.Errorf("记录 %s offset=%d: %w", owner, good, err)
+			}
+			if len(index) > 0 && rec.Seq <= last {
+				return fmt.Errorf("记录 %s offset=%d: seq=%d 未递增", owner, good, rec.Seq)
+			}
+			index = append(index, recordPosition{Seq: rec.Seq, Offset: good, Size: int64(len(line))})
 			last = rec.Seq
+			seen[rec.Kind+":"+rec.ID] = struct{}{}
 		}
-		seen[rec.Kind+":"+rec.ID] = struct{}{}
+		good += int64(len(line))
 	}
-	return last, seen, sc.Err()
 }
 
 // migrateLegacyRecordsLocked 把旧版按设备归档的记录并入账号流（只做一次）。
@@ -645,10 +819,29 @@ func (s *Store) migrateLegacyRecordsLocked(deviceID, accountID string) (int, err
 
 func atomicWrite(path string, data []byte, perm os.FileMode) error {
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, perm); err != nil {
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, perm)
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	if _, err = f.Write(data); err == nil {
+		err = f.Sync()
+	}
+	closeErr := f.Close()
+	if err != nil {
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	dir, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return dir.Sync()
 }
 
 func truncate(s string, n int) string {

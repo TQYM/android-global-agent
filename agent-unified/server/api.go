@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// AgentLite 同步服务 — HTTP 接口层
+// # AgentLite 同步服务 — HTTP 接口层
 //
 // 鉴权模型：
 //   - 账号令牌（Bearer）覆盖绝大多数接口；设备通过 X-Device-Id 归属到账号。
@@ -95,16 +95,30 @@ func (s *server) logMW(next http.HandlerFunc) http.HandlerFunc {
 
 type loggingWriter struct {
 	http.ResponseWriter
-	code int
-	n    int
+	code        int
+	n           int
+	wroteHeader bool
 }
 
+// ResponseController 沿 Unwrap 找到底层 Flush/Deadline，不复制 HTTP 能力实现。
+func (l *loggingWriter) Unwrap() http.ResponseWriter { return l.ResponseWriter }
+
 func (l *loggingWriter) WriteHeader(code int) {
-	l.code = code
+	if l.wroteHeader {
+		return
+	}
 	l.ResponseWriter.WriteHeader(code)
+	if code >= 100 && code < 200 && code != http.StatusSwitchingProtocols {
+		return
+	}
+	l.wroteHeader = true
+	l.code = code
 }
 
 func (l *loggingWriter) Write(b []byte) (int, error) {
+	if !l.wroteHeader {
+		l.WriteHeader(http.StatusOK)
+	}
 	n, err := l.ResponseWriter.Write(b)
 	l.n += n
 	return n, err
@@ -367,10 +381,15 @@ func (s *server) handlePull(w http.ResponseWriter, r *http.Request, a *Account, 
 		writeErr(w, http.StatusInternalServerError, "internal", "读取失败")
 		return
 	}
+	nextSince := since
+	if len(recs) > 0 {
+		nextSince = recs[len(recs)-1].Seq
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"records":     recs,
-		"server_seq":  last,
-		"has_more":    len(recs) > 0 && recs[len(recs)-1].Seq < last,
+		"server_seq":  last, // 兼容高水位；消费游标只使用 next_since
+		"next_since":  nextSince,
+		"has_more":    nextSince < last,
 		"config":      s.store.Config(),
 		"server_time": time.Now().UTC().Format(time.RFC3339),
 	})
@@ -388,10 +407,10 @@ func (s *server) handleConfig(w http.ResponseWriter, r *http.Request, a *Account
 // handlePacks 返回可购买套餐。价格仅用于展示——真实在线支付未接入。
 func (s *server) handlePacks(w http.ResponseWriter, r *http.Request, a *Account) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"packs":        s.store.Packs(),
-		"pay_methods":  []string{methodRedeem},
-		"online_pay":   false, // 明确告知客户端：在线支付未接入，当前只能用兑换码
-		"server_time":  time.Now().UTC().Format(time.RFC3339),
+		"packs":       s.store.Packs(),
+		"pay_methods": []string{methodRedeem},
+		"online_pay":  false, // 明确告知客户端：在线支付未接入，当前只能用兑换码
+		"server_time": time.Now().UTC().Format(time.RFC3339),
 	})
 }
 
