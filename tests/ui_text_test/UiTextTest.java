@@ -121,6 +121,36 @@ public final class UiTextTest {
         if (unmapped == 0) ok(schema.length + " 个 SCHEMA 动作名全部有友好文案");
 
         System.out.println();
+        System.out.println("== 失败卡片「下一步」必须指向真的能走的出口（SPEC-UX-001 §4）==");
+
+        // 11. 自带通道欠费：不能建议「配置自己的接口作为备用通道」——他正在用自己那份接口。
+        //     2026-10-08 真机回归实测踩到：该归因串本身含「账号额度」，会先命中通用分支，
+        //     卡片于是把用户引向「改配置」，而他真正该做的是给自己的服务账号充值。
+        String ownQuota = UiText.nextStep(
+                "自己的模型服务额度不足，请查看对应服务账号余额，或在设置中主动选择账号额度");
+        if (ownQuota.contains("充值") && !ownQuota.contains("备用通道")) {
+            ok("自带欠费指向充值自己的服务账号 → 「" + ownQuota + "」");
+        } else {
+            bad("自带欠费指向充值自己的服务账号", "得到「" + ownQuota + "」");
+        }
+
+        // 12. 账号欠费不得被上面的特例改坏：出口仍是「换一份可用的接口配置」。
+        String acctQuota = UiText.nextStep("账号额度不足，请在应用内使用兑换码充值");
+        if (!acctQuota.isEmpty() && !acctQuota.contains("自己的服务账号充值")) {
+            ok("账号欠费出口未被特例污染 → 「" + acctQuota + "」");
+        } else {
+            bad("账号欠费出口未被特例污染", "得到「" + acctQuota + "」");
+        }
+
+        // 13. 每类高频失败都必须给出非空、可执行的下一步（空建议 = 用户卡死）
+        String[] reasons = {"网络不可用", "两条模型通道都不可用", "账号额度暂时不可用（服务端上游问题）",
+                "密钥无效或没有权限", "模型配置不完整", "无障碍服务未开启", "登录已失效，请重新登录",
+                "任务太久没有进展"};
+        int empty = 0;
+        for (String r : reasons) if (UiText.nextStep(r).trim().isEmpty()) { bad("下一步建议：" + r, "为空"); empty++; }
+        if (empty == 0) ok(reasons.length + " 类高频失败都有非空「下一步」建议");
+
+        System.out.println();
         System.out.println("------------------------------------------------------------");
         System.out.printf("通过 %d 项，失败 %d 项%n", pass, fail);
         if (fail > 0) {

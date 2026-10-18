@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 对话框主题：浮在 AgentLite 上层，不遮挡其底部的运行按钮，测试才能在同屏提交任务 -->
+    <style name="AppTheme" parent="android:style/Theme.Material.Light.Dialog">
+        <item name="android:windowMinWidthMajor">320dp</item>
+        <item name="android:windowMinWidthMinor">320dp</item>
+        <item name="android:colorAccent">#2457D6</item>
+    </style>
+</resources>

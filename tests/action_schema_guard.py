@@ -18,6 +18,9 @@
   A4 终态动作（ask/fail/done）在任务循环里有处理分支
   A5 `agent-client`（冻结维护的旧客户端）的动作集合 ⊆ lite 真身的动作集合，
      且**缺失清单**被显式记录（防止两边各自漂移）
+  A6 ask 的确认结果是结构化三态；超时/停止不得伪装成「用户回答」回灌，
+  A7 用户主动放弃确认（「不执行」）与 5 分钟超时必须是两个终态
+     连续超时必须终止（敏感确认悬空时设备零动作）
 
 退出码：0 = 无 FAIL（允许 WARN）；1 = 存在 FAIL。
 """
@@ -100,7 +103,23 @@ else:
 # ---- exec() 的 case 分支 -----------------------------------------------------
 exec_body = engine_src[engine_src.find("private String exec(AgentA11yService svc"):]
 exec_body = exec_body[: exec_body.find("\n    }")]
-cases = set(re.findall(r'case "([a-z_]+)"', exec_body))
+def outer_cases(body: str) -> set[str]:
+    # Mask comments and quoted literals while counting braces; parameter switches
+    # inside action blocks are not new actions.
+    token = re.compile(r'''//[^\n]*|/\*.*?\*/|case\s+"([a-z_]+)"\s*:|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[{}]''', re.S)
+    depth = 0
+    found = set()
+    for match in token.finditer(body):
+        value = match.group(0)
+        if match.group(1) and depth == 2:
+            found.add(match.group(1))
+        elif value == "{": depth += 1
+        elif value == "}": depth -= 1
+    return found
+
+assert outer_cases('f(){switch(kind){case "scroll":{switch(dir){case "up":break;}}case "back":break;case "new_action":break;}}') == {"scroll", "back", "new_action"}
+assert outer_cases('f(){switch(kind){/* case "fake": { */ case "key": String x="case \"quoted\": {";}}') == {"key"}
+cases = outer_cases(exec_body)
 if not cases:
     fail("没能从 exec() 里解析出 case 分支")
 else:
@@ -121,6 +140,38 @@ for act in sorted(control_actions):
         ok(f"A4 终态动作 {act} 在循环里有处理")
     else:
         fail(f"A4 终态动作 {act} 找不到处理分支")
+
+# ---- A6 ask 的结构化结果（2026-10-02 审计 P1-2）--------------------------------
+# 超时/停止不得伪装成自然语言「用户回答」回灌模型；确认悬空时设备必须零动作。
+ask_branch = engine_src[engine_src.find('if ("ask".equals(kind))'):]
+ask_branch = ask_branch[: ask_branch.find("continue;") + len("continue;")] if ask_branch else ""
+if "用户未回答或超时" in engine_src:
+    fail("A6 超时被伪装成用户回答回灌（旧缺陷回归）")
+else:
+    ok("A6 超时不再以用户话语回灌")
+if "private AskResult askUser(" in engine_src:
+    ok("A6 askUser 返回结构化结果（ANSWERED/TIMEOUT/STOPPED）")
+else:
+    fail("A6 askUser 仍是可空字符串契约")
+if "ASK_TIMEOUT" in engine_src and "USER_TIMEOUT" in engine_src and "MAX_ASK_TIMEOUTS" in engine_src:
+    ok("A6 超时有结构化标签与连续超时终止防护")
+else:
+    fail("A6 超时结构化标签或终止防护缺失")
+if "askTimeouts >= MAX_ASK_TIMEOUTS" in engine_src:
+    ok("A6 连续超时直接终止任务（不把无人值守的任务带回同一步）")
+else:
+    fail("A6 连续超时缺少终止分支")
+
+# A7（2026-10-02 真机验证补口）：用户主动放弃回答 ≠ 超时。
+# 真机上点「不执行」原本走空串 → 与 5 分钟无回答共用 TIMEOUT，日志谎报超时并暂停任务。
+if "ASK_SKIPPED" in engine_src and "用户放弃" in engine_src:
+    ok("A7 用户主动放弃确认是独立终态（不伪装成 5 分钟超时）")
+else:
+    fail("A7 用户主动放弃确认仍与超时混淆")
+if 'setNegativeButton("不执行"' in read(LITE / "MainActivity.java"):
+    ok("A7 提问弹层按钮文案为「不执行」（语义与终态一致）")
+else:
+    fail("A7 提问弹层仍用模糊文案（用户无法判断放弃的含义）")
 
 # ---- agent-client（冻结维护）：必须是 lite 的子集 -----------------------------
 client_cases = set(re.findall(r'case "([a-z_]+)"', client_src)) if client_src else set()
