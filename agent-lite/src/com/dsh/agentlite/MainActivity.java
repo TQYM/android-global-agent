@@ -112,7 +112,16 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
             final boolean isWatch = watchUi;
             root.setOnApplyWindowInsetsListener((v, insets) -> {
                 int top = insets.getSystemWindowInsetTop();
-                int bottom = insets.getSystemWindowInsetBottom();
+                int systemBottom = insets.getSystemWindowInsetBottom();
+                int imeBottom = 0;
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                    imeBottom = insets.getInsets(android.view.WindowInsets.Type.ime()).bottom;
+                    systemBottom = Math.max(systemBottom,
+                            insets.getInsets(android.view.WindowInsets.Type.navigationBars()).bottom);
+                }
+                // adjustResize 只缩小视口；ScrollView 还需要 IME 底部 padding 才能把输入行
+                // 滚到键盘上方，否则底部按钮仍可能落在键盘覆盖区。
+                int bottom = Math.max(systemBottom, imeBottom);
                 if (isWatch) {
                     // 手表：水平安全边距由布局（@dimen/watch_edge，圆形/方形分档）控制，
                     // 此处只补系统栏，避免覆盖圆形屏的内接方形边距
@@ -130,6 +139,7 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
         engine.setListener(this);
 
         bind();
+        installImeScrollAssist();
         loadCfg();
         wire();
         handleIntent(getIntent());
@@ -191,6 +201,18 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
         ivScreen = findViewById(R.id.ivScreen);
         svLog = findViewById(R.id.svLog);
         flScreen = findViewById(R.id.flScreen);
+    }
+
+    /** 键盘出现时把任务输入行滚入可见区域，避免 ScrollView 的底部控件被 IME 覆盖。 */
+    private void installImeScrollAssist() {
+        if (watchUi || etTask == null) return;
+        final ScrollView root = findViewById(R.id.rootLayout);
+        if (root == null) return;
+        etTask.setOnFocusChangeListener((v, hasFocus) -> {
+            if (!hasFocus) return;
+            v.postDelayed(() -> root.requestChildRectangleOnScreen(v,
+                    new android.graphics.Rect(0, 0, v.getWidth(), v.getHeight()), true), 180);
+        });
     }
 
     /** 空安全的 findViewById：布局形态差异（手机/手表/精简布局）缺控件时返回不可见占位，绝不 NPE。 */
@@ -259,7 +281,8 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
             authPrompted = false;   // 允许再次提示
             return;
         }
-        long left = Math.max(0, prefs.accountQuota() - prefs.accountQuotaUsed());
+        // 服务端 quota 语义就是当前剩余量；quota_used 是累计用量，不能再次相减。
+        long left = Math.max(0, prefs.accountQuota());
         tvAccount.setText("账号：" + prefs.accountName() + " · 剩余 " + left + " units · 点此查看额度与设备");
         tvAccount.setTextColor(0xFF94A3B8);
     }
@@ -350,21 +373,9 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
         startTask(task);
     }
 
-    /**
-     * 是否有可用的「大脑」配置？三条合法路径（手册 §16.5 第 3 步）：
-     *
-     * <ol>
-     *   <li><b>账号登录</b>：用账号额度，推荐路径，不需要用户懂任何云服务概念；</li>
-     *   <li><b>自带 Key</b>：高级路径，用户自己填了直连配置；</li>
-     *   <li>未登录但已填 Key：同样可用（离线场景）。</li>
-     * </ol>
-     *
-     * <p>令牌被判失效（401）也算不可用——继续跑只会得到一串 401。
-     */
+    /** 与请求工厂共用凭据解析；本地配置齐备不代表远端已鉴权或有余额。 */
     private boolean hasUsableCredential() {
-        if (!prefs.apiKey().isEmpty()) return true;          // 自带 Key（含高级路径）
-        if (prefs.useOwnKey()) return false;                 // 明确选择自带 Key 但没填
-        return prefs.loggedIn() && !prefs.accountInvalid();  // 账号额度路径
+        return prefs.credentialRoute(prefs.model()).isUsable();
     }
 
     /**
@@ -384,15 +395,20 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
 
     /** 无凭据时的解决卡：人话解释 + 唯一主按钮 + 一条备选路径（SPEC-UX-001 §4）。 */
     private void showCredentialCard() {
-        String msg = "助手需要一个「大脑」才能理解你的指令，现在还差最后一步：\n\n"
-                + "· 登录账号 —— 直接使用账号额度，推荐，不需要任何配置\n"
-                + "· 已经有自己的配置 —— 进入设置填写后即可使用\n\n"
-                + "两种方式都只在你的设备与本机之间使用，随时可以在设置里更换或退出登录。";
+        CredentialRoute route = prefs.credentialRoute(prefs.model());
+        boolean needsLogin = route.reason == CredentialRoute.Reason.LOGIN_REQUIRED
+                || route.reason == CredentialRoute.Reason.LOGIN_EXPIRED;
+        String msg = route.userMessage() + "\n\n"
+                + "账号额度由应用账号扣减，自己的配置由对应服务账号计费。"
+                + "模型请求可能上传任务文字和截图，并非只在本机处理。"
+                + "切换方式需要你主动选择，失败时不会自动换来源。";
         new android.app.AlertDialog.Builder(this)
                 .setTitle("还差一步就能开始")
                 .setMessage(msg)
-                .setPositiveButton("登录 / 领取额度", (d, w) ->
-                        startActivity(new Intent(this, LoginActivity.class)))
+                .setPositiveButton(needsLogin ? "登录账号" : "选择使用方式", (d, w) -> {
+                    if (needsLogin) startActivity(new Intent(this, LoginActivity.class));
+                    else CredentialRouteUi.showChooser(this, prefs, this::refreshAccount);
+                })
                 .setNeutralButton("打开设置", (d, w) -> openSettings())
                 .setNegativeButton("稍后", null)
                 .show();
@@ -406,6 +422,11 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
      * 3) 启动引擎；手表上随即把本界面退到后台，避免自身 UI 遮挡首帧。
      */
     private void startTask(String task) {
+        // 等待无障碍重连期间登录态可能已改变，再查一次；请求工厂仍独立守住最终出口。
+        if (!hasUsableCredential()) {
+            showCredentialCard();
+            return;
+        }
         refreshA11y();
         if (!networkReady()) {
             toast("网络不可用：请检查手表 WiFi（省电模式下会被关闭）");
@@ -415,7 +436,8 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
         ensureNotifyPermission();
         acquireWifiLock();
         engine.start(task);
-        toast("任务已启动，可上滑划出，灵动岛将实时显示进度");
+        toast("使用" + prefs.credentialRoute(prefs.model()).payerLabel()
+                + "，任务已启动；灵动岛将显示进度");
         if (watchUi) {
             ui.postDelayed(() -> moveTaskToBack(true), 800);
         }
@@ -623,7 +645,7 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
                     pendingAsk = null; askDialogShowing = false;
                     cancelAskNotification();
                 })
-                .setNegativeButton("跳过", (d, w) -> {
+                .setNegativeButton("不执行", (d, w) -> {
                     engine.answerAsk("");
                     pendingAsk = null; askDialogShowing = false;
                     cancelAskNotification();
@@ -879,33 +901,72 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
                 .show();
     }
 
-    /** 记忆管理：点按删除单条，可清空；写入用「记一下…」，调用静默无披露。 */
+    /**
+     * 记忆库：**操作记忆**（引擎自己走通过、可直接复现的执行路径）+ **用户记忆**
+     * （「记一下…」写入的事实，注入提示词静默使用）。
+     *
+     * <p>两类记忆放在同一页，是因为对用户来说它们就是一件事——「你记住了我什么」。
+     * 操作记忆排在最前，并带一个默认开启的总开关：关掉它即回到每次都重新规划。
+     */
     private void showMemory() {
-        List<MemoryStore.Item> ms = MemoryStore.list(this);
-        if (ms.isEmpty()) {
-            new android.app.AlertDialog.Builder(this)
-                    .setTitle("全局记忆")
-                    .setMessage("暂无记忆。\n在任务框输入「记一下 …」即可写入；记忆会在后续任务中被静默使用。")
-                    .setPositiveButton("关闭", null)
-                    .show();
-            return;
+        final List<FlowPlan.Record> flows = FlowMemory.list(this);
+        final List<MemoryStore.Item> facts = MemoryStore.list(this);
+        final boolean on = new Prefs(this).flowMemory();
+
+        final List<String> items = new java.util.ArrayList<>();
+        final List<Runnable> acts = new java.util.ArrayList<>();
+        items.add((on ? "☑ " : "☐ ") + "自动记录成功操作（默认开）——点按"
+                + (on ? "关闭" : "开启"));
+        acts.add(() -> {
+            new Prefs(this).setFlowMemory(!on);
+            onLog(!on ? "操作记忆已开启：成功路径会存入记忆库，同款任务直接复现"
+                      : "操作记忆已关闭：仍保留已记录内容，但不再自动记录与复现");
+            showMemory();
+        });
+        for (int i = 0; i < flows.size(); i++) {
+            final int idx = i;
+            final FlowPlan.Record r = flows.get(i);
+            items.add("操作记忆 · " + shorten(r.task, 14) + " · " + FlowMemory.label(r));
+            acts.add(() -> {
+                FlowMemory.delete(this, idx);
+                onLog("已删除操作记忆：" + shorten(r.task, 20));
+                showMemory();
+            });
         }
-        String[] items = new String[ms.size()];
-        for (int i = 0; i < ms.size(); i++) {
-            items[i] = ms.get(i).time + "  " + ms.get(i).text;
+        for (int i = 0; i < facts.size(); i++) {
+            final int idx = i;
+            final MemoryStore.Item it = facts.get(i);
+            items.add("用户记忆 · " + shorten(it.text, 20));
+            acts.add(() -> {
+                MemoryStore.delete(this, idx);
+                onLog("已删除记忆：" + shorten(it.text, 20));
+                showMemory();
+            });
         }
+        if (items.size() == 1) {
+            items.add("（还没有记录：任务成功一次即自动写入操作记忆）");
+            acts.add(null);
+        }
+
         new android.app.AlertDialog.Builder(this)
-                .setTitle("全局记忆（点按删除）")
-                .setItems(items, (d, which) -> {
-                    MemoryStore.delete(this, which);
-                    onLog("已删除记忆：" + ms.get(which).text);
+                .setTitle("记忆库（点按条目删除）")
+                .setItems(items.toArray(new String[0]), (d, which) -> {
+                    Runnable act = acts.get(which);
+                    if (act != null) act.run();
                 })
-                .setNeutralButton("清空", (d, w) -> {
-                    MemoryStore.clear(this);
-                    onLog("记忆已清空");
+                .setNeutralButton("清空操作记忆", (d, w) -> {
+                    FlowMemory.clear(this);
+                    onLog("操作记忆已清空（" + flows.size() + " 条）");
                 })
                 .setPositiveButton("关闭", null)
                 .show();
+    }
+
+    /** 列表项用的短文本（记忆库条目可能很长，对话框一行放不下）。 */
+    private static String shorten(String s, int n) {
+        if (s == null) return "";
+        String t = s.replace('\n', ' ').trim();
+        return t.length() <= n ? t : t.substring(0, n) + "…";
     }
 
     /**

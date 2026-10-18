@@ -293,7 +293,7 @@
                 android:text=""/>
             <EditText
                 android:id="@+id/etAsr"
-                android:hint="语音模型（glm-asr-2512=云端GLM；留空=本地离线优先）"
+                android:hint="指定远端语音模型（如 glm-asr-2512；本地模式忽略）"
                 android:layout_width="match_parent"
                 android:layout_height="@dimen/input_h"
                 android:layout_marginTop="@dimen/space_s"
@@ -320,7 +320,7 @@
                 android:paddingRight="@dimen/space_m"/>
             <EditText
                 android:id="@+id/etAsrKey"
-                android:hint="云端语音密钥（智谱 API Key；留空则用上面的主密钥）"
+                android:hint="独立语音密钥（留空不发鉴权，不使用主密钥）"
                 android:layout_width="match_parent"
                 android:layout_height="@dimen/input_h"
                 android:layout_marginTop="@dimen/space_s"
@@ -339,7 +339,7 @@
                 android:layout_marginTop="@dimen/space_xs"
                 android:textSize="@dimen/text_caption"
                 android:textColor="@color/color_text_hint"
-                android:text="语音转写优先级：云端端点（填了就用）→ 本地离线模型 → 主模型音频"/>
+                android:text="语音模式：端点留空仅本地离线；填写端点仅请求该服务一次，失败不切换。"/>
             <Button
                 android:id="@+id/btnAsrTest"
                 android:layout_width="match_parent"

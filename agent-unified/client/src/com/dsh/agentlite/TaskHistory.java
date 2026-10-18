@@ -34,9 +34,12 @@ public final class TaskHistory {
     }
 
     public static synchronized void append(Context ctx, String task,
-                                           String result, String detail, int steps) {
+                                           String result, String detail, int steps,
+                                           long runId, String commandId) {
         try {
             JSONObject o = new JSONObject();
+            o.put("run_id", runId);
+            if (commandId != null) o.put("command_id", commandId);
             o.put("time", new java.text.SimpleDateFormat("MM-dd HH:mm:ss",
                     java.util.Locale.US).format(new java.util.Date()));
             o.put("task", task);

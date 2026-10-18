@@ -248,6 +248,7 @@ public class SettingsActivity extends Activity {
                 swVision.isChecked(), steps, prefs.systemPrompt());
         prefs.setPlannerModel(etPlanner.getText().toString().trim());
         toast("配置已保存");
+        CredentialRouteUi.showChooser(this, prefs, this::refreshAccount);
     }
 
     private void refreshTokens() {
@@ -274,10 +275,9 @@ public class SettingsActivity extends Activity {
         } else {
             tvAccount.setText("当前未登录：历史与记忆只存本机，不参与同步。");
         }
-        long q = prefs.accountQuota();
-        long used = prefs.accountQuotaUsed();
-        long left = Math.max(0, q - used);
-        tvQuota.setText("额度：" + left + " / " + q + " units（已用 " + used + "，1 unit = 1000 tokens）");
+        long q = Math.max(0, prefs.accountQuota());
+        long used = Math.max(0, prefs.accountQuotaUsed());
+        tvQuota.setText("额度：" + q + " units（已用 " + used + "，1 unit = 1000 tokens）");
     }
 
     private void refreshSyncStatus() {
@@ -314,8 +314,9 @@ public class SettingsActivity extends Activity {
             @Override
             public void onOk(AccountClient.Me m) {
                 quotaFetching = false;
-                long left = Math.max(0, m.quota - m.quotaUsed);
-                tvQuota.setText("额度：" + left + " / " + m.quota + " units（已用 " + m.quotaUsed
+                long quota = Math.max(0, m.quota);
+                long quotaUsed = Math.max(0, m.quotaUsed);
+                tvQuota.setText("额度：" + quota + " units（已用 " + quotaUsed
                         + "，1 unit = 1000 tokens）");
                 tvAccount.setText("账号：" + m.name + "（" + m.accountId + "）");
                 StringBuilder sb = new StringBuilder();

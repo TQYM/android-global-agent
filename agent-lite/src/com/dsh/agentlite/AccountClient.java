@@ -152,7 +152,7 @@ public final class AccountClient {
         JSONObject body = new JSONObject();
         body.put("name", name);
         body.put("key", key);
-        JSONObject r = SyncClient.request(ctx, "POST", SyncClient.serverBase(ctx) + path,
+        JSONObject r = AccountHttp.request("POST", SyncClient.serverBase(ctx) + path,
                 body.toString(), null, null);
         Session s = new Session();
         s.accountId = r.optString("account_id", "");
@@ -205,7 +205,7 @@ public final class AccountClient {
         body.put("brand", Build.MANUFACTURER);
         body.put("sdk", Build.VERSION.SDK_INT);
         body.put("app_version", APP_VERSION);
-        JSONObject r = SyncClient.request(ctx, "POST", SyncClient.serverBase(ctx) + "/api/v1/device/bind",
+        JSONObject r = AccountHttp.request("POST", SyncClient.serverBase(ctx) + "/api/v1/device/bind",
                 body.toString(), new Prefs(ctx).accountToken(), null);
         return r.optString("device_id", "");
     }
@@ -219,7 +219,7 @@ public final class AccountClient {
 
     private static Me doMe(Context ctx) throws Exception {
         Prefs p = new Prefs(ctx);
-        JSONObject r = SyncClient.request(ctx, "GET", SyncClient.serverBase(ctx) + "/api/v1/account/me",
+        JSONObject r = AccountHttp.request("GET", SyncClient.serverBase(ctx) + "/api/v1/account/me",
                 null, p.accountToken(), null);
         Me m = new Me();
         m.accountId = r.optString("account_id", "");
@@ -266,7 +266,7 @@ public final class AccountClient {
         Prefs p = new Prefs(ctx);
         JSONObject body = new JSONObject();
         body.put("code", code);
-        JSONObject r = SyncClient.request(ctx, "POST", SyncClient.serverBase(ctx) + "/api/v1/redeem",
+        JSONObject r = AccountHttp.request("POST", SyncClient.serverBase(ctx) + "/api/v1/redeem",
                 body.toString(), p.accountToken(), null);
         Redeem rd = new Redeem();
         rd.unitsAdded = r.optLong("units_added", 0);
@@ -284,7 +284,7 @@ public final class AccountClient {
 
     private static Shop doShop(Context ctx) throws Exception {
         Prefs p = new Prefs(ctx);
-        JSONObject r = SyncClient.request(ctx, "GET", SyncClient.serverBase(ctx) + "/api/v1/packs",
+        JSONObject r = AccountHttp.request("GET", SyncClient.serverBase(ctx) + "/api/v1/packs",
                 null, p.accountToken(), null);
         Shop sh = new Shop();
         sh.onlinePay = r.optBoolean("online_pay", false);
@@ -320,7 +320,7 @@ public final class AccountClient {
 
     private static List<Order> doOrders(Context ctx) throws Exception {
         Prefs p = new Prefs(ctx);
-        JSONObject r = SyncClient.request(ctx, "GET", SyncClient.serverBase(ctx) + "/api/v1/orders",
+        JSONObject r = AccountHttp.request("GET", SyncClient.serverBase(ctx) + "/api/v1/orders",
                 null, p.accountToken(), null);
         List<Order> out = new ArrayList<>();
         JSONArray arr = r.optJSONArray("orders");
@@ -343,7 +343,7 @@ public final class AccountClient {
         JSONObject body = new JSONObject();
         body.put("order_id", orderId);
         body.put("code", code);
-        JSONObject r = SyncClient.request(ctx, "POST", SyncClient.serverBase(ctx) + "/api/v1/orders/pay",
+        JSONObject r = AccountHttp.request("POST", SyncClient.serverBase(ctx) + "/api/v1/orders/pay",
                 body.toString(), p.accountToken(), null);
         long q = r.optLong("quota", -1);
         if (q >= 0) p.setAccountQuota(q, p.accountQuotaUsed());
@@ -356,7 +356,7 @@ public final class AccountClient {
             Prefs p = new Prefs(ctx);
             JSONObject body = new JSONObject();
             body.put("order_id", orderId);
-            JSONObject r = SyncClient.request(ctx, "POST", SyncClient.serverBase(ctx) + "/api/v1/orders/cancel",
+            JSONObject r = AccountHttp.request("POST", SyncClient.serverBase(ctx) + "/api/v1/orders/cancel",
                     body.toString(), p.accountToken(), null);
             return parseOrder(r.optJSONObject("order"));
         }, cb);
@@ -368,7 +368,7 @@ public final class AccountClient {
         Prefs p = new Prefs(ctx);
         JSONObject body = new JSONObject();
         body.put("pack_id", packId);
-        JSONObject r = SyncClient.request(ctx, "POST", SyncClient.serverBase(ctx) + path,
+        JSONObject r = AccountHttp.request("POST", SyncClient.serverBase(ctx) + path,
                 body.toString(), p.accountToken(), null);
         return parseOrder(r.optJSONObject("order"));
     }

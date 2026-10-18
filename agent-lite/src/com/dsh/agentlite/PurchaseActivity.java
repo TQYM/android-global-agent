@@ -271,10 +271,12 @@ public final class PurchaseActivity extends Activity {
     /** 次级按钮：未配置时=保存 API Key；已配置时=清除后重新录入。 */
     private void onSecondaryAction() {
         if (prefs.apiKey() != null && !prefs.apiKey().isEmpty()) {
+            // 先固定当前生效的主体；删除 Key 本身不代表改用账号额度。
+            boolean wasOwn = prefs.credentialRoute(prefs.model()).channel == CredentialRoute.Channel.OWN_KEY;
+            prefs.setUseOwnKey(wasOwn);
             prefs.setApiKey("");
-            prefs.setUseOwnKey(false);
             renderAkSection();
-            msg("已清除本机保存的 API Key", false);
+            msg("已清除本机保存的 API Key，未切换额度来源；可在设置中重新选择。", false);
             return;
         }
         final String key = etAkId.getText().toString().trim();
@@ -407,7 +409,7 @@ public final class PurchaseActivity extends Activity {
             tvQuota.setText("未登录 —— 官方购买模式不依赖账号登录");
             return;
         }
-        long left = Math.max(0, prefs.accountQuota() - prefs.accountQuotaUsed());
+        long left = Math.max(0, prefs.accountQuota());
         tvQuota.setText("我方额度：" + left + " units（官方购买模式下不使用）");
     }
 

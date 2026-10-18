@@ -108,7 +108,7 @@ public class WatchSettingsActivity extends Activity {
             tv.setText("账号 " + prefs.accountName() + " · ⚠ 登录已失效，点下方重新登录");
             return;
         }
-        long left = Math.max(0, prefs.accountQuota() - prefs.accountQuotaUsed());
+        long left = Math.max(0, prefs.accountQuota());
         tv.setText("账号 " + prefs.accountName() + " · 剩余 " + left + " units");
     }
 
@@ -148,6 +148,7 @@ public class WatchSettingsActivity extends Activity {
                 ((Switch) findViewById(R.id.swVision)).isChecked(), steps, prefs.systemPrompt());
         prefs.setPlannerModel(((EditText) findViewById(R.id.etPlanner)).getText().toString().trim());
         toast("配置已保存");
+        CredentialRouteUi.showChooser(this, prefs, this::refreshAccountStatus);
     }
 
     private void refreshTokens() {
@@ -172,27 +173,60 @@ public class WatchSettingsActivity extends Activity {
                 .show();
     }
 
+    /** 记忆库（手表端精简版）：操作记忆 + 用户记忆，同一页可查可删。 */
     private void showMemory() {
-        List<MemoryStore.Item> ms = MemoryStore.list(this);
-        if (ms.isEmpty()) {
-            new AlertDialog.Builder(this)
-                    .setTitle("全局记忆")
-                    .setMessage("暂无记忆。\n在主页输入「记一下 …」即可写入，之后任务会静默使用。")
-                    .setPositiveButton("关闭", null)
-                    .show();
-            return;
+        final List<FlowPlan.Record> flows = FlowMemory.list(this);
+        final List<MemoryStore.Item> ms = MemoryStore.list(this);
+        final boolean on = new Prefs(this).flowMemory();
+        final java.util.List<String> items = new java.util.ArrayList<>();
+        final java.util.List<Runnable> acts = new java.util.ArrayList<>();
+        items.add((on ? "☑ " : "☐ ") + "自动记录成功操作");
+        acts.add(() -> {
+            new Prefs(this).setFlowMemory(!on);
+            toast(!on ? "操作记忆已开启" : "操作记忆已关闭");
+            showMemory();
+        });
+        for (int i = 0; i < flows.size(); i++) {
+            final int idx = i;
+            items.add("操作 · " + shorten(flows.get(i).task) + " · " + flows.get(i).steps.size() + " 步");
+            acts.add(() -> {
+                FlowMemory.delete(this, idx);
+                toast("已删除");
+                showMemory();
+            });
         }
-        String[] items = new String[ms.size()];
-        for (int i = 0; i < ms.size(); i++) items[i] = ms.get(i).text;
+        for (int i = 0; i < ms.size(); i++) {
+            final int idx = i;
+            items.add("记忆 · " + shorten(ms.get(i).text));
+            acts.add(() -> {
+                MemoryStore.delete(this, idx);
+                toast("已删除");
+                showMemory();
+            });
+        }
+        if (items.size() == 1) {
+            items.add("（任务成功一次即自动写入操作记忆）");
+            acts.add(null);
+        }
         new AlertDialog.Builder(this)
-                .setTitle("全局记忆（点按删除）")
-                .setItems(items, (d, which) -> {
-                    MemoryStore.delete(this, which);
-                    toast("已删除");
+                .setTitle("记忆库")
+                .setItems(items.toArray(new String[0]), (d, which) -> {
+                    Runnable a = acts.get(which);
+                    if (a != null) a.run();
                 })
                 .setPositiveButton("关闭", null)
-                .setNeutralButton("清空", (d, w) -> MemoryStore.clear(this))
+                .setNeutralButton("清空", (d, w) -> {
+                    FlowMemory.clear(this);
+                    MemoryStore.clear(this);
+                    toast("已清空");
+                })
                 .show();
+    }
+
+    private static String shorten(String s) {
+        if (s == null) return "";
+        String t = s.replace('\n', ' ').trim();
+        return t.length() <= 10 ? t : t.substring(0, 10) + "…";
     }
 
     private void showEco() {

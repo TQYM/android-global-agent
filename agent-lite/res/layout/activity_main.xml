@@ -13,7 +13,8 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/color_surface"
-    android:fillViewport="true">
+    android:fillViewport="true"
+     android:clipToPadding="false">
 
 <LinearLayout
     android:orientation="vertical"

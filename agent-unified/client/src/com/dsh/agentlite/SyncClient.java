@@ -14,16 +14,11 @@ import android.provider.Settings;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
-import java.io.OutputStream;
-import java.net.HttpURLConnection;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
-import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.security.cert.CertificateFactory;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -31,9 +26,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import javax.net.ssl.HttpsURLConnection;
-import javax.net.ssl.SSLContext;
-import javax.net.ssl.TrustManagerFactory;
 
 /**
  * 远程信息同步客户端（AgentLite ⇄ agentlite-server）。
@@ -41,8 +33,8 @@ import javax.net.ssl.TrustManagerFactory;
  * 设计要点：
  *  1. **不阻塞主线程**：全部网络 IO 在单线程 executor 上串行执行；
  *     MemoryStore.add 是在 UI 线程调用的，这里必须立刻返回。
- *  2. **证书 pin**：服务端用自签证书，因此 App 内置 CA（assets/agentlite_sync_ca.pem）
- *     自建 SSLContext，完全不依赖系统 CA 库。主机名校验保持开启（证书 SAN 含服务 IP）。
+ *  2. **证书 pin**：普通账号JSON请求共用 AccountHttp 与缓存的 TlsPin.factory()；
+ *     构建时内置服务端CA，主机名校验保持开启，不在每次同步重新创建TLS上下文。
  *  3. **账号鉴权**：推送/拉取/局域网会合统一用 `Authorization: Bearer <账号令牌>`，
  *     并在每个设备级接口上带 `X-Device-Id`（服务端会校验设备归属账号）。
  *     账号令牌失效（401）时标记登录失效并回调 UI 引导重新登录，不静默重试。
@@ -57,10 +49,9 @@ public final class SyncClient {
     private static final String TAG = "AgentLiteSync";
     /** 局域网直连路径的日志标签：与 LanSync 内部一致，便于 `adb logcat -s AgentLiteLan` 一次看全。 */
     private static final String LAN_TAG = "AgentLiteLan";
-    private static final String CA_ASSET = "agentlite_sync_ca.pem";
-    private static final int CONNECT_TIMEOUT_MS = 10_000;
-    private static final int READ_TIMEOUT_MS = 20_000;
     private static final int BATCH_LIMIT = 50;
+    // 三来源各保留2MiB保守字节预算，另留2MiB给状态/信封，单请求不超服务端8MiB。
+    private static final long SOURCE_BYTE_BUDGET = 2L * 1024 * 1024;
     /** 局域网会合端口（服务端只做介绍人，数据不过服务器）。 */
     public static final int LAN_PORT = 18444;
 
@@ -199,47 +190,10 @@ public final class SyncClient {
                     + " 合并=" + lan.merged + " 条，本轮跳过任务历史上行");
         }
 
-        int pushedTasks = 0;
-        int pushedMems = 0;
-        if (lan.ok) {
-            // 任务历史已由局域网通道交付，跳过它以免重复传输。
-            //
-            // 但**其余云端动作必须照常执行**：记忆上行、状态上报、配置下发。
-            // 早期版本在这里直接 return 掉整轮，后果是——两台设备长期同处一个内网时，
-            // 远程配置会永远不下发（每轮都在局域网命中处提前返回），
-            // 而配置下发恰恰是"二级菜单 + 远程配置"这条需求的落地路径。
-            pushedTasks = lan.merged;
-        } else {
-            try {
-                pushedTasks = pushHistory(ctx, p, server);
-            } catch (ApiException e) {
-                throw e;
-            } catch (Exception e) {
-                android.util.Log.i(TAG, "任务历史上行失败: " + e);
-            }
-        }
-        try {
-            // 转发局域网收来的同伴记录：带 origin_device_id，云端据此正确归属来源
-            pushedTasks += pushPeerRecords(ctx, p, server);
-        } catch (ApiException e) {
-            throw e;
-        } catch (Exception e) {
-            android.util.Log.i(TAG, "转发同伴记录失败: " + e);
-        }
-        try {
-            pushedMems = pushMemories(ctx, p, server);
-        } catch (ApiException e) {
-            throw e;
-        } catch (Exception e) {
-            android.util.Log.i(TAG, "记忆上行失败: " + e);
-        }
-        try {
-            pushStatus(ctx, p, server);
-        } catch (ApiException e) {
-            throw e;
-        } catch (Exception e) {
-            android.util.Log.i(TAG, "状态上行失败: " + e);
-        }
+        // 一次上传 tasks + peer tasks + memories + status；LAN 成功仅跳过本机历史。
+        int[] pushed = pushBatch(ctx, p, server, !lan.ok);
+        int pushedTasks = pushed[0] + (lan.ok ? lan.merged : 0);
+        int pushedMems = pushed[1];
 
         boolean pulled;
         try {
@@ -367,15 +321,21 @@ public final class SyncClient {
         if (idx > lines.size()) idx = 0;          // 历史被清空/截断，游标自愈
         if (idx >= lines.size()) return null;
         JSONArray tasks = new JSONArray();
-        int end = Math.min(lines.size(), idx + BATCH_LIMIT);
-        for (int i = idx; i < end; i++) {
+        int cap = Math.min(lines.size(), idx + BATCH_LIMIT), end = idx;
+        long bytes = 0;
+        for (int i = idx; i < cap; i++) {
             String line = lines.get(i);
+            long size = 2L * line.getBytes(StandardCharsets.UTF_8).length + 1024;
+            if (size > SOURCE_BYTE_BUDGET) throw new IllegalStateException("单条任务超出同步字节预算，游标保持不变");
+            if (bytes + size > SOURCE_BYTE_BUDGET) break;
+            bytes += size;
             JSONObject o = new JSONObject(line);
             JSONObject item = new JSONObject();
             item.put("id", sha256Hex(line).substring(0, 32));
             item.put("ts", o.optString("time"));
             item.put("data", o);              // 原始记录整条上行，服务端/对端不解析
             tasks.put(item);
+            end = i + 1;
         }
         endOut[0] = end;
         return tasks;
@@ -430,117 +390,111 @@ public final class SyncClient {
 
     // ---------- 上行 ----------
 
-    private static int pushHistory(Context ctx, Prefs p, String server) throws Exception {
-        int[] endOut = new int[1];
-        JSONArray tasks = buildTaskBatch(ctx, p, endOut);
-        if (tasks == null) return 0;              // 无新增（语义与改造前一致，不发空请求）
+    private static int[] pushBatch(Context ctx, Prefs p, String server, boolean includeHistory) throws Exception {
+        final String account, token, device;
+        final int oldHistory, oldPeer, oldMemory;
+        synchronized (p.sp) {
+            account = p.accountId(); token = p.accountToken(); device = p.syncDeviceId();
+            oldHistory = p.syncHistoryIndex(); oldPeer = p.sp.getInt("sync_peer_index", 0); oldMemory = p.syncMemoryIndex();
+        }
+        int[] historyEnd = {oldHistory};
+        JSONArray tasks = includeHistory ? buildTaskBatch(ctx, p, historyEnd) : null;
+        if (tasks == null) tasks = new JSONArray();
+        int localCount = tasks.length();
 
-        JSONObject body = new JSONObject();
-        body.put("tasks", tasks);
-        JSONObject r = request(ctx, "POST", server + "/api/v1/sync/push",
-                body.toString(), p.accountToken(), p.syncDeviceId());
-        int sent = r.optInt("accepted", 0) + r.optInt("duplicates", 0);
-        p.setSyncHistoryIndex(endOut[0]);
-        return sent;
-    }
-
-    /**
-     * 转发邻居经局域网转交来的记录。
-     *
-     * 这些记录**不是本机产生的**，因此必须带 `origin_device_id` 声明真实来源；
-     * 否则服务端会按 `X-Device-Id` 记成本机产生，溯源就错了
-     * （数据不丢，但"这条是谁产生的"会错，削弱账号级共享的可追溯性）。
-     *
-     * `id` 沿用原始值：这样即使来源设备自己也上过云，服务端也只会按同一 id 幂等去重，
-     * 不会因为转发而多出一份。
-     */
-    private static int pushPeerRecords(Context ctx, Prefs p, String server) throws Exception {
-        List<String> lines = LanSync.pendingPeerRecords(ctx);
-        int idx = p.sp.getInt("sync_peer_index", 0);
-        if (idx > lines.size()) idx = 0;          // 文件被清空，游标自愈
-        if (idx >= lines.size()) return 0;
-
-        JSONArray tasks = new JSONArray();
-        int end = Math.min(lines.size(), idx + BATCH_LIMIT);
-        for (int i = idx; i < end; i++) {
-            JSONObject w = new JSONObject(lines.get(i));
+        List<String> peerLines = LanSync.pendingPeerRecords(ctx);
+        int peerIndex = oldPeer;
+        if (peerIndex > peerLines.size()) peerIndex = 0;
+        int peerCap = Math.min(peerLines.size(), peerIndex + BATCH_LIMIT), peerEnd = peerIndex;
+        long peerBytes = 0;
+        for (int i = peerIndex; i < peerCap; i++) {
+            String line = peerLines.get(i);
+            long size = 2L * line.getBytes(StandardCharsets.UTF_8).length + 1024;
+            if (size > SOURCE_BYTE_BUDGET) throw new IllegalStateException("单条同伴记录超出同步字节预算，游标保持不变");
+            if (peerBytes + size > SOURCE_BYTE_BUDGET) break;
+            peerBytes += size;
+            JSONObject w = new JSONObject(line);
             JSONObject data = w.optJSONObject("data");
             String origin = w.optString("origin_device_id", "");
-            if (data == null || origin.isEmpty()) continue;
+            if (data == null || origin.isEmpty()) throw new IllegalStateException("同伴记录缺少来源或数据，游标保持不变");
             JSONObject item = new JSONObject();
             String id = w.optString("id", "");
-            item.put("id", id.isEmpty() ? sha256Hex(lines.get(i)).substring(0, 32) : id);
+            item.put("id", id.isEmpty() ? sha256Hex(peerLines.get(i)).substring(0, 32) : id);
             item.put("ts", w.optString("ts", ""));
             item.put("data", data);
             item.put("origin_device_id", origin);
             tasks.put(item);
+            peerEnd = i + 1;
         }
-        if (tasks.length() == 0) {
-            p.sp.edit().putInt("sync_peer_index", end).apply();
-            return 0;
-        }
-        JSONObject body = new JSONObject();
-        body.put("tasks", tasks);
-        JSONObject r = request(ctx, "POST", server + "/api/v1/sync/push",
-                body.toString(), p.accountToken(), p.syncDeviceId());
-        p.sp.edit().putInt("sync_peer_index", end).apply();
-        android.util.Log.i(LAN_TAG, "转发同伴记录 " + tasks.length() + " 条（带 origin_device_id）");
-        return r.optInt("accepted", 0) + r.optInt("duplicates", 0);
-    }
 
-    private static int pushMemories(Context ctx, Prefs p, String server) throws Exception {
         List<MemoryStore.Item> all = MemoryStore.list(ctx);
-        int idx = p.syncMemoryIndex();
-        if (idx > all.size()) idx = 0;            // 记忆被删除/清空，游标自愈
-        if (idx >= all.size()) return 0;
-
-        JSONArray mems = new JSONArray();
-        int end = Math.min(all.size(), idx + BATCH_LIMIT);
-        for (int i = idx; i < end; i++) {
+        int memoryIndex = oldMemory;
+        if (memoryIndex > all.size()) memoryIndex = 0;
+        int memoryCap = Math.min(all.size(), memoryIndex + BATCH_LIMIT), memoryEnd = memoryIndex;
+        JSONArray memories = new JSONArray();
+        long memoryBytes = 0;
+        for (int i = memoryIndex; i < memoryCap; i++) {
             MemoryStore.Item it = all.get(i);
-            JSONObject data = new JSONObject();
-            data.put("time", it.time);
-            data.put("text", it.text);
+            // 最坏控制字符需6字节JSON转义；无需为算大小再编码整份消息。
+            long size = 6L * (it.time.getBytes(StandardCharsets.UTF_8).length
+                    + it.text.getBytes(StandardCharsets.UTF_8).length) + 1024;
+            if (size > SOURCE_BYTE_BUDGET) throw new IllegalStateException("单条记忆超出同步字节预算，游标保持不变");
+            if (memoryBytes + size > SOURCE_BYTE_BUDGET) break;
+            memoryBytes += size;
             JSONObject item = new JSONObject();
             item.put("id", sha256Hex(it.time + "|" + it.text).substring(0, 32));
             item.put("ts", it.time);
+            JSONObject data = new JSONObject();
+            data.put("time", it.time);
+            data.put("text", it.text);
             item.put("data", data);
-            mems.put(item);
+            memories.put(item);
+            memoryEnd = i + 1;
         }
+        JSONObject status = new JSONObject();
+        status.put("battery", batteryPct(ctx));
+        status.put("charging", isCharging(ctx));
+        status.put("a11y", A11yGuard.isEnabledFlag(ctx));
+        status.put("model", p.model());
+        status.put("tokens_total", p.totalTokens());
+        status.put("root_mode", p.rootMode());
+        status.put("app", "agent-lite");
         JSONObject body = new JSONObject();
-        body.put("memories", mems);
-        JSONObject r = request(ctx, "POST", server + "/api/v1/sync/push",
-                body.toString(), p.accountToken(), p.syncDeviceId());
-        int sent = r.optInt("accepted", 0) + r.optInt("duplicates", 0);
-        p.setSyncMemoryIndex(end);
-        return sent;
-    }
-
-    private static void pushStatus(Context ctx, Prefs p, String server) throws Exception {
-        JSONObject st = new JSONObject();
-        st.put("battery", batteryPct(ctx));
-        st.put("charging", isCharging(ctx));
-        st.put("a11y", A11yGuard.isEnabledFlag(ctx));
-        st.put("model", p.model());
-        st.put("tokens_total", p.totalTokens());
-        st.put("root_mode", p.rootMode());
-        st.put("app", "agent-lite");
-        JSONObject body = new JSONObject();
-        body.put("status", st);
-        request(ctx, "POST", server + "/api/v1/sync/push", body.toString(),
-                p.accountToken(), p.syncDeviceId());
+        body.put("tasks", tasks);
+        body.put("memories", memories);
+        body.put("status", status);
+        if (!account.equals(p.accountId()) || !token.equals(p.accountToken()) || !device.equals(p.syncDeviceId()))
+            throw new IllegalStateException("同步会话已变化");
+        JSONObject response = AccountHttp.request("POST", server + "/api/v1/sync/push", body.toString(), token, device);
+        int accepted = response.optInt("accepted", -1), duplicates = response.optInt("duplicates", -1);
+        long delivered = (long) accepted + duplicates;
+        if (accepted < 0 || duplicates < 0 || response.optInt("rejected", -1) != 0
+                || delivered != tasks.length() + memories.length())
+            throw new IllegalStateException("同步批次未被完整接收，游标保持不变");
+        synchronized (p.sp) {
+            if (!account.equals(p.accountId()) || !token.equals(p.accountToken()) || !device.equals(p.syncDeviceId()))
+                throw new IllegalStateException("同步响应所属会话已变化");
+            android.content.SharedPreferences.Editor cursor = p.sp.edit()
+                    .putInt("sync_peer_index", peerEnd).putInt("sync_memory_index", memoryEnd);
+            if (includeHistory && localCount > 0) cursor.putInt("sync_history_index", historyEnd[0]);
+            if (!cursor.commit()) {
+                // Android commit(false) 仍可能已更新内存；同步还原，不能把失败当已上传。
+                p.sp.edit().putInt("sync_history_index", oldHistory).putInt("sync_peer_index", oldPeer)
+                        .putInt("sync_memory_index", oldMemory).commit();
+                throw new IllegalStateException("同步游标保存失败，已还原内存游标");
+            }
+        }
+        return new int[]{tasks.length(), memories.length()};
     }
 
     // ---------- 下行 ----------
 
     private static boolean pullConfig(Context ctx, Prefs p, String server) throws Exception {
-        JSONObject r = request(ctx, "GET",
-                server + "/api/v1/sync/pull?since=" + p.syncCursor(), null,
-                p.accountToken(), p.syncDeviceId());
-        long seq = r.optLong("server_seq", 0);
-        if (seq > 0) p.setSyncCursor(seq);
-
-        JSONObject cfg = r.optJSONObject("config");
+        final String account = p.accountId(), token = p.accountToken(), device = p.syncDeviceId();
+        JSONObject response = AccountHttp.request("GET", server + "/api/v1/config", null, token, device);
+        if (!account.equals(p.accountId()) || !token.equals(p.accountToken()) || !device.equals(p.syncDeviceId()))
+            throw new IllegalStateException("配置响应所属会话已变化");
+        JSONObject cfg = response.optJSONObject("config");
         if (cfg == null) return false;
         int ver = cfg.optInt("version", 0);
         if (ver == 0 || ver == p.syncConfigVersion()) return false;   // 版本未变，不重复应用
@@ -618,7 +572,7 @@ public final class SyncClient {
         JSONObject body = new JSONObject();
         body.put("lan_ips", arr);
         body.put("port", LanSync.port(ctx));   // 与 LanSync 实际监听端口保持一致
-        return request(ctx, "POST", serverBase(ctx) + "/api/v1/lan/rendezvous",
+        return AccountHttp.request("POST", serverBase(ctx) + "/api/v1/lan/rendezvous",
                 body.toString(), p.accountToken(), p.syncDeviceId());
     }
 
@@ -690,92 +644,6 @@ public final class SyncClient {
      * @param deviceId 设备级接口必填，非空时带 X-Device-Id 头
      * @throws ApiException 非 2xx 响应（含服务端 error 字段）
      */
-    static JSONObject request(Context ctx, String method, String urlStr,
-                              String body, String token, String deviceId) throws Exception {
-        HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
-        try {
-            if (conn instanceof HttpsURLConnection) {
-                ((HttpsURLConnection) conn).setSSLSocketFactory(pinnedFactory(ctx));
-                // 主机名校验保持默认（证书 SAN 已含服务 IP），不放松
-            }
-            conn.setRequestMethod(method);
-            conn.setConnectTimeout(CONNECT_TIMEOUT_MS);
-            conn.setReadTimeout(READ_TIMEOUT_MS);
-            conn.setRequestProperty("Accept", "application/json");
-            if (token != null && !token.isEmpty()) {
-                conn.setRequestProperty("Authorization", "Bearer " + token);
-            }
-            if (deviceId != null && !deviceId.isEmpty()) {
-                conn.setRequestProperty("X-Device-Id", deviceId);
-            }
-            if (body != null) {
-                conn.setDoOutput(true);
-                conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
-                byte[] payload = body.getBytes(StandardCharsets.UTF_8);
-                conn.setFixedLengthStreamingMode(payload.length);
-                OutputStream os = conn.getOutputStream();
-                os.write(payload);
-                os.close();
-            }
-            int code = conn.getResponseCode();
-            InputStream is = (code >= 200 && code < 300) ? conn.getInputStream()
-                    : conn.getErrorStream();
-            String text = readAll(is);
-            if (code < 200 || code >= 300) {
-                throw parseError(code, text);
-            }
-            return new JSONObject(text);
-        } finally {
-            conn.disconnect();
-        }
-    }
-
-    /** 把服务端的 {"error":..,"message":..} 错误体解析成 ApiException。 */
-    private static ApiException parseError(int code, String text) {
-        String kind = "";
-        String msg = "";
-        try {
-            JSONObject o = new JSONObject(text);
-            kind = o.optString("error", "");
-            msg = o.optString("message", "");
-        } catch (Exception ignored) { }
-        if (msg.isEmpty()) msg = text == null ? "" : text.trim();
-        if (msg.length() > 200) msg = msg.substring(0, 200);
-        return new ApiException(code, kind, msg);
-    }
-
-    /** 从 assets 装 pin 过的 CA 构建 SSLContext；每次同步重建成本可忽略，避免缓存失效问题。 */
-    private static javax.net.ssl.SSLSocketFactory pinnedFactory(Context ctx) throws Exception {
-        CertificateFactory cf = CertificateFactory.getInstance("X.509");
-        InputStream in = ctx.getAssets().open(CA_ASSET);
-        java.security.cert.Certificate ca;
-        try {
-            ca = cf.generateCertificate(in);
-        } finally {
-            in.close();
-        }
-        java.security.KeyStore ks = java.security.KeyStore.getInstance(
-                java.security.KeyStore.getDefaultType());
-        ks.load(null, null);
-        ks.setCertificateEntry("agentlite-sync", ca);
-        TrustManagerFactory tmf = TrustManagerFactory.getInstance(
-                TrustManagerFactory.getDefaultAlgorithm());
-        tmf.init(ks);
-        SSLContext ssl = SSLContext.getInstance("TLS");
-        ssl.init(null, tmf.getTrustManagers(), null);
-        return ssl.getSocketFactory();
-    }
-
-    private static String readAll(InputStream is) throws Exception {
-        if (is == null) return "";
-        ByteArrayOutputStream bos = new ByteArrayOutputStream();
-        byte[] buf = new byte[4096];
-        int n;
-        while ((n = is.read(buf)) > 0) bos.write(buf, 0, n);
-        is.close();
-        return new String(bos.toByteArray(), StandardCharsets.UTF_8);
-    }
-
     // ---------- 状态采集与工具 ----------
 
     private static int batteryPct(Context ctx) {

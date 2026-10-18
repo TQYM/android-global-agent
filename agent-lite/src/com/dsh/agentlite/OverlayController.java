@@ -104,6 +104,13 @@ public class OverlayController {
     private static final int FLAGS_TOUCH = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
             | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL;
     private static final int FLAGS_FOCUS = WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL;
+    // 纯展示层（底部进度胶囊）：必须完全不吃触摸。
+    // 2026-09-21 实测胶囊窗口 frame=[264,2437][952,2542]，正压在应用底部导航 Tab 栏
+    // （微信「发现」Tab 的命中区）上；FLAGS_TOUCH 会吃掉该区域内的点击，导致 Agent 的
+    // tap(766,2442) 变更比例为 0%（同一坐标无悬浮窗时 36.6%），任务永远进不了朋友圈。
+    // 进度文案无需交互，控制面板由「暂停接管」等卡片入口唤起，故此处不可点。
+    private static final int FLAGS_DISPLAY = WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+            | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
 
     // ================= 任务生命周期 =================
 
@@ -151,9 +158,11 @@ public class OverlayController {
                 removeView(capsule); capsule = null;
                 hideCardSync();
             } else {
-                // 若保留结果，让胶囊保持成功态 4 秒后淡出
+                // 若保留结果，让胶囊保持成功态 4 秒后淡出。
+                // T05a：必须与 15 秒分支同样带 taskActive 守卫——本任务是留了结果，
+                // 但若 4 秒内用户已启动新任务，这个定时器撤掉的是**新任务的胶囊**。
                 ui.postDelayed(() -> {
-                    removeView(capsule); capsule = null;
+                    if (!taskActive) { removeView(capsule); capsule = null; }
                 }, 4000);
                 // 结果卡片给足阅读时间后**也要自动撤下**：卡片窗口 frame 铺到屏幕最底
                 // （实测 [56,1133][1160,2556]，高约 406dp），而卡片会吃掉自己区域内的触摸，
@@ -255,6 +264,28 @@ public class OverlayController {
                 AgentEngine.staticLog("overlay: 完成卡片与灵动胶囊已就绪");
             } catch (Throwable t) {
                 AgentEngine.staticLog("overlay showDone 失败: " + t);
+            }
+        });
+    }
+
+    /**
+     * 琥珀色「结果不确定」卡片（T04a）：二次 done 仍拿不出完成证据时使用。
+     *
+     * <p>刻意不复用 {@link #showDone}：绿色卡片 + 胶囊「完成:」是**完成语义位**，
+     * 而这里的实情恰恰是「没有任何证据表明目标达成了」——配色、标题、胶囊文案
+     * 都不能借用完成语义（守则 I-3：不以模型自报当成功）。
+     */
+    public void showUncertain(String note) {
+        ui.post(() -> {
+            try {
+                setCapsuleState(true, "结果不确定");
+                LinearLayout box = cardShell();
+                box.addView(cardHead(0xFFF59E0B, "?", "结果不确定"));
+                box.addView(cardText(note));
+                box.addView(monetButton("知道了", v -> hideCardSync()));
+                AgentEngine.staticLog("overlay: 不确定卡片已展示");
+            } catch (Throwable t) {
+                AgentEngine.staticLog("overlay showUncertain 失败: " + t);
             }
         });
     }
@@ -455,12 +486,11 @@ public class OverlayController {
         LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(dp(16), dp(16));
         box.addView(islandSpin, slp);
 
-        // 点按胶囊展开控制面板
-        box.setOnClickListener(v -> togglePanel());
+        // 胶囊是纯状态展示，不接管触摸（详见 FLAGS_DISPLAY 注释）
 
         capsule = box;
         WindowManager.LayoutParams p = lpBottom(WindowManager.LayoutParams.WRAP_CONTENT,
-                WindowManager.LayoutParams.WRAP_CONTENT, FLAGS_TOUCH);
+                WindowManager.LayoutParams.WRAP_CONTENT, FLAGS_DISPLAY);
 
         // 放置于屏幕底部，避让手势条（设置 y = 28dp 悬浮于底部手势条上方）
         p.y = dp(28);

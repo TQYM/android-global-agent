@@ -30,7 +30,7 @@ import java.util.Set;
 public final class ActionSchema {
 
     /** 词表版本。改动作集合/字段语义必须递增（两端与排障靠它对版本）。 */
-    public static final String SCHEMA_VERSION = "2026-09-14.1";
+    public static final String SCHEMA_VERSION = "2026-10-10.1";
 
     /** 执行型动作：由 {@code AgentEngine.exec()} 实现，必须有对应的 case 分支。 */
     public static final Set<String> EXEC_ACTIONS = unmodifiable(

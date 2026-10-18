@@ -32,18 +32,34 @@ public final class Prefs {
     public boolean vision()     { return sp.getBoolean("vision", true); }
 
     /**
-     * **无限制模式**：自动同意「服务条款 / 隐私政策 / 用户协议」弹窗（默认**开启**）。
+     * **无限制模式**：自动同意「服务条款 / 隐私政策 / 用户协议」弹窗（默认**关闭**）。
      *
      * <p>⚠️ 开启意味着 Agent 会替你点「同意并继续」，即**代替你作出法律授权**，而这类同意
-     * 通常**不可逆**（你等于接受了未曾阅读的条款）。这是用户 2026-09-18 明确要求取消该限制
-     * 后的行为；把本开关关掉即回到「暂停并把控制权交还用户」的安全默认。
+     * 通常**不可逆**（你等于接受了未曾阅读的条款）。2026-09-18 用户曾要求默认开启；
+     * 2026-10-02 审计 P1-5 把默认值收回**关闭**：与敏感场景人工确认的安全默认对齐，
+     * 需要代点的用户须显式开启（历史已显式存过 true 的设备不受影响）。
      *
      * <p>注意范围：只覆盖**协议类**弹窗。支付/转账/验证码/删除数据等其它红线各有其规则，
      * 不受本开关影响。
      */
-    public boolean autoAcceptTerms() { return sp.getBoolean("auto_accept_terms", true); }
+    public boolean autoAcceptTerms() { return sp.getBoolean("auto_accept_terms", false); }
 
     public void setAutoAcceptTerms(boolean v) { sp.edit().putBoolean("auto_accept_terms", v).apply(); }
+
+    /** M0-01 成熟模块开关的统一读取入口；默认值由 FeatureFlags 集中定义。 */
+    public FeatureFlags featureFlags() { return new FeatureFlags(sp); }
+
+    /**
+     * 操作记忆库是否开启（**默认开启**）。
+     *
+     * <p>默认开是刻意的：用户要的是「每一步成功执行的操作自动进记忆库，之后直接复现就能完成
+     * 操作」——需要先去设置里打开才算数的话，等于没做。关掉即回到「每次都重新规划」，
+     * 已记录的内容仍留在库里可查可删（见「记忆库」页）。
+     */
+    public boolean flowMemory() { return sp.getBoolean("flow_memory", true); }
+
+    public void setFlowMemory(boolean on) { sp.edit().putBoolean("flow_memory", on).apply(); }
+
     public int maxSteps()       {
         int v = sp.getInt("max_steps", 50);
         if (v == 20 || v == 30 || v == 100) {
@@ -74,7 +90,10 @@ public final class Prefs {
 
     public void save(String baseUrl, String apiKey, String model, String asrModel,
                      boolean vision, int maxSteps, String systemPrompt) {
+        // 保存/清空配置不等于切换付费账户；先固定修改前的有效选择。
+        boolean own = credentialRoute(model()).channel == CredentialRoute.Channel.OWN_KEY;
         sp.edit()
+                .putBoolean("use_own_key", own)
                 .putString("base_url", baseUrl)
                 .putString("api_key", apiKey)
                 .putString("model", model)
@@ -138,22 +157,27 @@ public final class Prefs {
     // ------------------------------------------------------------------
 
     /**
-     * 是否使用**用户自己的**百炼 API Key（官方购买模式）。
-     *
-     * <p>为 true 时 {@link LlmClient#forPrefs} 会**跳过我方额度网关**——
-     * 用户既然自己买了 token 资源包，就应当直接用他的 Key，
-     * 否则网关会一直顶在前面、写的 Key 根本用不上（`PURCHASE_REDIRECT_DESIGN` 决策 4）。
-     */
-    /**
-     * 是否用「自己的 API 配置」直连（默认 true）。
-     *
-     * <p>2026-09-15 用户决策「直接默认用 DeepSeek」：只要本地有 Key 就优先走自己的
-     * DeepSeek 配置，不再默认依赖账号额度网关——额度为 0 的账号此前会在第一步就 402。
-     * 没填 Key 的用户仍然自动落到账号额度通道（见 LlmClient.forPrefs），零门槛不变。
+     * 旧偏好读取接口（默认 true 不代表用户已作选择）。
+     * 任务路由统一使用 credentialRoute：未保存选择时保留有 Key 直连、无 Key 账号的历史规则；
+     * 显式 true/false 则固定付费主体，配置缺失或请求失败都不会改用另一来源。
      */
     public boolean useOwnKey() { return sp.getBoolean("use_own_key", true); }
 
     public void setUseOwnKey(boolean on) { sp.edit().putBoolean("use_own_key", on).apply(); }
+
+    /** 用户在选择卡上主动选择通道；选择账号时同时解除旧版网关关闭标志。 */
+    public void selectCredentialChannel(boolean own) {
+        SharedPreferences.Editor e = sp.edit().putBoolean("use_own_key", own);
+        if (!own) e.putBoolean("use_gateway", true);
+        e.apply();
+    }
+
+    /** 一次解析中各凭据只读一次；不写选择、不猜余额、不访问模型。 */
+    public CredentialRoute credentialRoute(String requestedModel) {
+        return CredentialRoute.resolve(sp.contains("use_own_key"), useOwnKey(),
+                sp.getBoolean("use_gateway", true), baseUrl(), apiKey(), requestedModel,
+                accountId(), accountToken(), accountInvalid(), syncServer());
+    }
 
     /**
      * 原始规划模型存档值（**不**受单模型模式影响），仅供设置页回填输入框。
@@ -220,23 +244,15 @@ public final class Prefs {
     }
 
     /**
-     * 语音转写模型：空 = 用主模型 Omni 原生音频输入。
-     *
-     * <p>注意与历史行为的差异：旧实现把失效的 `glm-asr-2512` 迁移为空；
-     * 现在**空值本身也会被收敛成主模型**，但写入时仍存空串（保持存档语义不变）。
+     * 指定远端 ASR 的模型名；本地模式不使用此项，不借主模型音频能力。
      */
     public String asrModel() {
         String v = sp.getString("asr_model", "");
-        // 「单模型模式」原本把语音也收敛到主模型——只在**没有独立 ASR 通道**时才该这么做。
-        // 配了云端端点（asrBaseUrl 非空）却仍返回主模型名，会把 glm-asr-2512 覆盖成
-        // deepseek-flash，智谱直接报 1211「模型不存在」（2026-09-18 实测踩到）。
-        if (!asrBaseUrl().isEmpty()) return v == null ? "" : v;
-        if (singleModelMode()) return model();
         return v == null ? "" : v;
     }
 
     /**
-     * 独立 ASR 端点（形如 {@code http://192.168.1.108:18888/v1}），空 = 沿用 LLM 通道。
+     * ASR 模式唯一选择：端点为空使用本地；非空仅请求指定 ASR 端点。
      *
      * <p>存在的原因见 {@code LlmClient#transcribe}：语音曾经复用主模型的音频能力，上游换成
      * DeepSeek 后该能力消失，语音输入就整条失效且用户毫无提示。独立端点让 ASR 与 LLM 解耦，
@@ -247,14 +263,14 @@ public final class Prefs {
         return v == null ? "" : v.trim();
     }
 
-    /** 独立 ASR 密钥；空 = 沿用主 key（局域网离线服务不需要）。 */
+    /** 独立 ASR 密钥；空就不发鉴权头，适用于免密本地服务，不借主 key。 */
     public String asrApiKey() {
         String v = sp.getString("asr_api_key", "");
         return v == null ? "" : v.trim();
     }
 
     /**
-     * 保存**云端 ASR** 配置（端点 + 密钥）。两者其一为空即视为不使用云端，走本地离线模型。
+     * 保存指定远端 ASR 配置；只有端点决定模式，失败由调用方展示，不切换本地。
      *
      * <p>典型值（智谱 GLM）：端点 {@code https://open.bigmodel.cn/api/paas/v4}、
      * 模型 {@code glm-asr-2512}（填在 asr_model）。接口是 OpenAI 兼容的
@@ -295,7 +311,7 @@ public final class Prefs {
 
     /** 本机设备 ID（LanSync 也直接读这个键）。 */
     public void setSyncDeviceId(String id) {
-        sp.edit().putString("sync_device_id", id).apply();
+        synchronized (sp) { sp.edit().putString("sync_device_id", id).apply(); }
     }
 
     /** 服务端记录游标（server_seq），用于增量拉取。 */
@@ -373,7 +389,18 @@ public final class Prefs {
      *         调用方应提示用户，不要假装登录成功）
      */
     public boolean saveAccount(String id, String name, String token, long quota, long quotaUsed) {
+        synchronized (sp) {
+        if (token == null || token.isEmpty()) {
+            android.util.Log.w(TAG, "账号令牌为空，拒绝保存登录态");
+            return false;
+        }
+        // 先读出旧令牌：如果后面的偏好提交失败，需要尽力回滚，避免账号元数据与令牌错配。
+        String oldToken = accountToken();
         boolean switched = !accountId().isEmpty() && !accountId().equals(id);
+        if (!tokens.save(token)) {
+            // 令牌加密失败时，保持旧令牌和旧账号元数据不变，避免留下半登录状态。
+            return false;
+        }
         SharedPreferences.Editor e = sp.edit()
                 .putString("account_id", id)
                 .putString("account_name", name)
@@ -386,10 +413,20 @@ public final class Prefs {
             e.putLong("sync_cursor", 0L);
             e.putInt("sync_history_index", 0);
             e.putInt("sync_memory_index", 0);
+            e.putInt("sync_peer_index", 0);
+            e.putInt("sync_config_version", 0);
+            e.putString("peer_devices", "[]");
             e.putString("sync_device_id", "");   // 换账号需重新绑定本机设备
         }
-        e.apply();
-        return tokens.save(token);
+        if (e.commit()) {
+            return true;
+        }
+        // SharedPreferences 提交失败时回滚令牌；失败仍按未登录处理，不返回假成功。
+        if (oldToken == null || oldToken.isEmpty()) tokens.clear();
+        else tokens.save(oldToken);
+        android.util.Log.w(TAG, "账号元数据保存失败，已回滚令牌");
+        return false;
+        }
     }
 
     /** 只刷新额度（/account/me 或兑换成功后调用）。 */
@@ -399,6 +436,7 @@ public final class Prefs {
 
     /** 退出登录：清空账号凭据与本机设备绑定，保留任务历史与记忆。 */
     public void clearAccount() {
+        synchronized (sp) {
         // 令牌在 Keystore 侧，单独清（含删除 Keystore 别名与进程内缓存）
         tokens.clear();
         sp.edit()
@@ -415,8 +453,12 @@ public final class Prefs {
                 .putLong("sync_cursor", 0L)
                 .putInt("sync_history_index", 0)
                 .putInt("sync_memory_index", 0)
+                .putInt("sync_peer_index", 0)
+                .putInt("sync_config_version", 0)
+                .remove("peer_devices")
                 .putString("sync_status", "未登录：请先登录账号")
                 .apply();
+        }
     }
 
     // ---- 异形屏适配开关（回滚保护，默认开启） ----

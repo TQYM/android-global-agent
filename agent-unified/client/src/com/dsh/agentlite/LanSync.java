@@ -59,7 +59,7 @@ public final class LanSync {
     private static final int NONCE_LEN = 12;
     private static final int GCM_TAG_BITS = 128;
     private static final long TS_WINDOW_SEC = 120;
-    private static final int MAX_BODY = 4 << 20; // 单请求 4MB
+    private static final int MAX_BODY = 4 << 20; // 请求/响应单信封 4MiB
 
     /** 局域网密钥派生参数，必须与服务端 lan_key_params 一致。 */
     private static final String KDF_SALT_PREFIX = "agentlite-lan|";
@@ -324,21 +324,8 @@ public final class LanSync {
             }
 
             // 邻居推来的记录并入本地（与服务端同一套去重 id，重复不会产生副本）
-            int merged = 0;
             JSONObject push = req.optJSONObject("push");
-            if (push != null) {
-                JSONArray tasks = push.optJSONArray("tasks");
-                if (tasks != null) {
-                    for (int i = 0; i < tasks.length(); i++) {
-                        JSONObject o = tasks.getJSONObject(i);
-                        // 整条留存（含原始 id 与 ts）：id 原样保留才能让云端按同一 id 幂等去重，
-                        // 否则本机转发时会生成新 id，同一条任务会在云端出现两份
-                        if (o.optJSONObject("data") != null && appendPeerRecord(ctx, peerDevice, o)) {
-                            merged++;
-                        }
-                    }
-                }
-            }
+            int merged = mergePeerRecords(ctx, push == null ? null : push.optJSONArray("tasks"), peerDevice);
 
             // 回给对方它还没见过的记录（本机游标之后的部分）
             long since = req.optLong("since", 0);
@@ -346,15 +333,20 @@ public final class LanSync {
             resp.put("ts", System.currentTimeMillis() / 1000L);
             resp.put("server_seq", since);
             resp.put("merged", merged);
-            // 把本机持有的记录回给对方（拉取方向）：
-            // 设备间互拉不经云端，省的是计费方向（ECS 出网）的流量。
-            // 不按 since 过滤——对方的 since 是**云端游标**，与本地记录序列无关；
-            // 改为全量回传并靠内容哈希去重（id 即内容哈希），语义更稳。
-            resp.put("records", collectRecordsForPeer(ctx, myDevice, PEER_RECORD_LIMIT));
+            // LAN 游标与云端 since 分开：两个追加文件各自分页，并交替选取避免来源饥饿。
+            // 旧对端不带游标时由服务端轮转，响应丢失的页也会在后续轮转中再次交付。
+            JSONObject cursor = req.optJSONObject("lan_cursor");
+            boolean legacyPeer = cursor == null;
+            String legacyKey = "lan_send_cursor." + myAccount + "." + peerDevice;
+            if (legacyPeer) cursor = new JSONObject(sp.getString(legacyKey, "{}"));
             resp.put("device_id", myDevice);
+            collectRecordsForPeer(ctx, PEER_RECORD_LIMIT, cursor, legacyPeer, resp);
 
             String outEnvelope = seal(key, aadIn, resp.toString());
             respond(out, 200, outEnvelope);
+            if (legacyPeer) {
+                sp.edit().putString(legacyKey, resp.getJSONObject("lan_cursor").toString()).apply();
+            }
             sock.close();
         } catch (Exception e) {
             android.util.Log.i(TAG, "局域网连接处理失败: " + e);
@@ -397,6 +389,8 @@ public final class LanSync {
             req.put("ts", System.currentTimeMillis() / 1000L);
             req.put("device_id", myDevice);
             req.put("since", since);
+            String cursorKey = "lan_receive_cursor." + account + "." + peerDeviceId;
+            req.put("lan_cursor", new JSONObject(sp.getString(cursorKey, "{}")));
             JSONObject push = new JSONObject();
             push.put("tasks", tasksToPush == null ? new JSONArray() : tasksToPush);
             req.put("push", push);
@@ -435,7 +429,9 @@ public final class LanSync {
 
             // 拉取方向：把对端回传、本机还没有的记录转存下来（保留其真实来源），
             // 之后由 SyncClient 带 origin_device_id 转发上云，归属不会串。
-            int pulled = mergePeerRecords(ctx, resp.optJSONArray("records"));
+            int pulled = mergePeerRecords(ctx, resp.optJSONArray("records"), "");
+            JSONObject nextCursor = resp.optJSONObject("lan_cursor");
+            if (nextCursor != null) sp.edit().putString(cursorKey, nextCursor.toString()).apply();
             android.util.Log.i(TAG, "局域网同步成功 peer=" + peerDeviceId
                     + " 合并=" + resp.optInt("merged", 0) + " 拉取=" + pulled);
             return resp.optInt("merged", 0) + pulled;
@@ -448,7 +444,7 @@ public final class LanSync {
     }
 
     /**
-     * 记录一条邻居经局域网转交来的任务。
+     * 批量记录邻居经局域网转交来的任务。
      *
      * 刻意**不写进 `task_history.jsonl`**：那份文件语义是「本机产生的历史」，
      * `SyncClient.pushHistory` 会把它整份上行。若把邻居的记录混进去，再上行时
@@ -460,37 +456,38 @@ public final class LanSync {
      *
      * 格式：每行 `{"origin_device_id":"d_x","id":"...","ts":"...","data":{...}}`
      */
-    private static boolean appendPeerRecord(Context ctx, String originDeviceId, JSONObject item) {
-        if (originDeviceId == null || originDeviceId.isEmpty()) return false;
-        try {
-            java.io.File f = peerFile(ctx);
-            String key = item.optString("id", "");   // 内容哈希即身份，与云端去重口径一致
-            if (f.exists()) {
-                java.io.BufferedReader r = new java.io.BufferedReader(
-                        new java.io.InputStreamReader(new java.io.FileInputStream(f), "UTF-8"));
-                String ln;
-                while ((ln = r.readLine()) != null) {
-                    if (ln.trim().isEmpty()) continue;
-                    JSONObject w = new JSONObject(ln);
-                    if (key.equals(w.optString("id", ""))) {
-                        r.close();
-                        return false;   // 已收过，幂等
-                    }
-                }
-                r.close();
+    private static final Object PEER_RECORD_LOCK = new Object();
+
+    /** 一批只读一次已有 ID，并在同一锁内追加；写入失败上抛，客户端不提交拉取游标。 */
+    private static int mergePeerRecords(Context ctx, JSONArray records, String defaultOrigin) throws Exception {
+        if (records == null || records.length() == 0) return 0;
+        synchronized (PEER_RECORD_LOCK) {
+            java.util.Set<String> seen = new java.util.HashSet<>();
+            for (String line : readAllLines(peerFile(ctx))) {
+                String id = new JSONObject(line).optString("id", "");
+                if (!id.isEmpty()) seen.add(id);
             }
-            JSONObject wrap = new JSONObject();
-            wrap.put("origin_device_id", originDeviceId);
-            wrap.put("id", item.optString("id", ""));
-            wrap.put("ts", item.optString("ts", ""));
-            wrap.put("data", item.optJSONObject("data"));
-            java.io.FileWriter w = new java.io.FileWriter(f, true);
-            w.write(wrap.toString() + "\n");
-            w.close();
-            return true;
-        } catch (Exception e) {
-            android.util.Log.i(TAG, "记录同伴转交的任务失败: " + e);
-            return false;
+            int merged = 0;
+            try (java.io.BufferedWriter writer = new java.io.BufferedWriter(new java.io.OutputStreamWriter(
+                    new java.io.FileOutputStream(peerFile(ctx), true), StandardCharsets.UTF_8))) {
+                for (int i = 0; i < records.length(); i++) {
+                    JSONObject item = records.optJSONObject(i);
+                    if (item == null || item.optJSONObject("data") == null) continue;
+                    String origin = item.optString("origin_device_id", "");
+                    if (origin.isEmpty()) origin = defaultOrigin;
+                    String id = item.optString("id", "");
+                    if (origin == null || origin.isEmpty() || id.isEmpty() || !seen.add(id)) continue;
+                    JSONObject wrap = new JSONObject()
+                            .put("origin_device_id", origin)
+                            .put("id", id)
+                            .put("ts", item.optString("ts", ""))
+                            .put("data", item.optJSONObject("data"));
+                    writer.write(wrap.toString());
+                    writer.newLine();
+                    merged++;
+                }
+            }
+            return merged;
         }
     }
 
@@ -508,48 +505,92 @@ public final class LanSync {
      * 记录（peer_records.jsonl）保留其原始来源。这样同伴再转发上云时，
      * 云端仍能记到真正的产生者名下，而不是"最后经手的那台设备"。
      */
-    private static JSONArray collectRecordsForPeer(Context ctx, String myDevice, int limit) {
+    private static JSONObject collectRecordsForPeer(Context ctx, int limit, JSONObject cursor,
+                                                     boolean repeat, JSONObject response) throws Exception {
+        String myDevice = response.getString("device_id");
+        java.util.List<String> mine = readAllLines(historyFile(ctx));
+        java.util.List<String> peers;
+        synchronized (PEER_RECORD_LOCK) {
+            peers = readAllLines(peerFile(ctx));
+        }
+        int local = cursor.optInt("local", 0);
+        int peer = cursor.optInt("peer", 0);
+        // 位置带前一条稳定 ID；文件被清空/替换后重新开始，不把新文件当旧文件的尾部。
+        if (local < 0 || local > mine.size() || (local > 0 && !cursor.optString("local_id", "")
+                .equals(sha256Hex(mine.get(local - 1)).substring(0, 32)))) local = 0;
+        if (peer < 0 || peer > peers.size() || (peer > 0 && !cursor.optString("peer_id", "")
+                .equals(new JSONObject(peers.get(peer - 1)).optString("id", "")))) peer = 0;
+        if (repeat && local == mine.size()) local = 0;
+        if (repeat && peer == peers.size()) peer = 0;
+        String localId = local == 0 ? "" : sha256Hex(mine.get(local - 1)).substring(0, 32);
+        String peerId = peer == 0 ? "" : new JSONObject(peers.get(peer - 1)).optString("id", "");
+        boolean nextPeer = cursor.optBoolean("next_peer", false);
+        boolean localFull = false, peerFull = false;
+        Boolean deferredPeer = null;
+        // Base64 长度是 4*ceil((UTF-8 明文 + 12 字节 nonce + 16 字节 tag)/3)。
+        int maxPlainBytes = (MAX_BODY / 4) * 3 - NONCE_LEN - GCM_TAG_BITS / 8;
+        int recordBytes = 0;
         JSONArray out = new JSONArray();
-        try {
-            java.util.List<String> mine = readAllLines(historyFile(ctx));
-            int start = Math.max(0, mine.size() - limit);
-            for (int i = start; i < mine.size(); i++) {
-                JSONObject o = new JSONObject(mine.get(i));
-                JSONObject item = new JSONObject();
-                item.put("origin_device_id", myDevice);
-                item.put("id", sha256Hex(mine.get(i)).substring(0, 32));
-                item.put("ts", o.optString("time"));
-                item.put("data", o);
-                out.put(item);
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        JSONObject nextCursor = new JSONObject();
+        // 预算只编码小元数据，records 暂用空数组；不反复序列化整份已选记录。
+        response.put("records", new JSONArray()).put("lan_cursor", nextCursor).put("lan_has_more", false);
+        while (out.length() < limit) {
+            boolean localAvailable = !localFull && local < mine.size();
+            boolean peerAvailable = !peerFull && peer < peers.size();
+            if (!localAvailable && !peerAvailable) break;
+            boolean fromPeer = peerAvailable && (nextPeer || !localAvailable);
+            JSONObject item;
+            if (fromPeer) {
+                JSONObject stored = new JSONObject(peers.get(peer));
+                item = new JSONObject()
+                        .put("origin_device_id", stored.optString("origin_device_id", ""))
+                        .put("id", stored.optString("id", ""))
+                        .put("ts", stored.optString("ts", ""))
+                        .put("data", stored.optJSONObject("data"));
+            } else {
+                String line = mine.get(local);
+                JSONObject data = new JSONObject(line);
+                item = new JSONObject()
+                        .put("origin_device_id", myDevice)
+                        .put("id", sha256Hex(line).substring(0, 32))
+                        .put("ts", data.optString("time", ""))
+                        .put("data", data);
             }
-            for (String ln : readAllLines(peerFile(ctx))) {
-                JSONObject w = new JSONObject(ln);
-                if (w.optJSONObject("data") == null) continue;
-                JSONObject item = new JSONObject();
-                item.put("origin_device_id", w.optString("origin_device_id", ""));
-                item.put("id", w.optString("id", ""));
-                item.put("ts", w.optString("ts", ""));
-                item.put("data", w.optJSONObject("data"));
+            nextPeer = !fromPeer;
+            String id = item.optString("id", "");
+            if (!id.isEmpty() && !item.optString("origin_device_id", "").isEmpty()
+                    && item.optJSONObject("data") != null && !seen.contains(id)) {
+                int itemBytes = item.toString().getBytes(StandardCharsets.UTF_8).length;
+                nextCursor.put("local", fromPeer ? local : local + 1)
+                        .put("peer", fromPeer ? peer + 1 : peer)
+                        .put("local_id", fromPeer ? localId : id)
+                        .put("peer_id", fromPeer ? id : peerId).put("next_peer", false);
+                int metadataBytes = response.toString().getBytes(StandardCharsets.UTF_8).length;
+                if ((long) metadataBytes + recordBytes + itemBytes + out.length() > maxPlainBytes) {
+                    // 本来源本页放不下时仍尝试另一来源，游标保持在未交付的这条记录之前。
+                    if (deferredPeer == null) deferredPeer = fromPeer;
+                    if (fromPeer) peerFull = true; else localFull = true;
+                    continue;
+                }
                 out.put(item);
+                seen.add(id);
+                recordBytes += itemBytes;
             }
-        } catch (Exception e) {
-            android.util.Log.i(TAG, "汇总可共享记录失败: " + e);
+            if (fromPeer) { peer++; peerId = id; }
+            else { local++; localId = id; }
         }
-        return out;
-    }
-
-    /** 合并对端回传的记录（幂等：内容哈希重复即跳过）。 */
-    private static int mergePeerRecords(Context ctx, JSONArray records) {
-        if (records == null) return 0;
-        int n = 0;
-        for (int i = 0; i < records.length(); i++) {
-            JSONObject o = records.optJSONObject(i);
-            if (o == null) continue;
-            String origin = o.optString("origin_device_id", "");
-            if (origin.isEmpty()) continue;   // 来源不明的不收，避免污染溯源
-            if (appendPeerRecord(ctx, origin, o)) n++;
+        if (out.length() == 0 && (localFull || peerFull)) {
+            throw new java.io.IOException("单条局域网记录超过 4MiB 信封上限，请缩减该记录后同步。");
         }
-        return n;
+        nextCursor.put("local", local).put("peer", peer).put("local_id", localId)
+                .put("peer_id", peerId).put("next_peer", false);
+        if ((long) response.toString().getBytes(StandardCharsets.UTF_8).length
+                + recordBytes + Math.max(0, out.length() - 1) > maxPlainBytes) {
+            throw new java.io.IOException("局域网响应元数据超过 4MiB 信封上限。");
+        }
+        nextCursor.put("next_peer", deferredPeer == null ? nextPeer : deferredPeer);
+        return response.put("records", out).put("lan_has_more", local < mine.size() || peer < peers.size());
     }
 
     /**
@@ -576,19 +617,17 @@ public final class LanSync {
         return new java.io.File(ctx.getExternalFilesDir(null), "task_history.jsonl");
     }
 
-    private static java.util.List<String> readAllLines(java.io.File f) {
+    private static java.util.List<String> readAllLines(java.io.File f) throws Exception {
         java.util.List<String> out = new java.util.ArrayList<>();
-        try {
-            if (!f.exists()) return out;
-            java.io.BufferedReader r = new java.io.BufferedReader(
-                    new java.io.InputStreamReader(new java.io.FileInputStream(f), "UTF-8"));
-            String ln;
-            while ((ln = r.readLine()) != null) {
-                ln = ln.trim();
-                if (!ln.isEmpty()) out.add(ln);
+        if (!f.exists()) return out;
+        try (java.io.BufferedReader reader = new java.io.BufferedReader(
+                new java.io.InputStreamReader(new java.io.FileInputStream(f), StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                line = line.trim();
+                if (!line.isEmpty()) out.add(line);
             }
-            r.close();
-        } catch (Exception ignored) { }
+        }
         return out;
     }
 
@@ -596,16 +635,9 @@ public final class LanSync {
     public static java.util.List<String> pendingPeerRecords(Context ctx) {
         java.util.List<String> out = new java.util.ArrayList<>();
         try {
-            java.io.File f = peerFile(ctx);
-            if (!f.exists()) return out;
-            java.io.BufferedReader r = new java.io.BufferedReader(
-                    new java.io.InputStreamReader(new java.io.FileInputStream(f), "UTF-8"));
-            String ln;
-            while ((ln = r.readLine()) != null) {
-                ln = ln.trim();
-                if (!ln.isEmpty()) out.add(ln);
+            synchronized (PEER_RECORD_LOCK) {
+                out.addAll(readAllLines(peerFile(ctx)));
             }
-            r.close();
         } catch (Exception e) {
             android.util.Log.i(TAG, "读取待转发记录失败: " + e);
         }

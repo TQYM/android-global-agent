@@ -29,6 +29,17 @@ public class LlmClient {
     private final String apiKey;
     private final String model;
 
+    /**
+     * 单次回复的 token 上限（默认 160）。
+     *
+     * <p>160 是给「单个动作 JSON」的预算——主循环每步只回一个动作，够用且能防模型啰嗦。
+     * 但**结构化流程转译**要回一整份 FlowSpec（目标 + 槽位 + 步骤 + 完成判据），
+     * 160 会被截断成不闭合的 JSON：转译会**永远**失败并静默退回散文路径，
+     * 而日志上只看到一句「JSON 解析失败」，很难追到"其实是长度上限"。
+     * 故转译方必须显式调高（见 {@code AgentEngine.planTask} 的 {@code maxTokens(400)}）。
+     */
+    private int maxTokens = 160;
+
     /** 备用配置（用户自填的直连地址）。网关异常时回退到它；402 不回退。 */
     private String fbBaseUrl;
     private String fbApiKey;
@@ -173,47 +184,19 @@ public class LlmClient {
     }
 
     /**
-     * 按当前配置构造客户端。
-     *
-     * 已登录且未显式关闭网关时，base_url 指向同步服务的 OpenAI 兼容端点、
-     * api_key 用账号令牌——这样模型调用受**账号额度**约束，服务端按下游
-     * 返回的 usage 精确扣减（1 unit = 1000 tokens）。
-     * 未登录时沿用用户自填的 DashScope 配置直连，功能不退化。
+     * 与主页使用同一解析器。无凭据时在建立连接前失败；一个实例固定一个付费主体。
+     * 不登记其它额度作为备用：欠费、鉴权失败、断网均由用户主动选择后再开始新任务。
      */
+    public static final class CredentialUnavailableException extends IllegalStateException {
+        CredentialUnavailableException(String message) { super(message); }
+    }
+
     public static LlmClient forPrefs(Context ctx, Prefs p, String model) {
-        // 官方购买模式：用户自己买了 token 资源包、用自己的 Key。
-        // 此时**必须让开网关**——否则网关一直顶在前面，刚写入的那张 Key 永远用不上
-        // （PURCHASE_REDIRECT_DESIGN 决策 4：这批用户关闭 use_gateway）。
-        // 有 Key 才走自己的配置：useOwnKey 默认 true，但**没填 Key 的用户**
-        // 必须自动落到账号额度通道，否则会拿空 Key 去请求（零门槛不能因此破掉）。
-        if (p.useOwnKey() && p.apiKey() != null && !p.apiKey().isEmpty()) {
-            LlmClient own = new LlmClient(p.baseUrl(), p.apiKey(), model);
-            // 自带 Key 是高级路径，但它一旦欠费/失效，用户会完全用不了——而此时
-            // 账号额度往往还可用。把它登记为备用通道：上游拒绝且"换通道可能有用"时自动改用
-            // 账号额度，并在日志里说清楚（手册 §16.2 P0-3：优先让普通用户用账号额度）。
-            if (p.loggedIn() && !p.accountInvalid()) {
-                String gwBase = SyncClient.serverBase(ctx);
-                String token = p.accountToken();
-                if (!gwBase.isEmpty() && !token.isEmpty()) {
-                    own.fallback(gwBase + "/v1", token);
-                    own.fallbackIsGateway = true;
-                }
-            }
-            return own;
-        }
-        if (p.loggedIn() && p.sp.getBoolean("use_gateway", true)) {
-            String base = SyncClient.serverBase(ctx);
-            String token = p.accountToken();
-            if (!base.isEmpty() && !token.isEmpty()) {
-                // 备用是用户自填的直连配置：网关 5xx / 网络异常 / 上游鉴权失败时回退，
-                // 但 **402 额度耗尽绝不回退**——否则额度形同虚设。
-                LlmClient gw = new LlmClient(base + "/v1", token, model)
-                        .fallback(p.baseUrl(), p.apiKey());
-                gw.primaryIsGateway = true;
-                return gw;
-            }
-        }
-        return new LlmClient(p.baseUrl(), p.apiKey(), model);
+        CredentialRoute route = p.credentialRoute(model);
+        if (!route.isUsable()) throw new CredentialUnavailableException(route.userMessage());
+        LlmClient client = new LlmClient(route.baseUrl, route.credential(), route.model);
+        client.primaryIsGateway = route.channel == CredentialRoute.Channel.ACCOUNT;
+        return client;
     }
 
     /** 设置备用直连配置：网关不可用时回退（402 额度耗尽不适用，见 post）。 */
@@ -228,7 +211,31 @@ public class LlmClient {
     /** 本轮是否已回退到备用直连（供诊断与测试断言）。 */
     public boolean onFallback() { return onFallback; }
 
+    /** 规划器复用本任务的地址/凭据/付费主体，设置修改仅影响下一任务。 */
+    public LlmClient forModel(String requestedModel) {
+        if (requestedModel == null || requestedModel.trim().isEmpty())
+            throw new IllegalArgumentException("模型配置不完整，请打开设置检查。");
+        LlmClient client = new LlmClient(baseUrl, apiKey, requestedModel.trim());
+        client.primaryIsGateway = primaryIsGateway;
+        client.cancelled = cancelled;
+        return client;
+    }
+
+    public String payerLabel() { return primaryIsGateway ? "账号额度" : "自己的配置"; }
+
     public LlmClient visionModel(String vm) { visionModel = vm; return this; }
+
+    /**
+     * 调高单次回复的 token 上限。
+     *
+     * <p>只有「结构化流程转译」需要——它要回一整份 JSON 而不是一个动作。
+     * 默认 160 保持不变：主循环每步都调高，等于把「模型啰嗦导致动作解析失败」
+     * 的风险重新引回来。
+     */
+    public LlmClient maxTokens(int n) {
+        if (n > 0) maxTokens = n;
+        return this;
+    }
     public LlmClient tokenListener(TokenUsageListener tl) { tokenListener = tl; return this; }
 
     public static JSONObject textMsg(String role, String text) throws Exception {
@@ -316,14 +323,27 @@ public class LlmClient {
     }
 
     private String chatOnce(JSONArray messages) throws Exception {
-        boolean hasImage = messages.toString().contains("\"image_url\"");
+        // 查看真实 content 类型，不为图检测另编码整份消息（其中可能包含大段 Base64）。
+        boolean hasImage = false;
+        for (int i = 0; i < messages.length() && !hasImage; i++) {
+            JSONObject message = messages.optJSONObject(i);
+            JSONArray parts = message == null ? null : message.optJSONArray("content");
+            if (parts == null) continue;
+            for (int j = 0; j < parts.length(); j++) {
+                JSONObject part = parts.optJSONObject(j);
+                if (part != null && "image_url".equals(part.optString("type"))) {
+                    hasImage = true;
+                    break;
+                }
+            }
+        }
         String useModel = (hasImage && visionModel != null && !visionModel.isEmpty())
                 ? visionModel : model;
         JSONObject body = new JSONObject()
                 .put("model", useModel)
                 .put("messages", messages)
                 .put("temperature", 0.0)
-                .put("max_tokens", 160);
+                .put("max_tokens", maxTokens);
         // 关闭冗余思考链或深度推理，追求毫秒级指令直出
         // 关闭思考链：智谱/通义用 thinking+enable_thinking；DeepSeek 实测**只认**
         // {"thinking":{"type":"disabled"}}（enable_thinking / chat_template_kwargs 无效），
@@ -504,6 +524,8 @@ public class LlmClient {
         // 额度网关是自签证书，系统 CA 库不认；命中内置证书的主机时套用 pin。
         // 直连 DashScope 时 covers() 为 false，行为与从前完全一致。
         TlsPin.apply(conn);
+        // 不让重定向把任务、截图或 Bearer 凭据带到另一端点。
+        conn.setInstanceFollowRedirects(false);
         conn.setRequestMethod("POST");
         // 语音转写用**短超时**：ASR 是"说一句、立刻要结果"的交互，云端不可达时必须快速失败
         // 让上层切到本地离线；沿用主对话的 120s 读取超时会让用户对着手机干等两分钟。
@@ -525,6 +547,12 @@ public class LlmClient {
             int code = conn.getResponseCode();
             InputStream is = code >= 400 ? conn.getErrorStream() : conn.getInputStream();
             String text = readAll(is);
+            if (code == 402 && !viaGateway) {
+                // 自带服务欠费不应引导去充值应用账号，更不自动切换付费主体。
+                throw new UpstreamRejectedException(
+                        "自己的模型服务额度不足，请查看对应服务账号余额，或在设置中主动选择账号额度",
+                        text, false, false);
+            }
             if (code == 402) {
                 // 服务端会在 message 里给中文原因；「quota」字样刻意不出现在异常消息里，
                 // 否则 chat() 会把它误判成 429 限流类错误而白退避重试

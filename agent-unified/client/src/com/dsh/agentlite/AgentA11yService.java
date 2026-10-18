@@ -89,6 +89,7 @@ public class AgentA11yService extends AccessibilityService {
     @Override
     public void onDestroy() {
         ProgressBridge.stop();
+        releaseRefs();
         if (overlay != null) { overlay.hideAll(); overlay = null; }
         sInstance = null;
         A11yGuard.onServiceLost(this);   // 掉线守护：宽限后复查并在需要时回写设置
@@ -97,6 +98,7 @@ public class AgentA11yService extends AccessibilityService {
 
     @Override
     public boolean onUnbind(android.content.Intent intent) {
+        releaseRefs();
         if (overlay != null) { overlay.hideAll(); overlay = null; }
         sInstance = null;
         A11yGuard.onServiceLost(this);
@@ -109,10 +111,31 @@ public class AgentA11yService extends AccessibilityService {
     /** 上一次 collectNodes 的节点引用（供 tapNode 直点用），下次收集时回收。 */
     private final java.util.Map<Integer, AccessibilityNodeInfo> nodeRefs = new java.util.HashMap<>();
 
-    /** 最近一次感知时「最上层应用窗口」的屏幕 bounds（分屏/小窗检测用；全屏时≈全屏）。 */
+    /** 最近一次感知时「最上层可交互窗口」的屏幕 bounds（分屏/小窗检测用；全屏时≈全屏）。 */
     private static volatile android.graphics.Rect sActiveWinBounds;
+    /** 最近一次感知时最上层窗口的包名；权限控制器/系统对话框也会记录。 */
+    private static volatile String sTopWindowPackage = "";
+    /** 最近一次感知时最上层窗口是否为系统窗口（权限弹窗、系统对话框等）。 */
+    private static volatile boolean sTopWindowSystem;
 
     public static android.graphics.Rect activeWinBounds() { return sActiveWinBounds; }
+    public static String topWindowPackage() { return sTopWindowPackage; }
+    public static boolean topWindowIsSystem() { return sTopWindowSystem; }
+
+    /**
+     * 判断当前节点是否只是系统状态栏等窄系统窗口。
+     *
+     * <p>部分 ROM 会让应用窗口 root=null，但仍返回少量 SystemUI 节点；这些节点
+     * 不能代表应用页面，否则会阻断纯视觉降级并让节点指纹看门狗误判卡死。
+     */
+    public boolean isSystemChromeOnly(List<NodeInfo> nodes) {
+        Rect bounds = sActiveWinBounds;
+        DisplaySpec spec = sSpec;
+        return NodeInfo.isSystemChromeOnly(sTopWindowPackage,
+                bounds == null ? 0 : bounds.height(),
+                spec == null ? 0 : spec.height,
+                nodes == null ? 0 : nodes.size());
+    }
 
     /**
      * 当前前台窗口的包名（取不到返回空串）。
@@ -121,12 +144,17 @@ public class AgentA11yService extends AccessibilityService {
      * 「打开应用/设置页」之后前台是不是真的换成了目标应用。
      */
     public String activePackage() {
+        AccessibilityNodeInfo root = null;
         try {
-            AccessibilityNodeInfo root = getRootInActiveWindow();
+            root = getRootInActiveWindow();
             if (root == null || root.getPackageName() == null) return "";
             return root.getPackageName().toString();
         } catch (Exception e) {
             return "";
+        } finally {
+            if (root != null) {
+                try { root.recycle(); } catch (Exception ignored) { }
+            }
         }
     }
 
@@ -139,23 +167,32 @@ public class AgentA11yService extends AccessibilityService {
         releaseRefs();
         String self = getPackageName();
         android.graphics.Rect topBounds = null;
+        String topPackage = "";
+        boolean topSystem = false;
         try {
             List<android.view.accessibility.AccessibilityWindowInfo> wins = getWindows();
             if (wins != null && !wins.isEmpty()) {
-                // 层级高的（弹窗/对话框）排前面，其节点优先生效
+                // 层级高的（弹窗/对话框）排前面，其节点优先生效。系统权限窗也必须纳入：
+                // 复现路径零模型往返，若这里丢掉 TYPE_SYSTEM，就只能看见被遮挡的底层旧节点。
                 wins.sort((a, b) -> b.getLayer() - a.getLayer());
                 for (android.view.accessibility.AccessibilityWindowInfo w : wins) {
-                    if (w == null || w.getType() != android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION)
+                    if (w == null) continue;
+                    int type = w.getType();
+                    if (type != android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION
+                            && type != android.view.accessibility.AccessibilityWindowInfo.TYPE_SYSTEM)
                         continue;
                     AccessibilityNodeInfo root = w.getRoot();
                     if (root == null) continue;
                     CharSequence pkg = root.getPackageName();
                     if (pkg != null && self.contentEquals(pkg)) { root.recycle(); continue; }
-                    if (topBounds == null) {   // 最上层非自身应用窗口 = 焦点操作窗口
+                    if (topBounds == null) {   // 最上层非自身交互窗口 = 当前真正挡在用户面前的窗口
                         android.graphics.Rect wb = new android.graphics.Rect();
                         w.getBoundsInScreen(wb);
                         topBounds = wb;
-                        Log.i(TAG, "collectNodes 顶层窗口: pkg=" + pkg + " bounds=" + wb.flattenToString());
+                        topPackage = pkg == null ? "" : pkg.toString();
+                        topSystem = type == android.view.accessibility.AccessibilityWindowInfo.TYPE_SYSTEM;
+                        Log.i(TAG, "collectNodes 顶层窗口: pkg=" + pkg + " type=" + type
+                                + " bounds=" + wb.flattenToString());
                     }
                     walk(root, out, 0);
                     root.recycle();
@@ -173,6 +210,8 @@ public class AgentA11yService extends AccessibilityService {
                         android.graphics.Rect wb = new android.graphics.Rect();
                         root.getBoundsInScreen(wb);
                         topBounds = wb;
+                        topPackage = pkg == null ? "" : pkg.toString();
+                        topSystem = false;
                     }
                     walk(root, out, 0);
                 }
@@ -180,6 +219,8 @@ public class AgentA11yService extends AccessibilityService {
             }
         }
         sActiveWinBounds = topBounds;
+        sTopWindowPackage = topPackage;
+        sTopWindowSystem = topSystem;
         return out;
     }
 
@@ -212,8 +253,8 @@ public class AgentA11yService extends AccessibilityService {
     public boolean tapNode(int index) {
         AccessibilityNodeInfo n = nodeRefs.get(index);
         if (n == null) return false;
+        AccessibilityNodeInfo cur = n;
         try {
-            AccessibilityNodeInfo cur = n;
             for (int up = 0; up < 8 && cur != null; up++) {
                 if (cur.isClickable()) return cur.performAction(AccessibilityNodeInfo.ACTION_CLICK);
                 AccessibilityNodeInfo p = cur.getParent();
@@ -223,6 +264,11 @@ public class AgentA11yService extends AccessibilityService {
             return false;
         } catch (Exception e) {
             return false;
+        } finally {
+            // nodeRefs 持有的原始副本留给本轮复用；向上爬取得到的父节点必须释放。
+            if (cur != null && cur != n) {
+                try { cur.recycle(); } catch (Exception ignored) { }
+            }
         }
     }
 
@@ -236,17 +282,31 @@ public class AgentA11yService extends AccessibilityService {
                 if (w == null) continue;
                 AccessibilityNodeInfo root = w.getRoot();
                 if (root == null) continue;
-                AccessibilityNodeInfo focus = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT);
-                AccessibilityNodeInfo target = (focus != null && focus.isEditable()) ? focus : findEditable(root);
-                if (target == null) { root.recycle(); continue; }
-                target.performAction(AccessibilityNodeInfo.ACTION_FOCUS);
-                Bundle args = new Bundle();
-                CharSequence cur = target.getText();
-                args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
-                        (append && cur != null) ? cur.toString() + text : text);
-                boolean ok = target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args);
-                root.recycle();
-                return ok ? null : "ACTION_SET_TEXT 被目标应用拒绝";
+                AccessibilityNodeInfo target = null;
+                try {
+                    AccessibilityNodeInfo focus = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT);
+                    if (focus != null && focus.isEditable()) {
+                        target = focus;
+                    } else {
+                        if (focus != null) {
+                            try { focus.recycle(); } catch (Exception ignored) { }
+                        }
+                        target = findEditable(root);
+                    }
+                    if (target == null) continue;
+                    target.performAction(AccessibilityNodeInfo.ACTION_FOCUS);
+                    Bundle args = new Bundle();
+                    CharSequence cur = target.getText();
+                    args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                            (append && cur != null) ? cur.toString() + text : text);
+                    boolean ok = target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args);
+                    return ok ? null : "ACTION_SET_TEXT 被目标应用拒绝";
+                } finally {
+                    if (target != null) {
+                        try { target.recycle(); } catch (Exception ignored) { }
+                    }
+                    root.recycle();
+                }
             }
             return "虚拟屏页面没有可输入的编辑框";
         } catch (Exception e) { return e.getMessage(); }
@@ -431,8 +491,12 @@ public class AgentA11yService extends AccessibilityService {
             AccessibilityNodeInfo focus = findFocus(AccessibilityNodeInfo.FOCUS_INPUT);
             if (focus != null && focus.isEditable()) {
                 target = focus;
+            } else {
+                if (focus != null) {
+                    try { focus.recycle(); } catch (Exception ignored) { }
+                }
+                target = findEditable(root);
             }
-            if (target == null) target = findEditable(root);
             if (target == null) return "当前页面没有可输入的编辑框（先 tap 聚焦输入框）";
 
             target.performAction(AccessibilityNodeInfo.ACTION_FOCUS);
@@ -443,6 +507,9 @@ public class AgentA11yService extends AccessibilityService {
             boolean ok = target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args);
             return ok ? null : "ACTION_SET_TEXT 被目标应用拒绝";
         } finally {
+            if (target != null) {
+                try { target.recycle(); } catch (Exception ignored) { }
+            }
             root.recycle();
         }
     }
@@ -518,8 +585,9 @@ public class AgentA11yService extends AccessibilityService {
         DisplaySpec s = sSpec;
         if (s == null) return "校准失败：屏幕形态未采集（无障碍服务未连接？）";
         StringBuilder sb = new StringBuilder();
+        AccessibilityNodeInfo root = null;
         try {
-            AccessibilityNodeInfo root = getRootInActiveWindow();
+            root = getRootInActiveWindow();
             if (root == null) return "校准失败：当前无活动窗口";
             Rect rb = new Rect();
             root.getBoundsInScreen(rb);
@@ -539,9 +607,12 @@ public class AgentA11yService extends AccessibilityService {
             } else {
                 sb.append(" ✓");
             }
-            root.recycle();
         } catch (Exception e) {
             return "校准异常：" + e.getMessage();
+        } finally {
+            if (root != null) {
+                try { root.recycle(); } catch (Exception ignored) { }
+            }
         }
         Log.i(TAG, "calibrate: " + sb.toString().replace('\n', ' '));
         return sb.toString();

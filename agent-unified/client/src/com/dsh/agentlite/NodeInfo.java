@@ -88,4 +88,30 @@ public class NodeInfo {
         }
         return String.valueOf(h);
     }
+
+    /**
+     * 仅有窄幅 SystemUI 窗口时，节点不代表应用页面，应切换到截图感知。
+     * 保持纯 Java，供 Android 服务和桌面回归共同使用。
+     */
+    public static boolean isSystemChromeOnly(String pkg, int windowHeight,
+                                              int screenHeight, int nodeCount) {
+        if (nodeCount <= 0 || windowHeight <= 0) return false;
+        if (pkg == null || !(pkg.startsWith("com.android.systemui")
+                || pkg.startsWith("com.oplus.systemui") || "android".equals(pkg))) return false;
+        int maxHeight = Math.max(180, screenHeight > 0 ? screenHeight / 10 : 180);
+        return windowHeight <= maxHeight;
+    }
+
+    /** 由截图抽样像素生成轻量视觉指纹；顶部状态栏和底部手势区由调用方排除。 */
+    public static String visualFingerprint(int width, int height, int[] argb) {
+        if (argb == null || argb.length == 0) return "visual-empty";
+        long h = 17L * Math.max(1, width) + height;
+        for (int p : argb) {
+            int r = ((p >> 16) & 0xff) >> 4;
+            int g = ((p >> 8) & 0xff) >> 4;
+            int b = (p & 0xff) >> 4;
+            h = h * 131 + (r << 8) + (g << 4) + b;
+        }
+        return "visual-" + h;
+    }
 }

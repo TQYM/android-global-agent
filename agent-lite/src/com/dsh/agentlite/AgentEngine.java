@@ -17,7 +17,11 @@ import android.util.Log;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import com.dsh.agentlite.tools.ToolRegistry;
+import com.dsh.agentlite.tools.ValidationResult;
+
 import java.io.ByteArrayOutputStream;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -25,6 +29,7 @@ import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Agent 决策循环：感知 → LLM → 执行 → 自适应等待 → 循环。
@@ -42,6 +47,8 @@ public class AgentEngine {
 
     private static final String TAG = "AgentEngine";
     private static AgentEngine sInstance;
+    /** T05a 任务代际：旧任务的延迟收尾回调不得改写新任务的界面与服务状态。 */
+    private static final AtomicLong RUN_SEQ = new AtomicLong();
 
     public static synchronized AgentEngine get(Context ctx) {
         if (sInstance == null) sInstance = new AgentEngine(ctx.getApplicationContext());
@@ -94,6 +101,52 @@ public class AgentEngine {
     private String foregroundPkg;
     private boolean sawForegroundChange;
     private boolean doneVerifyAsked;
+    /**
+     * T04a：最近一次**核对通过**的期望包名。
+     *
+     * <p>{@link #expectPkg} 是一次性的——核对完就被清空，到 done 时刻通常已经为 null。
+     * 若只看 expectPkg，PROVEN 几乎永远不成立、所有完成都会掉进 WEAK。这里记住
+     * 「确实到达过某个被期望的目标」这一既成事实，作为强证据的来源。
+     */
+    private String arrivedExpectPkg;
+
+    // ---- 操作记忆库（FlowMemory）：成功的路径照做，走不通就回退模型 ----
+    /**
+     * 本次任务里已成功执行、且**可照做**的步骤；终态 {@code done} 时整条写入记忆库。
+     *
+     * <p>采集是默认行为（用户要求「每一步成功执行的操作进记忆库」）：只有
+     * {@link FlowPlan#REPLAYABLE} 白名单内的动作会被收进来，遇到白名单外的动作
+     * （跨设备 {@code remote}、直达 {@code open_api} 等）整条流程立刻作废——
+     * 半条流程照做会在用户无感的情况下走错分支，比不记更糟。
+     */
+    private final List<FlowPlan.Step> recordedSteps = new ArrayList<>();
+    /** 采集是否仍然有效（false = 本次任务已出现不可复现动作，不再采集也不再入库）。 */
+    private boolean recordable;
+    /** 本次转译产出的意图与骨架（入库用；未转译成功时为空 → 只支持精确命中）。 */
+    private String planIntent = "";
+    private String planSkel = "";
+
+    /**
+     * 复现（replayFlow）的三种结局——复现不是只有「成/败」两种：
+     *
+     * <ul>
+     *   <li>{@link #REPLAY_OK}：整条走通，任务完成；</li>
+     *   <li>{@link #REPLAY_STALE}：**路径失效**（界面改版、目标消失、连续无变化、
+     *       前台对不上且返回也救不回）——记录该记一次失败（贬值机制照旧）；</li>
+     *   <li>{@link #REPLAY_INTERRUPTED}：**环境打断**（突发弹窗两轮关不掉、敏感场景、
+     *       无障碍断开、用户停止）——不是路径的错，**不贬值**，直接回退模型规划。
+     *       此前无差别 markFail 的行为会让两次运营弹窗误退役一条好记录。</li>
+     * </ul>
+     */
+    private static final int REPLAY_OK = 1;
+    private static final int REPLAY_STALE = 0;
+    private static final int REPLAY_INTERRUPTED = -1;
+
+    /**
+     * 整条复现里弹窗处置的次数上限（守则 4 通则「连续处置 2 个不同突发界面仍未回主线
+     * → fail」的复现版：处置到上限就回退模型，弹窗不该由记忆库硬扛）。
+     */
+    private static final int MAX_REPLAY_DISMISS = 2;
 
     /**
      * 应用商店/应用市场的包名特征（手册 §16.9 T2 的硬防线）。
@@ -109,6 +162,34 @@ public class AgentEngine {
     /** 未注册动作的连续次数上限：超过就终态，避免和模型无意义地来回。 */
     private static final int MAX_UNREGISTERED_RETRIES = 3;
     private int unregisteredRetries;
+
+    /**
+     * M3 工具声明注册表（2026-10-02 审计 P1-3 接线）：不可变快照，进程内共享。
+     * 只用于 {@code feature_tool_router} 开关开启时的**执行前参数校验网关**；
+     * 关闭（默认）时走旧路径——旧路径的等价拒绝语义由 {@code ActionSchema.isRegistered}
+     * 与 {@code exec()} 各分支自检承担。
+     */
+    private static final ToolRegistry TOOL_REGISTRY = ToolRegistry.builtIn();
+    /** M3 校验连续拒绝计数（防「拒绝→回灌→再错」死循环，与未注册动作同阈值）。 */
+    private int invalidArgRetries;
+
+    // ---- ask 的结构化结果（2026-10-02 审计 P1-2：超时/停止不得伪装成用户回答回灌）----
+    private static final int ASK_ANSWERED = 0;
+    private static final int ASK_TIMEOUT = 1;
+    private static final int ASK_STOPPED = 2;
+    /** 用户主动点「不执行」放弃回答：既不是回答，也不是超时（2026-10-02 真机验证补口）。 */
+    private static final int ASK_SKIPPED = 3;
+    /** ask 连续超时多少次后直接终止（防「问→超时→暂停→再问」死循环）。 */
+    private static final int MAX_ASK_TIMEOUTS = 2;
+    private int askTimeouts;
+
+    /** {@link #askUser} 的结构化结果：只有 ANSWERED 才携带用户提交的文本。 */
+    private static final class AskResult {
+        final int state;
+        final String text;
+        AskResult(int state, String text) { this.state = state; this.text = text; }
+        boolean answered() { return state == ASK_ANSWERED; }
+    }
 
     /** 对话历史保留的「最近条数」（另有首条 system 与任务描述，共 keep+2 条）。 */
     private static final int HISTORY_KEEP = 8;
@@ -159,6 +240,19 @@ public class AgentEngine {
     }
 
     public synchronized boolean start(String task) {
+        return start(task, null, null);
+    }
+
+    /** 同一执行实现；远程入口直接接收本次 runId/commandId 的终态，不读最近历史。 */
+    public interface ResultListener {
+        void onResult(long runId, String commandId, String result, String detail);
+    }
+
+    private long currentRunId;
+    private String currentCommandId;
+    private String terminalResult, terminalDetail;
+
+    public synchronized boolean start(String task, String commandId, ResultListener completion) {
         if (running) return false;
         if (AgentA11yService.get() == null) {
             log("无障碍服务未开启——请在设置里打开「Agent 无障碍服务」");
@@ -168,8 +262,21 @@ public class AgentEngine {
         running = true;
         step = 0;
         currentTask = task;
+        final long mySeq = RUN_SEQ.incrementAndGet();
+        currentRunId = mySeq;
+        currentCommandId = commandId;
+        terminalResult = terminalDetail = null;
         resultShown = false;
         guardSkipStep = -1;
+        // 每个任务都必须从空的完成证据开始；否则上一任务留下的包名/期望会让本次误判成功。
+        expectPkg = null;
+        expectLabel = null;
+        expectEffect = null;
+        lastScreenFp = null;
+        foregroundPkg = null;
+        sawForegroundChange = false;
+        doneVerifyAsked = false;
+        arrivedExpectPkg = null;   // T04a：本任务的「到达过期望目标」证据同样从零开始
         pauseRequested = false;
         supplements.clear();
         OverlayController ovStart = overlay();
@@ -180,21 +287,29 @@ public class AgentEngine {
                 runLoop(task);
             } catch (Throwable t) {
                 if (stopRequested || t instanceof LlmClient.CancelledException) {
-                    // 用户主动停止：不是失败，不打「内部异常」卡片（守则附录 B 分类）
                     log("任务已停止");
                     history("终止", "用户停止");
+                } else if (t instanceof LlmClient.CredentialUnavailableException) {
+                    failTask(t.getMessage());
                 } else {
-                    log("任务异常终止: " + t);                       // 堆栈只进 logcat（O-2 留痕）
-                    failTask("引擎内部异常，任务已停止（可重试）");   // 守则附录 B「内部异常」分类
+                    log("任务异常终止: " + t);
+                    failTask("引擎内部异常，任务已停止（可重试）");
                 }
             } finally {
+                // 释放 running 之前取本次终态，后续任务的重置不会污染这份结果。
+                final String finishedResult = terminalResult == null ? "失败" : terminalResult;
+                final String finishedDetail = terminalDetail == null ? "执行结束但未产生终态" : terminalDetail;
                 activeLlm = null;
                 running = false;
                 OverlayController ov = overlay();
                 if (ov != null) ov.taskEnded(resultShown);
                 status();
+                if (completion != null) {
+                    try { completion.onResult(mySeq, commandId, finishedResult, finishedDetail); }
+                    catch (Throwable callbackError) { Log.e(TAG, "任务结果回报失败", callbackError); }
+                }
                 new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
-                    KeepAliveService.updateState(app, false);
+                    if (mySeq == RUN_SEQ.get()) KeepAliveService.updateState(app, false);
                 }, resultShown ? 4000 : 1000);
             }
         }, "agent-loop");
@@ -277,7 +392,7 @@ public class AgentEngine {
             "- {\"action\":\"tap\",\"px\":0.50,\"py\":0.42}         比例坐标点击(px,py 为 0~1 的屏幕宽/高比例，从截图估计；节点表为空，或表里没有但截图中清楚可见的目标（纯图标按钮等）时使用；swipe 同理可用 px1,py1,px2,py2)\n" +
             "- {\"action\":\"longpress\",\"index\":<节点编号>}      长按节点(可带 \"dur\" 毫秒)\n" +
             "- {\"action\":\"swipe\",\"x1\":<int>,\"y1\":<int>,\"x2\":<int>,\"y2\":<int>,\"dur\":<int>} 滑动\n" +
-            "- {\"action\":\"scroll\",\"direction\":\"up\"|\"down\"}    翻页\n" +
+            "- {\"action\":\"scroll\",\"direction\":\"up\"|\"down\"|\"left\"|\"right\"}    翻页（方向为内容翻页目标）\n" +
             "- {\"action\":\"key\",\"code\":<int>}                  按键(4=返回,3=主页,187=最近任务)\n" +
             "- {\"action\":\"back\"}                              返回上一页（无障碍返回，比 key 4 更可靠，优先用）\n" +
             "- {\"action\":\"home\"}                              回到桌面（比 key 3 更可靠）\n" +
@@ -291,8 +406,17 @@ public class AgentEngine {
             "1. 软件 API 优先法则：凡搜索商品、搜索地点/导航、搜索视频、播放歌曲、拨打电话等需求，首选 open_api 或 open_url 执行系统/应用 API 一步到位，规避繁复的启动页广告与多级点击；\n" +
             "2. 复杂意图深层推理：理解隐式需求与多条件过滤（如「帮我查去深圳北站怎么走」→ 地图导航意图；「搜适合程序员的降噪耳机」→ 电商搜索意图并提取关键修饰词）；\n" +
             "3. 幂等与闭环：能直达不翻页；页面加载中先 wait；若动作执行后屏幕无任何变化，禁止重复点同一位置，必须换策略。\n" +
-            "4. 敏感红线：涉及支付扣费、转账、发送敏感信息前必须使用 ask 提问获得许可。\n" +
-            "5. 跨设备（判断要严）：任务里只要出现**同账号设备**的名字/型号/序号（如「手表」「设备2」「WatchSim」，见下方设备列表），" +
+            "4. 突发界面优先处置（弹窗/广告/权限/异常跳转/新手引导——每步先于原任务检查）：最新截图或节点表顶层出现以下任一情况，先处置它并复验，再继续原任务；严禁对着被遮挡的底层页面旧编号盲点：\n" +
+            "   a) 系统权限弹窗（仅本次允许/使用时允许/始终允许/不允许）：按最小必要原则只授予任务必需的权限，优先「仅本次允许/使用时允许」；定位、通讯录、短信、电话、相机、麦克风等敏感权限任务没用到就点「拒绝/不允许」且不再强求；拿不准就 ask 用户。\n" +
+            "   b) 开屏/插屏广告（带「广告」标识、跳过倒计时、推广图、摇一摇提示）：只点「跳过」「跳过广告」「×」「关闭」这类明确退出按钮，或 key 4 返回；严禁点击广告主体、领取福利、下载 App、参与抽奖。跳过按钮在倒计时就先 wait 1000~2000ms 再找；两轮尝试仍关不掉 → fail 归因「广告无法关闭」，绝不为推进任务而点进广告。\n" +
+            "   c) 应用内运营弹窗（领券/红包/评分/版本更新/会员开通）：与任务无关就点「关闭/×/暂不/取消/稍后再说」；找不到关闭入口就 key 4 一次；「立即更新/立即开通/立即领取」等改变状态的一律不点。\n" +
+            "   d) 登录/注册墙：任务不涉及账号操作时先试「跳过/暂不登录/游客模式/关闭」绕过；绕不过且任务必须登录 → fail 归因「需要登录」，严禁自行输入任何账号、密码、验证码。\n" +
+            "   e) 系统对话框（USB 调试授权、位置服务开启、剪贴板读取等）：非任务必需一律「拒绝/取消/仅本次」；任务必需（如导航需开定位）先 ask 用户确认。\n" +
+            "   f) 异常跳转（突然进了浏览器/应用商店/下载页/抽奖页）：立即 key 4 返回并复验是否回到目标应用；回不去就重新 app 直达一次；仍不行 → fail。严禁进应用商店搜索/安装应用来补救（守则 7）。\n" +
+            "   g) 新手引导/分步指引（高亮遮罩+镂空聚焦、气泡提示「点击这里/试试看」、「下一步/知道了/开始使用/跳过引导」、分步圆点）：先判断任务相关性——任务本身要求「跟着引导设置/开通」（如首次配置、开通某功能）就跟随引导：按引导指示点击被高亮的元素或「下一步/继续/知道了」逐步行进，每步复验界面变化后再走下一步；引导只是首次教学、与任务无关就快速跳过：优先点「跳过/跳过引导/×/不需要」，没有跳过入口就连续点「下一步/知道了/开始使用/继续」走完（一般 3~6 步）。跟随中的红线不豁免：引导要求授权、登录、开启通知、付费、同意协议等动作仍按 a)/d) 与守则 5 处理；引导超过 6 步仍走不完或同一提示循环重复 → 找跳过入口或 fail 归因「引导无法完成」。\n" +
+            "   复验标准：弹窗/遮罩消失、底层目标界面重新可见，才能恢复原任务动作；同一广告/弹窗两轮处置无效必须换策略或 fail；连续处置 2 个不同突发界面仍未回主线 → fail 归因。\n" +
+            "5. 敏感红线：涉及支付扣费、转账、发送敏感信息前必须使用 ask 提问获得许可。\n" +
+            "6. 跨设备（判断要严）：任务里只要出现**同账号设备**的名字/型号/序号（如「手表」「设备2」「WatchSim」，见下方设备列表），" +
             "并且要求那台设备做某件事，就**必须**用 remote 下发，**绝不要在本机自己执行**——即使用户没说「remote」三个字。" +
             "例：「让手表打开计算器」「Ask the WatchSim device to open the Calculator」都必须输出 " +
             "{\"action\":\"remote\",\"device\":\"手表\",\"task\":\"打开计算器\"}；" +
@@ -302,14 +426,14 @@ public class AgentEngine {
             "（写型号/名称/序号并要求那台设备做事）**才允许再用 remote 转出去**；" +
             "任务没点名任何设备时，它就是给你的、必须在**本机**执行——把别人发来的指令原样转回发起方，" +
             "会让两端互相转发直到步数上限（实测死循环），绝不允许。\n" +
-            "6. 打开应用只用 app 动作：不确定是否安装也先用 app，包名不确定就先 list_apps 查一次。" +
+            "7. 打开应用只用 app 动作：不确定是否安装也先用 app，包名不确定就先 list_apps 查一次。" +
             "**严禁**为了打开某个应用而进入应用商店/应用市场（Play 商店、应用宝、各家自带市场）去搜索或安装，" +
             "也严禁用「搜索结果页」代替启动应用；目标应用确实不在设备上时用 fail 说明「未安装」，不要尝试安装。\n" +
-            "7. 启动应用后先确认前台已经是目标应用（下一步节点表会显示它）：若仍停在桌面或商店，" +
+            "8. 启动应用后先确认前台已经是目标应用（下一步节点表会显示它）：若仍停在桌面或商店，" +
             "改用 app 重试一次；再失败就 fail，不要绕道别的方式硬凑。\n" +
-            "8. 同一个动作连续两次都没让屏幕发生变化时，第三次必须换完全不同的思路" +
+            "9. 同一个动作连续两次都没让屏幕发生变化时，第三次必须换完全不同的思路" +
             "（换动作类型、换目标节点、或先 wait），绝不允许原样重复。\n" +
-            "9. 低风险任务（打开应用/页面、查看信息）不要用 ask 打断用户；" +
+            "10. 低风险任务（打开应用/页面、查看信息）不要用 ask 打断用户；" +
             "只有支付、转账、发送消息、删除数据、同意协议这类不可逆动作才必须 ask。\n" +
             "节点编号每一步都会重新分配——只能使用最新节点表里的编号，严禁沿用上一步的旧编号。" +
             "任务只是「打开某应用/页面」时，看到该应用主界面出现就立即 done，不要继续探索；" +
@@ -323,7 +447,7 @@ public class AgentEngine {
 
     // OEM 包名别名（ColorOS/一加实测）
     /** 常用应用中文名 → 包名（模型查表 + startApp 兜底解析）。 */
-    private static final Map<String, String> APP_NAMES = new HashMap<>();
+    static final Map<String, String> APP_NAMES = new HashMap<>();   // 包内共享：FlowMemory 展示中文应用名也要用
     static {
         APP_NAMES.put("微信", "com.tencent.mm");
         APP_NAMES.put("闲鱼", "com.taobao.idlefish");
@@ -401,11 +525,54 @@ public class AgentEngine {
         activeLlm = llm;   // 登记给 stop()：停止时直接断开进行中的请求
         int maxSteps = prefs.maxSteps();
         unregisteredRetries = 0;
+        askTimeouts = 0;
+        invalidArgRetries = 0;
         boolean vision = prefs.vision();
 
         log("任务启动: " + task + " (model=" + prefs.model() + (vision ? " +vision" : "") + ")");
         status();
         KeepAliveService.updateProgress(app, task, "正在理解任务…", 0, maxSteps);
+
+        // ---- 操作记忆库（默认开启，见 Prefs#flowMemory）----
+        // 同一句话成功过一次 → 直接照做：不调转译、不逐步问主模型，零刷新往返。
+        // 走不通就把该记录记一次失败并**继续往下走**（正常模型规划）——
+        // 记忆库只能是加速器，任何时候都不允许变成卡住任务的新故障点。
+        recordedSteps.clear();
+        recordable = true;
+        planIntent = "";
+        planSkel = "";
+        if (prefs.flowMemory()) {
+            FlowPlan.Record memo = FlowMemory.match(app, task, System.currentTimeMillis());
+            if (memo != null) {
+                FlowMemory.markHit(app, memo.fp);
+                log("命中操作记忆库：" + FlowPlan.describe(memo));
+                int replayed = replayFlow(memo, maxSteps);
+                if (replayed == REPLAY_OK) {
+                    FlowMemory.markOk(app, memo.fp);
+                    String summary = "已按记忆库直接完成（" + memo.steps.size() + " 步，未重新规划）";
+                    log("任务完成：" + summary);
+                    history("完成", summary);
+                    OverlayController ovMemo = overlay();
+                    if (ovMemo != null) { resultShown = true; ovMemo.showDone(summary); }
+                    KeepAliveService.updateProgress(app, task, "完成: " + summary, step, maxSteps);
+                    status();
+                    return;
+                }
+                if (stopRequested) {
+                    log("任务已被用户停止");
+                    history("终止", "用户停止");
+                    return;
+                }
+                if (replayed == REPLAY_STALE) {
+                    FlowMemory.markFail(app, memo.fp);
+                    log("记忆库复现未走通（路径已过期），已记一次失败，回退到模型规划");
+                } else {
+                    // 环境打断（弹窗/敏感场景/服务断开）：不是路径的错，不贬值——
+                    // 记录被模型路径成功覆盖时还会刷新 oks，下次仍可直接复现。
+                    log("记忆库复现被环境打断（非路径失效，不记失败），回退到模型规划");
+                }
+            }
+        }
 
         JSONArray messages = new JSONArray();
         // 记忆静默注入（报告 §7.2.2：调用无披露 UI，直接用于个性化执行）
@@ -420,6 +587,13 @@ public class AgentEngine {
         String matched = matchInstalled(task);
         if (!matched.isEmpty()) firstMsg.append("\n已安装应用匹配（直接使用这些包名）：\n").append(matched);
         if (plan != null) firstMsg.append("\n\n【规划简报】\n").append(plan);
+        // 同款流程命中（骨架级）→ 注入一行「上次这条路走通过」作参考（设计方案 §5.5）。
+        // 与开头的「直接复现」是两条通道：那条照做，这条只让模型少绕弯，仍以屏幕实况为准。
+        if (prefs.flowMemory() && !planSkel.isEmpty()) {
+            FlowPlan.Record sameFlow = FlowMemory.matchSkeleton(app, planIntent, planSkel,
+                    System.currentTimeMillis());
+            if (sameFlow != null) firstMsg.append(FlowMemory.hintBlock(sameFlow));
+        }
         messages.put(LlmClient.textMsg("user", firstMsg.toString()));
 
         String lastKey = "";
@@ -431,6 +605,7 @@ public class AgentEngine {
         int shotFails = 0;
         int zeroNodeSteps = 0;
         boolean visionOn = vision;
+        String lastVisualFp = null;
         lastApp = null;
         visionOnly = false;
         visionForced = false;
@@ -516,14 +691,24 @@ public class AgentEngine {
             }
 
             List<NodeInfo> nodes = svc.collectNodes();
+            // 部分 ROM 只返回顶部 SystemUI 状态栏节点，不能把它当作应用页面。
+            // 一旦识别到该形态，整项任务固定走截图+比例坐标，避免下一步又回到节点路径。
+            boolean chromeOnly = svc.isSystemChromeOnly(nodes);
+            if (chromeOnly) {
+                visionForced = true;
+                nodes = new java.util.ArrayList<>();
+                zeroNodeSteps++;
+                log("感知到仅系统状态栏节点：忽略节点表，切换纯视觉模式（top="
+                        + AgentA11yService.topWindowPackage() + "）");
+            }
             // 本助手拉应用引发的系统启动确认弹窗（「"Agent Lite"想要打开"XX"」）——
             // 用户已在事前授权过该应用，代点「仅本次允许」继续，不打断任务（报告 §5.1.1 授权覆盖语义）
             if (autoConfirmLaunch(svc, nodes)) { sleep(800); continue; }
             // 服务条款/隐私政策 = 用户的不可逆授权：**不代点**，暂停交给用户
             // （手册 §16.2 P0-2；引擎不替用户同意任何协议）
             if (isTermsDialog(nodes)) {
-                // 无限制模式（默认开，见 Prefs#autoAcceptTerms）：代点同意并继续。
-                // 关掉开关即回到「暂停交还用户」——两种行为都保留，便于随时切回。
+                // 无限制模式（默认关，见 Prefs#autoAcceptTerms / 2026-10-02 审计 P1-5）：
+                // 显式开启时代点同意并继续；未开启回到「暂停交还用户」的安全默认。
                 if (autoAgreeTerms(svc, nodes)) { sleep(800); continue; }
                 log("检测到服务条款/隐私政策弹窗：暂停并等待你自行确认");
                 if (!enterPause("检测到服务条款/隐私政策，请自行确认后点「交还 AI」继续")) {
@@ -532,12 +717,13 @@ public class AgentEngine {
                 }
                 continue;
             }
-            if (nodes.isEmpty()) {   // 加载中的空屏不值得问模型
+            if (nodes.isEmpty() && !chromeOnly) {   // 加载中的空屏不值得问模型
                 sleep(1200);
                 nodes = svc.collectNodes();
             }
             // 弱期望核验：open_url/open_api/纯视觉坐标点击必须让屏幕内容变化
-            String fpNow = NodeInfo.fingerprint(nodes);
+            String fpNow = (visionForced || visionOnly) && lastVisualFp != null
+                    ? lastVisualFp : NodeInfo.fingerprint(nodes);
             if (expectEffect != null) {
                 String effLabel = expectEffect;
                 expectEffect = null;
@@ -595,6 +781,7 @@ public class AgentEngine {
                 String dataUrl = bmpToDataUrl(bmp, a11yBlind ? 1216 : 480, a11yBlind ? 78 : 45);
                 if (dataUrl != null) {
                     shotFails = 0;
+                    lastVisualFp = visualFingerprint(bmp);
                     int lum = meanLuma(bmp);
                     log("截图亮度≈" + lum + (lum < 8 ? "（黑屏，截图可能被屏蔽）" : ""));
                     if ((visionForced || zeroNodeSteps >= 2) && lum >= 8) {
@@ -672,6 +859,10 @@ public class AgentEngine {
                     reason = "两条模型通道都不可用：" + ure.humanReason;
                 } else if (ure.viaGateway) {
                     reason = "账号额度暂时不可用：" + ure.humanReason + "（服务端上游问题，非本机设置）";
+                } else if (ure.humanReason.contains("自己的模型服务额度不足")) {
+                    // 自带通道欠费：文案已自含出口（去自己的服务账号充值 / 主动切账号额度）。
+                    // 再追加「填写那份接口配置」等于让用户去改他正在用的配置（2026-10-08 真机实测）。
+                    reason = ure.humanReason;
                 } else {
                     reason = ure.humanReason + "（在「设置 → 高级」里填写的那份接口配置）";
                 }
@@ -715,20 +906,61 @@ public class AgentEngine {
                 if (ovAsk != null) {
                     ovAsk.showAsk(q);
                 }
-                String answer = askUser(q);
+                AskResult answer = askUser(q);
                 if (ovAsk != null) {
                     ovAsk.hideCard();
                 }
-                log("用户回答: " + answer);
+                if (answer.state == ASK_STOPPED) {
+                    // 用户在等待回答期间点了停止：这不是回答，直接走用户停止终态
+                    log("任务已被用户停止（等待回答期间）");
+                    history("终止", "用户停止");
+                    return;
+                }
+                if (answer.state == ASK_SKIPPED) {
+                    // 用户主动放弃回答（「不执行」）：待确认的动作绝不能执行，也不再拿
+                    // 「用户没答复」去骗模型继续——直接终止，让用户重新发起任务。
+                    log("用户放弃了这次确认，任务已停止（待确认的操作未执行）");
+                    history("终止", "用户放弃确认");
+                    return;
+                }
+                if (answer.state == ASK_TIMEOUT) {
+                    // P1-2：超时不是一句「用户没答复」的自然语言，更不是继续执行的许可——
+                    // 敏感确认悬空时设备必须保持零动作。首次暂停交还用户；
+                    // 连续超时到阈值直接终止，避免把无人值守的任务反复带回同一步。
+                    askTimeouts++;
+                    log("用户未在 5 分钟内回答确认问题（第 " + askTimeouts + " 次）");
+                    messages.put(LlmClient.textMsg("assistant", reply));
+                    if (askTimeouts >= MAX_ASK_TIMEOUTS) {
+                        failTask("连续 " + askTimeouts + " 次等待确认超时（5 分钟无回答），已停止任务——待确认的操作未执行");
+                        return;
+                    }
+                    if (!enterPause("你未在 5 分钟内回答确认问题，任务已暂停。点「交还 AI」后会重新评估；需要继续请留意下一次提问")) {
+                        history("终止", "超时暂停期间用户停止");
+                        return;
+                    }
+                    messages.put(LlmClient.textMsg("user",
+                            "【系统事件】USER_TIMEOUT：上一条确认问题 5 分钟未获回答，已暂停后交还。"
+                                    + "请重新评估当前屏幕与任务状态；未获用户明确确认前，"
+                                    + "不得执行发送、删除、支付等不可逆动作。"));
+                    continue;
+                }
+                askTimeouts = 0;   // 得到明确回答即清零
+                log("用户回答: " + answer.text);
                 messages.put(LlmClient.textMsg("assistant", reply));
                 messages.put(LlmClient.textMsg("user",
-                        "用户回答：「" + trim(answer, 200) + "」。请据此继续（或 done）。"));
+                        "用户回答：「" + trim(answer.text, 200) + "」。请据此继续（或 done）。"));
                 continue;
             }
             if ("done".equals(kind)) {
                 // 复验先行：一次都没观察到前台变化、也没给出可核对的到达目标时，
                 // 先要求模型自证（只追问一次；第二次直接接受，避免把用户卡在循环里）
-                if (!sawForegroundChange && expectPkg == null && !doneVerifyAsked) {
+                // T04a：先给完成证据定级——无证据不得记为「完成」。
+                // expectPkg 是一次性核对项，核对完即被清空，故用 arrivedExpectPkg 记住
+                // 「确实到达过被期望的目标」这一既成事实，否则 PROVEN 永不成立。
+                String expectForJudge = (expectPkg != null) ? expectPkg : arrivedExpectPkg;
+                int verdict = judgeDone(sawForegroundChange, expectForJudge, foregroundPkg);
+                // 复验先行：无证据时追问一次（只追问一次；第二次不再放行，转「不确定」终态）
+                if (verdict == DONE_UNPROVEN && !doneVerifyAsked) {
                     doneVerifyAsked = true;
                     log("done 缺少完成证据，向模型追问一次");
                     messages.put(LlmClient.textMsg("assistant", reply));
@@ -738,9 +970,37 @@ public class AgentEngine {
                                     + "未达成请继续执行，做不到就如实输出 fail。"));
                     continue;
                 }
+                if (verdict == DONE_UNPROVEN) {
+                    // 二次 done 仍无证据：不得记「完成」、不得进记忆库（守则 I-3：不以自报当成功）。
+                    // 终态如实降级为「不确定」，把判断权交回用户。
+                    recordable = false;
+                    String note = "未观察到目标达成的证据，结果待人工确认";
+                    log("任务结果不确定：" + note
+                            + (action.optString("summary", "").isEmpty()
+                                    ? "" : "（模型自述：" + trim(action.optString("summary", ""), 120) + "）"));
+                    history("不确定", note);
+                    OverlayController ovUn = overlay();
+                    if (ovUn != null) { resultShown = true; ovUn.showUncertain(note); }
+                    KeepAliveService.updateProgress(app, task, "不确定: " + note, step, maxSteps);
+                    return;
+                }
                 // 完成卡片（报告 §4.3.1）：绿色语义，摘要+产物收口
                 String summary = action.optString("summary", "完成");
                 log("任务完成：" + summary);
+                // 操作记忆库入库：只有终态 done 才写（fail/终止不写——失败路径不可信）。
+                // 入库的是「本次实际走通的那条路」，不是模型当初的建议路径。
+                if (recordable && !recordedSteps.isEmpty()) {
+                    String skelFp = planSkel.isEmpty()
+                            ? "" : FlowPlan.skeletonFp(planIntent, planSkel);
+                    FlowPlan.Record saved = FlowMemory.commit(app, task, FlowPlan.normalize(task),
+                            planIntent, skelFp, recordedSteps);
+                    if (saved != null) {
+                        log("已写入操作记忆库：" + saved.steps.size()
+                                + " 步（下次同款任务直接复现，见「记忆库」）");
+                    } else {
+                        log("操作记忆未入库：" + FlowPlan.rejectReason(recordedSteps));
+                    }
+                }
                 history("完成", summary);
                 OverlayController ov = overlay();
                 if (ov != null) { resultShown = true; ov.showDone(summary); }
@@ -751,6 +1011,30 @@ public class AgentEngine {
                 // 失败话术范式（报告 §4.3.2）：归因由模型给出，引擎统一加工
                 failTask(action.optString("reason", "模型未给出归因"));
                 return;
+            }
+
+            // M3-02 执行前参数校验网关（2026-10-02 审计 P1-3 接线）：
+            // feature_tool_router 开启时，未知参数/缺参/类型/范围/枚举错误在 exec() 之前
+            // 被拒绝——校验失败的动作**不触碰设备**，只回灌一次短错误；连续非法到阈值
+            // 直接终止。开关关闭（默认）走旧路径，拒绝语义不变（isRegistered + exec 自检）。
+            if (prefs.featureFlags().toolRouter()) {
+                ValidationResult vr = TOOL_REGISTRY.validate(kind, actionToArgs(action));
+                if (!vr.valid) {
+                    invalidArgRetries++;
+                    String first = vr.errors.get(0).toString();
+                    log("M3 参数校验拒绝（第 " + invalidArgRetries + " 次）：" + first);
+                    if (invalidArgRetries > MAX_UNREGISTERED_RETRIES) {
+                        failTask("模型连续给出参数非法的动作，无法继续（可重试或更换模型）");
+                        return;
+                    }
+                    messages.put(LlmClient.textMsg("assistant", reply));
+                    messages.put(LlmClient.textMsg("user",
+                            "动作 " + kind + " 参数校验未通过：" + first
+                                    + "。请按动作词表修正参数（不要携带未声明的字段）后，"
+                                    + "重新只输出一个合法 JSON 动作。"));
+                    continue;
+                }
+                invalidArgRetries = 0;   // 一次合法即清零，历史错误不累计污名化
             }
 
             // 硬防线：任务没要求装应用时，不允许在应用商店里操作
@@ -806,6 +1090,29 @@ public class AgentEngine {
             // 自适应等待：感知树变化或超时（150ms 轮询，上限 1.0s，提速）
             if (!"wait".equals(kind)) waitForChange(svc, nodes);
 
+            // 操作记忆库：把这一步成功执行的动作压成「可照做的一步」（含语义锚点与比例坐标）。
+            // 一旦出现白名单外的动作（跨设备 remote、直达 API、信息类）就整条作废——
+            // 记忆库里宁可没有这条路径，也不能有一条缺了几步的路径。
+            //
+            // ★ 必须在 waitForChange **之后**采集：`app` 启动是异步的，执行完立刻读
+            //   activePackage() 拿到的往往还是旧应用。那会把「打开设置之后前台是设置」
+            //   记成「前台是桌面」，而这条记录正是复现时的前台复验依据——等于用记录方式
+            //   把一条本来能用的路径自己废掉（锚点仍取自执行前的 nodes，不受影响）。
+            if (recordable) {
+                int[] scr = screenSize();
+                FlowPlan.Step cap = captureStep(action, nodes, scr[0], scr[1], svc.activePackage());
+                if (cap == null) {
+                    recordable = false;
+                    recordedSteps.clear();
+                } else if (PopupGuard.isDismissAnchor(cap, task)) {
+                    // 一次性弹窗/广告关闭动作是环境噪音：不写进路径，也不作废其余可复现步骤。
+                    // 否则下次弹窗不出现时，这一步会定位失败，反过来污染一条好记录。
+                    log("操作记忆跳过一次性突发界面步骤：" + FlowPlan.stepLabel(cap));
+                } else {
+                    recordedSteps.add(cap);
+                }
+            }
+
             // 死循环与重复检测（含比例坐标与像素坐标聚类，防反复点同一区域）
             int ax = action.optInt("x", (int) (action.optDouble("px", 0.0) * 1000));
             int ay = action.optInt("y", (int) (action.optDouble("py", 0.0) * 1000));
@@ -813,14 +1120,30 @@ public class AgentEngine {
             repeats = actKey.equals(lastKey) ? repeats + 1 : 0;
             lastKey = actKey;
 
-            // 无进展看门狗：屏幕指纹连续 6 步不变 → 任务卡死，中止
+            // 无进展看门狗：普通节点用语义指纹；纯视觉/状态栏污染场景改用截图摘要。
+            // 截图失败时不在纯视觉模式下判定「屏幕不变」，避免把感知失败误报为卡死。
             List<NodeInfo> fpNodes = svc.collectNodes();
-            fpHistory.add(fpNodes.isEmpty() ? "empty-" + (step % 2) : NodeInfo.fingerprint(fpNodes));
+            String fpNowForWatchdog = NodeInfo.fingerprint(fpNodes);
+            boolean visualEvidence = true;
+            if (visionForced || visionOnly) {
+                // 动作后的截图必须是新采样，不能复用动作前摘要，否则连续动作会被伪装成无变化。
+                Bitmap afterShot = svc.screenshot();
+                String afterVisual = visualFingerprint(afterShot);
+                if (afterVisual != null) {
+                    lastVisualFp = afterVisual;
+                    fpNowForWatchdog = afterVisual;
+                } else {
+                    // 无截图证据时保留动作历史，但禁止依据节点/旧截图误杀纯视觉任务。
+                    fpNowForWatchdog = "visual-unavailable-" + step;
+                    visualEvidence = false;
+                }
+            }
+            fpHistory.add(fpNowForWatchdog);
             if (fpHistory.size() >= 6) {
                 java.util.List<String> tail = fpHistory.subList(fpHistory.size() - 6, fpHistory.size());
                 boolean allSame = true;
                 for (int i = 1; i < tail.size(); i++) if (!tail.get(i).equals(tail.get(0))) { allSame = false; break; }
-                if (allSame) {
+                if (allSame && visualEvidence) {
                     failTask("屏幕连续 6 步无任何变化，疑似卡死，已自动停止（可缩小任务范围后重试）");
                     return;
                 }
@@ -895,6 +1218,407 @@ public class AgentEngine {
      * <p>历史里每条感知消息可能带几十个节点文本，不裁剪的话长任务会把上下文
      * 撑到几百 KB——既拖慢请求，也可能超出模型上下文被直接拒绝（手册 §15.2-10）。
      */
+    // ---- 操作记忆库：采集与复现 ----
+
+    /**
+     * 直接照做操作记忆库里的步骤——「之后直接复现记忆库就可以完成操作」的落地。
+     *
+     * <p>刻意**复用 {@link #exec}** 而不是另写一套执行逻辑：手势降级、root 兜底、输入法借用
+     * 这些既有能力必须与模型驱动时逐字一致，否则复现会变成第二条有自己缺陷的路径。
+     *
+     * <p>五道保护，前三道不过就返回 {@link #REPLAY_STALE} 交回主循环（任务不会因记忆库而失败）：
+     * <ol>
+     *   <li><b>敏感场景照旧拦截</b>——复现不是免检通道（返回 {@link #REPLAY_INTERRUPTED}，
+     *       不贬值：敏感界面是环境，不是路径的错）；</li>
+     *   <li><b>语义优先、坐标兜底</b>，两者都拿不到就先按 {@link PopupGuard} 查弹窗遮挡，
+     *       确认没有才判路径过期（不猜位置）；</li>
+     *   <li><b>连续两步屏幕无变化</b> → 先查弹窗遮挡，再判定界面已变，立刻停手；</li>
+     *   <li><b>前台包名复验</b>——记录里写了"这一步之后应在哪个应用"就核对一次，
+     *       不符先按守则 4 f) {@code key 4} 返回复验（异常跳转），救不回才判过期；</li>
+     *   <li><b>突发弹窗处置</b>（守则 4 的复现落地）——复现零模型往返，没有模型在看屏幕，
+     *       弹窗由引擎经 {@link PopupGuard} 识别并关闭，两轮关不掉即环境打断。</li>
+     * </ol>
+     *
+     * @return {@link #REPLAY_OK} = 整条走通；{@link #REPLAY_STALE} = 路径失效（应记失败）；
+     *         {@link #REPLAY_INTERRUPTED} = 环境打断（不贬值，直接回退模型）
+     */
+    private int replayFlow(FlowPlan.Record r, int maxSteps) {
+        int total = r.steps.size();
+        int noChange = 0;
+        int dismissed = 0;    // 已处置的突发弹窗数（上限 MAX_REPLAY_DISMISS）
+        int executed = 0;     // 真正执行的业务步骤；全是旧弹窗步时绝不能伪报成功
+        int backRetries = 0;  // 异常跳转的返回次数（守则 4 f 的 key 4 复验，上限 2）
+        int[] scr = screenSize();
+        for (int i = 0; i < total; i++) {
+            if (stopRequested) { log("记忆库复现被用户停止"); return REPLAY_INTERRUPTED; }
+            FlowPlan.Step s = r.steps.get(i);
+            AgentA11yService svc = AgentA11yService.get();
+            if (svc == null) { log("记忆库复现中止：无障碍服务断开"); return REPLAY_INTERRUPTED; }
+
+            List<NodeInfo> nodes = svc.collectNodes();
+            if (!nodes.isEmpty()) {
+                String hit = SensitiveGuard.scan(nodes);
+                if (hit != null) {
+                    log("记忆库复现途中命中敏感场景（" + hit + "）——非路径失效，不记失败，改为走模型路径");
+                    return REPLAY_INTERRUPTED;
+                }
+            }
+            // 守则 4 要求“每步先于原任务检查顶层突发界面”。不能等业务锚点定位失败再查：
+            // 被遮挡时底层节点仍可能留在树里，定位会假成功、实际点击却落在遮罩上。
+            int popup = PopupGuard.findDismissable(nodes, currentTask, scr[0], scr[1]);
+            if (popup >= 0) {
+                if (dismissed >= MAX_REPLAY_DISMISS) {
+                    log("记忆库复现连续处置突发界面已到上限——非路径失效，不记失败");
+                    return REPLAY_INTERRUPTED;
+                }
+                if (dismissPopupOnce(svc, scr[0], scr[1])) {
+                    dismissed++;
+                    log("记忆库复现先关闭顶层突发界面，再重试第 " + (i + 1) + " 步");
+                    i--;
+                    continue;
+                }
+                log("记忆库复现识别到突发界面但无法安全关闭——非路径失效，不记失败");
+                return REPLAY_INTERRUPTED;
+            }
+            JSONObject act = stepToAction(s, nodes, scr[0], scr[1]);
+            if (act == null) {
+                // ★ 整合点（2026-09-19）：定位不到 ≠ 直接放弃，按序三查——
+                //   ① 这一步本身是记录里的「关弹窗」步骤（当时有运营弹窗，现在没了）
+                //      → 锚点命中关闭词表 → 跳过它继续（后续 pkgAfter/指纹复验兜底）；
+                //   ② 当前屏幕被突发弹窗/广告遮挡 → 找得到关闭按钮 → 点掉 → 重试本步；
+                //   ③ 都不是 → 界面真的改版了 → 路径失效（STALE，该记失败）。
+                if (PopupGuard.isDismissAnchor(s, currentTask)) {
+                    log("记忆库复现第 " + (i + 1) + " 步是旧版记录里的一次性弹窗步骤（"
+                            + FlowPlan.stepLabel(s) + "），现在弹窗不在，兼容跳过");
+                    continue;
+                }
+                if (PopupGuard.findDismissable(nodes, currentTask, scr[0], scr[1]) >= 0) {
+                    if (dismissed >= MAX_REPLAY_DISMISS) {
+                        log("记忆库复现突发界面处置已到上限——非路径失效，不记失败");
+                        return REPLAY_INTERRUPTED;
+                    }
+                    if (dismissPopupOnce(svc, scr[0], scr[1])) {
+                        dismissed++;
+                        log("记忆库复现途中关闭了突发弹窗，重试第 " + (i + 1) + " 步");
+                        i--;
+                        continue;
+                    }
+                    log("记忆库复现被突发弹窗挡住且无法安全关闭——非路径失效，不记失败，回退模型规划");
+                    return REPLAY_INTERRUPTED;
+                }
+                log("记忆库复现第 " + (i + 1) + " 步定位不到目标（" + FlowPlan.stepLabel(s) + "），路径已过期");
+                return REPLAY_STALE;
+            }
+            String before = NodeInfo.fingerprint(nodes);
+            String label;
+            try {
+                label = exec(svc, act, nodes);
+                executed++;
+            } catch (Exception e) {
+                log("记忆库复现第 " + (i + 1) + " 步执行失败：" + trim(e.getMessage(), 160));
+                return REPLAY_STALE;
+            }
+            step = i + 1;
+            status();
+            log("记忆库复现 " + (i + 1) + "/" + total + "：" + label);
+            OverlayController ov = overlay();
+            if (ov != null) ov.progress("记忆库复现 " + (i + 1) + "/" + total
+                    + " · " + FlowPlan.stepLabel(s));
+            KeepAliveService.updateProgress(app, currentTask, "记忆库复现 " + (i + 1) + "/" + total
+                    + " · " + FlowPlan.stepLabel(s), i + 1, Math.max(total, maxSteps));
+
+            if (!"wait".equals(s.act)) waitForChange(svc, nodes);
+
+            String after = NodeInfo.fingerprint(svc.collectNodes());
+            if (!"wait".equals(s.act) && before.equals(after)) {
+                noChange++;
+                if (noChange >= 2) {
+                    // ★ 整合点：无变化也可能是弹窗挡住（坐标兜底打在弹窗上无效果）
+                    //   ——先关弹窗再判死，与守则 4「先处置再继续」对齐。
+                    int blocked = PopupGuard.findDismissable(svc.collectNodes(), currentTask, scr[0], scr[1]);
+                    if (blocked >= 0) {
+                        if (dismissed >= MAX_REPLAY_DISMISS) {
+                            log("记忆库复现连续无变化且突发界面处置已到上限——非路径失效，不记失败");
+                            return REPLAY_INTERRUPTED;
+                        }
+                        if (dismissPopupOnce(svc, scr[0], scr[1])) {
+                            dismissed++;
+                            log("记忆库复现：连续无变化源于突发弹窗遮挡，已关闭，重试第 " + (i + 1) + " 步");
+                            noChange = 0;
+                            i--;
+                            continue;
+                        }
+                        log("记忆库复现连续无变化且突发界面无法关闭——非路径失效，不记失败");
+                        return REPLAY_INTERRUPTED;
+                    }
+                    log("记忆库复现连续两步屏幕无变化，判定界面已变，路径已过期");
+                    return REPLAY_STALE;
+                }
+            } else {
+                noChange = 0;
+            }
+            if (!s.pkgAfter.isEmpty()) {
+                String now = svc.activePackage();
+                if (now != null && !now.isEmpty() && !now.equals(s.pkgAfter)) {
+                    // ★ 整合点：异常跳转（误触广告/商店——守则 4 f 的复现版）：
+                    //   key 4 返回一次并复验，救得回就继续，救不回才判过期。
+                    if (backRetries < 2) {
+                        backRetries++;
+                        try {
+                            JSONObject back = new JSONObject().put("action", "key").put("code", 4);
+                            exec(svc, back, svc.collectNodes());
+                            waitForChange(svc, nodes);
+                        } catch (Exception ignore) { }
+                        if (s.pkgAfter.equals(svc.activePackage())) {
+                            log("记忆库复现途中发生异常跳转，已返回并复验，继续复现");
+                            continue;
+                        }
+                    }
+                    log("记忆库复现第 " + (i + 1) + " 步后异常跳转且两次返回未恢复——环境打断，不记路径失败");
+                    return REPLAY_INTERRUPTED;
+                }
+            }
+        }
+        // 兼容旧记录时可能把所有步骤都识别为一次性弹窗。一步业务动作都没执行，绝不是完成证据。
+        if (executed <= 0) {
+            log("记忆库复现没有执行任何有效业务步骤，拒绝伪报完成，回退模型规划");
+            return REPLAY_INTERRUPTED;
+        }
+        AgentA11yService finalSvc = AgentA11yService.get();
+        if (finalSvc == null) return REPLAY_INTERRUPTED;
+        // 最后一步本身可能刚打开带运营弹窗的目标页；若此处不再扫一次，会在弹窗仍挡着时伪报完成。
+        while (true) {
+            List<NodeInfo> finalNodes = finalSvc.collectNodes();
+            if (!finalNodes.isEmpty() && SensitiveGuard.scan(finalNodes) != null) {
+                log("记忆库复现到达终页但命中敏感场景——不自动处置，不记路径失败");
+                return REPLAY_INTERRUPTED;
+            }
+            if (PopupGuard.findDismissable(finalNodes, currentTask, scr[0], scr[1]) < 0) break;
+            if (dismissed >= MAX_REPLAY_DISMISS) {
+                log("记忆库复现终页仍有突发界面且处置已到上限——不记路径失败");
+                return REPLAY_INTERRUPTED;
+            }
+            if (!dismissPopupOnce(finalSvc, scr[0], scr[1])) {
+                log("记忆库复现终页突发界面无法安全关闭——不记路径失败");
+                return REPLAY_INTERRUPTED;
+            }
+            dismissed++;
+            log("记忆库复现已关闭终页突发界面并复验");
+        }
+        // 最终前台证据：优先最后一步的 pkgAfter；没有时退到记录中的主应用。
+        String expectedFinal = "";
+        if (!r.steps.isEmpty()) expectedFinal = r.steps.get(r.steps.size() - 1).pkgAfter;
+        if (expectedFinal == null || expectedFinal.isEmpty()) expectedFinal = r.app;
+        String actualFinal = finalSvc.activePackage();
+        if (expectedFinal != null && !expectedFinal.isEmpty()
+                && actualFinal != null && !actualFinal.isEmpty()
+                && !expectedFinal.equals(actualFinal)) {
+            log("记忆库复现步骤走完但最终前台证据不匹配：期望 " + expectedFinal
+                    + "，实际 " + actualFinal + "；不记失败，回退模型复核");
+            return REPLAY_INTERRUPTED;
+        }
+        return REPLAY_OK;
+    }
+
+    /**
+     * 在当前屏幕找突发弹窗的关闭按钮并点掉一次（守则 4 的引擎侧落地——模型路径靠提示词
+     * 让模型自己处置，复现路径零模型往返，必须引擎自己干）。
+     *
+     * <p>点完以**屏幕指纹变化**复验：没找到按钮、点了没效果、执行异常都返回 false
+     * （调用方拿两轮 false 判「弹窗关不掉」，属于环境打断而非路径失效）。
+     */
+    private boolean dismissPopupOnce(AgentA11yService svc, int screenW, int screenH) {
+        try {
+            List<NodeInfo> nodes = svc.collectNodes();
+            int idx = PopupGuard.findDismissable(nodes, currentTask, screenW, screenH);
+            if (idx < 0 || idx >= nodes.size()) return false;
+            JSONObject tap = new JSONObject();
+            tap.put("action", "tap");
+            tap.put("index", nodes.get(idx).index);
+            String before = NodeInfo.fingerprint(nodes);
+            exec(svc, tap, nodes);
+            log("记忆库复现：点掉突发弹窗（" + trim(nodes.get(idx).label(), 40) + "）");
+            waitForChange(svc, nodes);
+            return !before.equals(NodeInfo.fingerprint(svc.collectNodes()));
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * 把模型输出的动作 JSON 压成 M3 校验所需的 {@code Map<String, String>}。
+     *
+     * <p>两个刻意的归一化：
+     * <ul>
+     *   <li>剔除 {@code action} 键本身——它标记动作名而非参数，留在 map 里会被
+     *       M3 的 unknown-parameter 检查误拒（M3 声明里没有名为 action 的参数）；</li>
+     *   <li>JSON 整数经 org.json 可能承载为 {@code Double}（如 {@code 3.0}），
+     *       直接 {@code String.valueOf} 会得到 "3.0" 并被 integer 参数误判成类型错误。
+     *       整数值的浮点统一落回整数串——M3 的职责是拦**真**错，不是制造假阴性。</li>
+     * </ul>
+     */
+    private static Map<String, String> actionToArgs(JSONObject a) {
+        Map<String, String> out = new HashMap<>();
+        if (a == null) return out;
+        java.util.Iterator<String> keys = a.keys();
+        while (keys.hasNext()) {
+            String k = keys.next();
+            if ("action".equals(k)) continue;
+            Object v = a.opt(k);
+            if (v == null || v == JSONObject.NULL) continue;
+            if (v instanceof Double || v instanceof Float) {
+                double d = ((Number) v).doubleValue();
+                if (!Double.isInfinite(d) && d == Math.rint(d)
+                        && Math.abs(d) <= 9_007_199_254_740_992L) {
+                    out.put(k, String.valueOf((long) d));
+                    continue;
+                }
+            }
+            out.put(k, String.valueOf(v));
+        }
+        return out;
+    }
+
+    /**
+     * 把记忆库里的一步还原成动作 JSON；还原不了返回 {@code null}（调用方放弃复现）。
+     *
+     * <p>点击类动作先按 **rid/文本锚点**在当前屏幕重新定位，再退到比例坐标——
+     * 这正是「界面改版后仍能照做」与「死坐标回放」的分界。
+     */
+    private JSONObject stepToAction(FlowPlan.Step s, List<NodeInfo> nodes, int w, int h) {
+        try {
+            JSONObject a = new JSONObject();
+            a.put("action", s.act);
+            switch (s.act) {
+                case "app":
+                    if (s.pkg.isEmpty()) return null;
+                    a.put("package", s.pkg);
+                    return a;
+                case "text":
+                    if (s.text.isEmpty()) return null;
+                    a.put("text", s.text);
+                    return a;
+                // open_url 不设还原分支：R-5 禁止外部链接零确认回放（2026-10-02 P1-1），
+                // 旧库里遗留的 open_url 步骤在此落入 default → 放弃复现，回退模型规划。
+                case "key":
+                    a.put("code", s.key < 0 ? 4 : s.key);
+                    return a;
+                case "scroll":
+                    a.put("direction", s.arg.isEmpty() ? "down" : s.arg);
+                    return a;
+                case "edge_back":
+                    a.put("side", s.arg.isEmpty() ? "left" : s.arg);
+                    return a;
+                case "swipe":
+                    if (s.px < 0 || s.py < 0 || s.px2 < 0 || s.py2 < 0) return null;
+                    a.put("px1", s.px); a.put("py1", s.py);
+                    a.put("px2", s.px2); a.put("py2", s.py2);
+                    if (s.dur > 0) a.put("dur", s.dur);
+                    return a;
+                case "tap":
+                case "longpress": {
+                    int idx = FlowPlan.matchAnchor(s, nodes, w, h);
+                    if (idx >= 0 && nodes != null && idx < nodes.size()) {
+                        a.put("index", nodes.get(idx).index);
+                    } else if (s.hasPoint()) {
+                        a.put("px", s.px);
+                        a.put("py", s.py);
+                    } else {
+                        return null;      // 定位不到又没有坐标 → 不猜
+                    }
+                    if ("longpress".equals(s.act)) a.put("dur", s.dur > 0 ? s.dur : 900);
+                    return a;
+                }
+                case "back":
+                case "home":
+                case "wait":
+                    return a;
+                default:
+                    return null;   // 白名单外的动作不该在库里；万一有，宁可放弃复现
+            }
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * 把刚刚成功执行的动作压成记忆库里的一步；不可照做的动作返回 {@code null}
+     * （调用方据此把整条流程作废）。
+     *
+     * <p>锚点取自**执行前**那份节点表（{@code nodes}）：动作执行完屏幕可能已经变了，
+     * 那时再取锚点会记成"点完之后那个页面的元素"，下次复现必然点错。
+     */
+    private FlowPlan.Step captureStep(JSONObject a, List<NodeInfo> nodes, int w, int h, String pkgAfter) {
+        String kind = a.optString("action", "");
+        if (!FlowPlan.REPLAYABLE.contains(kind) || w <= 0 || h <= 0) return null;
+        FlowPlan.Step s = new FlowPlan.Step();
+        s.act = kind;
+        switch (kind) {
+            case "app": s.pkg = a.optString("package", ""); break;
+            case "text": s.text = a.optString("text", ""); break;
+            // open_url 已移出 REPLAYABLE：入口判定直接拒收（返回 null 作废整条采集），
+            // 不再需要专门的采集分支（2026-10-02 审计 P1-1）。
+            case "key": s.key = a.optInt("code", 4); break;
+            case "scroll": s.arg = a.optString("direction", "down"); break;
+            case "edge_back": s.arg = a.optString("side", "left"); break;
+            case "swipe": {
+                if (a.has("px1")) {
+                    s.px = a.optDouble("px1", -1); s.py = a.optDouble("py1", -1);
+                    s.px2 = a.optDouble("px2", -1); s.py2 = a.optDouble("py2", -1);
+                } else {
+                    s.px = a.optInt("x1") / (double) w; s.py = a.optInt("y1") / (double) h;
+                    s.px2 = a.optInt("x2") / (double) w; s.py2 = a.optInt("y2") / (double) h;
+                }
+                s.dur = a.optInt("dur", 0);
+                break;
+            }
+            case "tap":
+            case "longpress": {
+                NodeInfo n = a.has("index") ? nodeByIndex(nodes, a.optInt("index")) : null;
+                if (n != null) {
+                    // 密码框（secret）不采文本，只留坐标：内容不进记忆库
+                    s.anchor = n.secret ? "" : FlowPlan.normText(n.label());
+                    s.rid = n.secret ? "" : (n.id == null ? "" : n.id);
+                    s.cls = n.cls == null ? "" : n.cls;
+                    s.px = n.cx / (double) w;
+                    s.py = n.cy / (double) h;
+                } else if (a.has("px") || a.has("py")) {
+                    s.px = a.optDouble("px", -1); s.py = a.optDouble("py", -1);
+                } else if (a.has("x") || a.has("y")) {
+                    s.px = a.optInt("x") / (double) w; s.py = a.optInt("y") / (double) h;
+                }
+                if ("longpress".equals(kind)) s.dur = a.optInt("dur", 900);
+                // 模型给了一个既无有效节点又无坐标的点击：执行层即使偶然没报错，也无法复现。
+                if (s.anchor.isEmpty() && s.rid.isEmpty() && s.cls.isEmpty() && !s.hasPoint()) return null;
+                break;
+            }
+            default: break;   // back / home / wait 无参数
+        }
+        if (pkgAfter != null && !pkgAfter.isEmpty()) s.pkgAfter = pkgAfter;
+        return s;
+    }
+
+    /** 按模型看到的节点编号取节点（{@link NodeInfo#index} 与表内下标不是一回事）。 */
+    private static NodeInfo nodeByIndex(List<NodeInfo> nodes, int index) {
+        if (nodes == null) return null;
+        for (NodeInfo n : nodes) {
+            if (n != null && n.index == index) return n;
+        }
+        return null;
+    }
+
+    /** 当前屏幕尺寸（记忆库存的是比例坐标，换设备/换分辨率仍可用）。 */
+    private int[] screenSize() {
+        try {
+            android.graphics.Rect b = app.getSystemService(android.view.WindowManager.class)
+                    .getCurrentWindowMetrics().getBounds();
+            return new int[]{b.width(), b.height()};
+        } catch (Throwable t) {
+            android.util.DisplayMetrics dm = app.getResources().getDisplayMetrics();
+            return new int[]{dm.widthPixels, dm.heightPixels};
+        }
+    }
+
     private static JSONArray trimHistory(JSONArray messages, int keep) {
         if (messages == null || messages.length() <= keep + 2) return messages;
         JSONArray trimmed = new JSONArray();
@@ -926,6 +1650,33 @@ public class AgentEngine {
                 || t.contains("download");
     }
 
+    // ---- T04a done 证据分级：屏幕变化只证明「可能发生动作」，不证明目标达成 ----
+
+    /** 完成证据强：给出的期望目标与当前前台包名一致（核对过到达）。 */
+    static final int DONE_PROVEN = 2;
+    /** 完成证据弱：只观察到前台变化，没有可核对的到达目标。 */
+    static final int DONE_WEAK = 1;
+    /** 无完成证据：前台没变化、也没有可核对的到达目标。 */
+    static final int DONE_UNPROVEN = 0;
+
+    /**
+     * T04a：按证据强弱给 done 定级。
+     *
+     * <p>纯函数（无 android 依赖），桌面 JVM 可直测真值表——见
+     * {@code tests/done_evidence_guard.py} 的抽取法测试。
+     *
+     * @param sawFgChange 本轮是否观察到前台应用变化
+     * @param expectPkg   可核对的期望目标包名（空串/空 = 无期望）
+     * @param activePkg   当前前台包名
+     */
+    static int judgeDone(boolean sawFgChange, String expectPkg, String activePkg) {
+        if (expectPkg != null && !expectPkg.isEmpty()
+                && activePkg != null && expectPkg.equals(activePkg)) {
+            return DONE_PROVEN;
+        }
+        return sawFgChange ? DONE_WEAK : DONE_UNPROVEN;
+    }
+
     /**
      * 核对上一步的期望是否达成（SPEC-UX-001 §7）。
      *
@@ -944,7 +1695,11 @@ public class AgentEngine {
                     ? "上一步「" + label + "」似乎没有生效：当前仍停留在助手自己的界面。"
                     : null;
         }
-        if (currentPkg.contains(want)) return null;
+        if (currentPkg.contains(want)) {
+            // T04a：核对通过 = 「确实到达过被期望的目标」，留给 done 判定当强证据。
+            arrivedExpectPkg = want;
+            return null;
+        }
         return "上一步「" + label + "」似乎没有生效：当前前台应用是 " + currentPkg
                 + "，不是预期的 " + want + "。请确认后换一种方式重试（或如实说明失败原因）。";
     }
@@ -965,7 +1720,12 @@ public class AgentEngine {
 
     
     private void history(String result, String detail) {
-        TaskHistory.append(app, currentTask == null ? "" : currentTask, result, detail, step);
+        if ("完成".equals(result) || "失败".equals(result) || "终止".equals(result) || "不确定".equals(result)) {
+            terminalResult = result;
+            terminalDetail = detail;
+        }
+        TaskHistory.append(app, currentTask == null ? "" : currentTask, result, detail, step,
+                currentRunId, currentCommandId);
     }
 
     /**
@@ -1039,7 +1799,15 @@ public class AgentEngine {
             String l = n.label();
             if (n.clickable && (l.equals("仅本次允许") || l.equals("允许") || l.equals("30天内允许"))) {
                 log("检测到本助手引发的跨应用启动确认，代点「" + l + "」");
-                return svc.tap(n.cx, n.cy);
+                // T03a：代点也必须经 exec() —— 拿统一的节点直点/坐标修正、执行日志与失败回报。
+                // 改造前是裸 svc.tap(n.cx, n.cy)：点不动时既不进执行记录，也不回报失败原因。
+                try {
+                    exec(svc, new JSONObject().put("action", "tap").put("index", n.index), nodes);
+                    return true;
+                } catch (Exception e) {
+                    log("代点「" + l + "」失败：" + e.getMessage());
+                    return false;
+                }
             }
         }
         return false;
@@ -1060,7 +1828,8 @@ public class AgentEngine {
      * **无限制模式**下代点「同意并继续」。
      *
      * <p>⚠️ 这是代替用户作出的**法律授权**，且通常不可逆 —— 由 {@link Prefs#autoAcceptTerms()}
-     * 控制，默认为开（用户 2026-09-18 要求取消该限制）；关掉即不代点、退回暂停交还用户。
+     * 控制，默认为关（2026-10-02 审计 P1-5：协议默认自动同意与敏感人工确认原则冲突，
+     * 收回显式开启）；显式开启后关掉即不代点、退回暂停交还用户。
      *
      * <p>只处理协议类弹窗（先勾「已阅读并同意」这类复选框，再点同意按钮，顺序反了通常点不动）。
      *
@@ -1071,7 +1840,13 @@ public class AgentEngine {
         for (NodeInfo n : nodes) {          // 1) 勾选类复选框
             String l = n.label();
             if (l.contains("已阅读") || l.contains("已同意") || l.contains("同意并接受")) {
-                if (svc.tapNode(n.index)) sleep(400);
+                // T03a：代勾也走 exec()（统一节点直点/坐标修正与执行记录）
+                try {
+                    exec(svc, new JSONObject().put("action", "tap").put("index", n.index), nodes);
+                    sleep(400);
+                } catch (Exception e) {
+                    log("代勾「" + l + "」失败：" + e.getMessage());
+                }
             }
         }
         for (NodeInfo n : nodes) {          // 2) 同意按钮
@@ -1079,11 +1854,16 @@ public class AgentEngine {
             if (l.contains("同意并继续") || l.contains("同意并使用") || l.contains("同意并接受")
                     || l.contains("接受并继续") || l.contains("继续使用") || l.contains("我同意")
                     || l.equals("同意") || l.equals("接受")) {
-                if (svc.tapNode(n.index)) {
-                    log("无限制模式：已自动同意服务条款/隐私政策弹窗");
-                    history("继续", "已自动同意条款（无限制模式）");
-                    return true;
+                try {
+                    // T03a：同意按钮同样经 exec()，失败原因进日志而不是静默落空
+                    exec(svc, new JSONObject().put("action", "tap").put("index", n.index), nodes);
+                } catch (Exception e) {
+                    log("代点同意按钮失败：" + e.getMessage());
+                    continue;   // 换下一个候选按钮，别把一次点空当成「没找到按钮」
                 }
+                log("无限制模式：已自动同意服务条款/隐私政策弹窗");
+                history("继续", "已自动同意条款（无限制模式）");
+                return true;
             }
         }
         log("无限制模式：条款弹窗里没找到可点的同意按钮，暂停交还用户");
@@ -1256,33 +2036,95 @@ public class AgentEngine {
         return wb.width() + "×" + wb.height() + " 区域 " + wb.flattenToString();
     }
 
-    /** 用轻量规划模型把口语任务极速转成结构化执行提示（限制 120 字，秒级响应）。 */
+    /**
+     * 转译请求的 token 上限。
+     *
+     * <p>{@link LlmClient} 默认 160 是给「单个动作 JSON」的预算；一份 FlowSpec
+     * （目标 + 槽位 + 步骤 + 完成判据 + 风险）远超这个量，沿用默认会被截断成
+     * **不闭合的 JSON**，表现为转译永远失败且只留一句「JSON 解析失败」的日志
+     * （设计方案 §12 预算：输出 ~250 token，故取 400 硬顶）。
+     */
+    private static final int TRANSLATE_MAX_TOKENS = 400;
+
+    /**
+     * 语义转译前置：用轻量模型把「人话」转成**结构化流程**，失败容错、绝不阻塞主流程。
+     *
+     * <p>2026-09-18 起由「3 行散文简报」升级为结构化 {@link FuzzyFlow.Spec} 转译
+     * （见 {@code docs/FUZZY_SEMANTIC_TO_FLOW_DESIGN.zh-CN.md}）。**仍然只有一次模型调用**，
+     * 三条路都不额外发请求：
+     * <ol>
+     *   <li>结构化成功 → 用 {@link FuzzyFlow#compile} 的编译产物；</li>
+     *   <li>回复里没有 JSON → 当原来的散文简报照用（零损失）；</li>
+     *   <li>有 JSON 但解析/校验不过 → 返回 null，按裸任务走今天的路径。</li>
+     * </ol>
+     */
     private String planTask(Prefs prefs, String task) {
         try {
             String plannerModel = prefs.plannerModel();
             if (plannerModel == null || plannerModel.isEmpty()) return null;
             OverlayController ov = overlay();
-            if (ov != null) ov.progress("规划路径中…");
-            LlmClient planner = LlmClient.forPrefs(app, prefs, plannerModel)
+            if (ov != null) ov.progress("理解任务中…");
+            // activeLlm 此时是本任务主客户端；规划器沿用同一付费主体，不重读通道选择。
+            LlmClient planner = activeLlm.forModel(plannerModel)
+                    .maxTokens(TRANSLATE_MAX_TOKENS)
                     .tokenListener((p, c, t) -> prefs.addTokens(p, c, t));
             // 规划请求同样登记：它先于主循环发出，用户在规划阶段点停止时
             // 必须能一起断开（真机实测：停止后任务卡在规划请求上等满 connect 超时）。
             activeLlm = planner;
+
+            // 归一化是纯本地规则（不发请求）：纠正常见同音错字、剥句首填充词。
+            // 含否定词时 TextNormalizer 内部自动放弃删词——「别打开微信」被删成
+            // 「打开微信」是灾难级误判，代价远大于少删一句废话。
+            String normalized = TextNormalizer.correctTypos(TextNormalizer.normalize(task), null);
+
             JSONArray msgs = new JSONArray();
-            msgs.put(LlmClient.textMsg("system",
-                    "你是手机自动化极速规划引擎。提炼用户任务的结构化执行路径，输出 3 行纯文本，严禁废话：\n" +
-                    "意图/直达建议：(优先建议 open_api/open_url/setting，无需点击)\n" +
-                    "推荐应用：(目标 App 中文名)\n" +
-                    "步骤提炼：(1~3 步核心要点)"));
-            msgs.put(LlmClient.textMsg("user", task));
-            String plan = planner.chat(msgs);
-            if (plan == null || plan.trim().isEmpty()) return null;
-            log("规划简报已就绪（" + plannerModel + "）");
-            return plan.trim();
+            msgs.put(LlmClient.textMsg("system", SemanticTranslator.systemPrompt()));
+            msgs.put(LlmClient.textMsg("user", SemanticTranslator.userPrompt(
+                    task, normalized, matchInstalled(task),
+                    MemoryStore.promptBlock(app), RemoteCommand.deviceBlock(app))));
+
+            String reply = planner.chat(msgs);
+            SemanticTranslator.Result r = SemanticTranslator.interpret(reply, allowedPackages(), normalized);
+            // 意图与骨架留给操作记忆库：同款不同参的命中（「点奶茶」→「点咖啡」）靠它，
+            // 精确命中（同一句话）则完全不依赖转译结果。
+            planIntent = r.structured ? r.intent : "";
+            planSkel = r.structured ? r.skeleton : "";
+            if (r.planText == null || r.planText.trim().isEmpty()) {
+                log("流程转译未产出可用结果（" + r.detail + "），按原任务直接执行");
+                return null;
+            }
+            if (r.structured) {
+                log("流程转译成功: intent=" + r.intent + " risk=" + r.risk
+                        + "（" + plannerModel + "）");
+            } else {
+                log("流程转译退化: " + r.detail + "（" + plannerModel + "）");
+            }
+            return r.planText.trim();
         } catch (Exception e) {
-            log("规划模型调用跳过（直接按主任务执行）：" + trim(e.getMessage(), 120));
+            log("转译模型调用跳过（直接按主任务执行）：" + trim(e.getMessage(), 120));
             return null;
         }
+    }
+
+    /**
+     * 包名白名单：已装应用 + 常用应用表（{@link #APP_NAMES}）。
+     *
+     * <p>转译模型最常见的越界是「编一个看起来很像的包名」（把「美团」写成
+     * {@code com.meituan.app} 之类）。不在白名单里的包名一律清除，让主循环照
+     * {@code SCHEMA} 的降级链自己 {@code list_apps}，而不是拿着不存在的包名启动失败、
+     * 再花几步兜圈子（设计方案 §8 D-4）。
+     */
+    private java.util.Set<String> allowedPackages() {
+        java.util.Set<String> ok = new java.util.HashSet<>(APP_NAMES.values());
+        try {
+            for (String[] ia : installedApps()) {
+                if (ia != null && ia.length > 1 && ia[1] != null && !ia[1].isEmpty()) ok.add(ia[1]);
+            }
+        } catch (Exception ignored) {
+            // 取不到已装列表（异常/权限）→ 只用常用应用表：宁可少放行一个包名，
+            // 也不放行一个未经验证的包名
+        }
+        return ok;
     }
 
     // ---- 动作执行（零 root 实现） ----
@@ -1390,20 +2232,32 @@ public class AgentEngine {
             case "scroll": {
                 int h = app.getResources().getDisplayMetrics().heightPixels;
                 int w = app.getResources().getDisplayMetrics().widthPixels;
-                boolean down = "down".equals(a.optString("direction", "down"));
-                // 语义：direction=down 表示内容向下翻（手指上滑）
-                boolean ok = down ? svc.swipe(w / 2, h / 4, w / 2, h * 3 / 4, 400)
-                                  : svc.swipe(w / 2, h * 3 / 4, w / 2, h / 4, 400);
-                if (!ok) throw new Exception("翻页手势被系统取消");
-                return "scroll " + (down ? "down" : "up");
-            }
-            case "key": {
-                int code = a.optInt("code", 4);
+                String direction = a.optString("direction", "down");
                 boolean ok;
-                if (code == 3) ok = svc.goHome();
-                else if (code == 187) ok = svc.goRecents();
-                else ok = svc.goBack();
+                // 方向指向内容的翻页目标，手指移动相反方向。
+                switch (direction) {
+                    case "down": ok = svc.swipe(w / 2, h * 3 / 4, w / 2, h / 4, 400); break;
+                    case "up": ok = svc.swipe(w / 2, h / 4, w / 2, h * 3 / 4, 400); break;
+                    case "right": ok = svc.swipe(w * 3 / 4, h / 2, w / 4, h / 2, 400); break;
+                    case "left": ok = svc.swipe(w / 4, h / 2, w * 3 / 4, h / 2, 400); break;
+                    default: throw new Exception("不支持的翻页方向: " + direction);
+                }
+                if (!ok) throw new Exception("翻页手势被系统取消");
+                return "scroll " + direction;
+            }
+            case "back":
+            case "home":
+            case "key": {
+                int code = "back".equals(kind) ? 4 : "home".equals(kind) ? 3 : a.getInt("code");
+                boolean ok;
+                switch (code) {
+                    case 3: ok = svc.goHome(); break;
+                    case 4: ok = svc.goBack(); break;
+                    case 187: ok = svc.goRecents(); break;
+                    default: throw new Exception("不支持的全局按键: " + code);
+                }
                 if (!ok) throw new Exception("全局动作失败");
+                if (code == 3) lastApp = null;
                 return "key " + code;
             }
             case "edge_back": {
@@ -1418,10 +2272,6 @@ public class AgentEngine {
                 if (!ok) throw new Exception("边缘手势被系统取消");
                 return "edge_back " + (fromLeft ? "left" : "right");
             }
-            case "back":
-                svc.goBack(); return "back";
-            case "home":
-                svc.goHome(); lastApp = null; return "home";
             case "text": {
                 String text = a.optString("text", "");
                 if (!visionOnly) {
@@ -1461,8 +2311,8 @@ public class AgentEngine {
                         if (ia[1].equals(pkg)) { appLabel = ia[0]; break; }
                     }
                 }
-                // 彻底关闭任何阻断性安全拦截，允许直接启动所有 App
-                visionForced = false;
+                // 生态档案只描述应用能力，不应覆盖运行时已经观测到的 SystemUI-only 事实。
+                // 因此这里不清除 visionForced；若窗口恢复为正常应用节点，下一轮仍可自然回到节点感知。
                 startApp(pkg);
                 sleep(1000);   // 应用启动等待调优为 1.0s，大幅加速执行响应
                 lastApp = pkg;
@@ -1494,9 +2344,24 @@ public class AgentEngine {
                 String param = a.optString("param", "");
                 String encParam = Uri.encode(param);
                 Intent apiIntent = null;
+                if (!"search".equals(intent) && !"navigate".equals(intent) && !"dial".equals(intent)
+                        && !"sms".equals(intent) && !"browse".equals(intent))
+                    throw new Exception("不支持的直达意图: " + intent);
+                boolean map = target.contains("高德") || target.contains("amap")
+                        || target.contains("百度地图") || target.contains("baidu");
+                if ("navigate".equals(intent) && !map) throw new Exception("目标未登记导航API: " + target);
 
                 // 1. 地图搜索与导航 API (高德/百度/腾讯/通用地理位置)
-                if (target.contains("高德") || target.contains("amap")) {
+                if ("dial".equals(intent)) {
+                    apiIntent = new Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + param));
+                } else if ("sms".equals(intent)) {
+                    String[] parts = param.split(":", 2);
+                    apiIntent = new Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:" + parts[0]));
+                    if (parts.length > 1) apiIntent.putExtra("sms_body", parts[1]);
+                } else if ("browse".equals(intent)) {
+                    String url = param.startsWith("http") ? param : "https://" + param;
+                    apiIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+                } else if (target.contains("高德") || target.contains("amap")) {
                     if ("navigate".equals(intent)) {
                         apiIntent = new Intent(Intent.ACTION_VIEW, Uri.parse("androidamap://route?sourceApplication=AgentLite&dname=" + encParam + "&dev=0&m=0"));
                     } else {
@@ -1521,7 +2386,8 @@ public class AgentEngine {
                 else if (target.contains("淘宝")) {
                     apiIntent = new Intent(Intent.ACTION_VIEW, Uri.parse("taobao://s.taobao.com/search?q=" + encParam));
                 } else if (target.contains("京东")) {
-                    apiIntent = new Intent(Intent.ACTION_VIEW, Uri.parse("openapp.jdmobile://virtual?params={\"category\":\"jump\",\"des\":\"search\",\"keyWord\":\"" + param + "\"}"));
+                    JSONObject args = new JSONObject().put("category", "jump").put("des", "search").put("keyWord", param);
+                    apiIntent = new Intent(Intent.ACTION_VIEW, Uri.parse("openapp.jdmobile://virtual?params=" + Uri.encode(args.toString())));
                 } else if (target.contains("闲鱼")) {
                     apiIntent = new Intent(Intent.ACTION_VIEW, Uri.parse("fleamarket://search?keyword=" + encParam));
                 } else if (target.contains("拼多多")) {
@@ -1535,41 +2401,11 @@ public class AgentEngine {
                 } else if (target.contains("qq音乐")) {
                     apiIntent = new Intent(Intent.ACTION_VIEW, Uri.parse("qqmusic://qq.com/other/search?key=" + encParam));
                 }
-                // 5. 系统通讯 (电话/短信/浏览器)
-                else if ("dial".equals(intent)) {
-                    apiIntent = new Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + param));
-                } else if ("sms".equals(intent)) {
-                    String[] sp = param.split(":", 2);
-                    String num = sp[0];
-                    String body = sp.length > 1 ? sp[1] : "";
-                    apiIntent = new Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:" + num));
-                    if (!body.isEmpty()) apiIntent.putExtra("sms_body", body);
-                } else if ("browse".equals(intent)) {
-                    String u = param.startsWith("http") ? param : "https://" + param;
-                    apiIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(u));
-                }
 
-                // 6. 若特定协议未匹配，回退标准通用地理搜索或网页搜索
-                if (apiIntent == null) {
-                    if ("search".equals(intent) && (target.contains("地图") || target.contains("位置") || target.contains("导航"))) {
-                        apiIntent = new Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=" + encParam));
-                    } else {
-                        apiIntent = new Intent(Intent.ACTION_WEB_SEARCH);
-                        apiIntent.putExtra(android.app.SearchManager.QUERY, param);
-                    }
-                }
-
-                try {
-                    startActivity(apiIntent);
-                    sleep(1000);
-                    return "open_api: " + target + " " + intent + " (" + param + ")";
-                } catch (Throwable t) {
-                    log("open_api 失败，改用标准应用打开: " + t.getMessage());
-                    // 降级使用包名直启
-                    startApp(target);
-                    sleep(1000);
-                    return "open_api 降级 app: " + target;
-                }
+                if (apiIntent == null) throw new Exception("未登记的直达API: " + target + " " + intent);
+                startActivity(apiIntent); // 失败就是API动作失败，不替换成仅启动App或网页搜索。
+                sleep(1000);
+                return "open_api: " + target + " " + intent + " (" + param + ")";
             }
             case "wifi": {
                 startActivity(new Intent(Settings.Panel.ACTION_WIFI));
@@ -1662,8 +2498,15 @@ public class AgentEngine {
         return DisplaySpec.applyOffset(pt[0], pt[1]);
     }
 
-    /** 阻塞等待用户回答（5 分钟超时；等待期间用户可随时停止任务）。 */
-    private String askUser(String question) {
+    /**
+     * 阻塞等待用户回答（5 分钟超时；等待期间用户可随时停止任务）。
+     *
+     * <p>返回**结构化结果**（2026-10-02 审计 P1-2）：明确回答 / 超时 / 用户停止是三种
+     * 不可混淆的终态。此前超时被拼成一句「用户没答复」的自然语言回灌给模型，
+     * 模型可能把它误读为默许继续——尤其危险的是 ask 正是发送、删除、支付等
+     * 不可逆动作前的确认手段，确认悬空时唯一安全的行为是**不执行**。
+     */
+    private AskResult askUser(String question) {
         askLatch = new java.util.concurrent.CountDownLatch(1);
         askAnswer = null;
         Listener l = listener;
@@ -1674,8 +2517,13 @@ public class AgentEngine {
                 if (askLatch.await(400, java.util.concurrent.TimeUnit.MILLISECONDS)) break;
             }
         } catch (InterruptedException ignored) { }
-        if (stopRequested) return "（用户停止了任务）";
-        return askAnswer != null && !askAnswer.isEmpty() ? askAnswer : "（用户未回答或超时）";
+        if (stopRequested) return new AskResult(ASK_STOPPED, "");
+        if (askAnswer != null && !askAnswer.isEmpty()) return new AskResult(ASK_ANSWERED, askAnswer);
+        // 空串 = UI 上用户主动放弃（「不执行」按钮）。真机验证发现：把它与「5 分钟无回答」
+        // 合并成同一态，日志会说「用户未在 5 分钟内回答」并进入暂停——用户明明点了按钮，
+        // 却被记成没响应，还会停下任务等他再点一次交还。两者必须分开。
+        if (askAnswer != null) return new AskResult(ASK_SKIPPED, "");
+        return new AskResult(ASK_TIMEOUT, "");
     }
 
     /** UI 层提交回答。 */
@@ -1765,6 +2613,27 @@ public class AgentEngine {
         borrowedIme = null;
     }
 
+
+    /**
+     * 从截图生成视觉看门狗摘要：抽样 16x20 网格，排除状态栏与手势区并量化颜色。
+     * 不持有 Bitmap，避免跨步泄漏；失败返回 null，由调用方回退节点指纹但不误杀纯视觉任务。
+     */
+    private static String visualFingerprint(Bitmap bmp) {
+        if (bmp == null || bmp.getWidth() <= 0 || bmp.getHeight() <= 0) return null;
+        int w = bmp.getWidth(), h = bmp.getHeight();
+        int top = Math.min(h / 10, 180);
+        int bottom = Math.max(top + 1, h - Math.min(h / 20, 132));
+        int[] samples = new int[16 * 20];
+        int k = 0;
+        for (int gy = 0; gy < 20; gy++) {
+            int y = top + (bottom - top - 1) * gy / 19;
+            for (int gx = 0; gx < 16; gx++) {
+                int x = (w - 1) * gx / 15;
+                samples[k++] = bmp.getPixel(x, y);
+            }
+        }
+        return NodeInfo.visualFingerprint(w, h, samples);
+    }
 
     /** 截图平均亮度（抽样），黑屏检测 + 诊断日志用。 */
     private static int meanLuma(Bitmap bmp) {

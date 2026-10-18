@@ -119,10 +119,14 @@ public final class TokenStore {
         }
         try {
             String enc = encrypt(token);
-            sp.edit()
+            boolean committed = sp.edit()
                     .putString(KEY_ENC, enc)
                     .putLong(KEY_SAVED_AT, System.currentTimeMillis())
-                    .apply();
+                    .commit();
+            if (!committed) {
+                android.util.Log.w(TAG, "账号令牌密文落盘失败");
+                return false;
+            }
             synchronized (LOCK) {
                 sCache = token;
                 sLoaded = true;
