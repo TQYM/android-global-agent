@@ -2682,3 +2682,13 @@ adb shell "rm /sdcard/Android/data/com.dsh.agentlite/files/project_progress.txt"
 - 19:55 门禁重跑 EXIT=0（blocking 0、errors 0，关系页 2，未声明字号与 p01 组溢出已修）；finalize_svg + svg_to_pptx 重导出 PPTX 81674B（较上版 267180B 减少 217738B 即两张被移除位图），postflight quality_gate=passed（源:命令:svg_quality_checker.py --canonical-authoring --stage final；finalize_svg.py；svg_to_pptx.py）
 - 20:00 交付副本与总览图更新至 竞赛材料/；design_spec §VIII 图片清单清空为「不使用外部位图」说明、§IX Part 2 改写为原生矢量（源:文件:竞赛材料/Agent Lite 参赛演示.pptx；文件:竞赛材料/Agent Lite 参赛演示_15页总览.png）
 - 20:00 终态: done（P04/P05 位图改矢量完成并重导出，15 页交付更新；未提交 Git、未部署）（源:本轮验收）
+
+### 2026-10-18 14:41 +08 · 项目:repo · 会话:local · Git 工作区提交并推送 GitHub
+- 14:43 核对仓库实况：远程仅剩 shell-command-backend（4c4a2c9，2026-09-11），本地领先 107 提交且工作区 179 处改动（源:命令:git ls-remote；git rev-list --left-right）
+- 14:44 提交前安全扫描：改动文件无真实密钥字面量，8.133.225.105 等线上地址早存于 HEAD 历史，无手机号/邮箱新增（源:命令:grep 密钥/IP/邮箱模式）
+- 14:45 校验 agent-unified 镜像逐字节一致（client/server 均 ✓，exit 0）（源:命令:bash agent-unified/scripts/sync-sources.sh --check）
+- 14:45 .gitignore 增加 /.device-verify/ 与 /.ppt-master-work/ 本地产物，避免截图与转换中间件入库（源:文件:.gitignore）
+- 14:46 分 5 个主题提交：客户端模块 e02c648、服务端计费 874f627、测试 af148d2、文档 3565cdb、契约脚本 cc05cf4（源:命令:git commit）
+- 14:46 推送 4c4a2c9..cc05cf4 并补推本地独有 tag v0.6.0-zerofriction（源:命令:git push origin）
+- 14:47 make check 全量免设备门禁通过（源:命令:make check，exit 0）
+- 14:47 终态: done（工作区零未提交、远程止于 cc05cf4；默认分支与 Release 未动）
