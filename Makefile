@@ -60,6 +60,8 @@ ui:
 	  elif [ $$code -ne 0 ]; then exit $$code; fi
 	@echo "== SPEC-UX-001 零门槛守则（手册 §16.4）=="
 	@python3 tests/spec_ux_001_guard.py
+	@echo "== 适老化前端（手机形态：字号/触控/对比度/不丢功能）=="
+	@python3 tests/elder_ui_guard.py
 	@echo "== 动作词表一致性（手册 §16.9 / UX-10）=="
 	@python3 tests/action_schema_guard.py
 	@echo "== 模糊语义转译层（设计方案 §11.1）=="

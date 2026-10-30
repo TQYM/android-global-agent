@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- 适老化次按钮：白底蓝框 -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_enabled="false">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/elder_card"/>
+            <corners android:radius="18dp"/>
+            <stroke android:width="2dp" android:color="@color/elder_disabled_bg"/>
+        </shape>
+    </item>
+    <item android:state_pressed="true">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/elder_primary_soft"/>
+            <corners android:radius="18dp"/>
+            <stroke android:width="3dp" android:color="@color/elder_primary"/>
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/elder_card"/>
+            <corners android:radius="18dp"/>
+            <stroke android:width="2dp" android:color="@color/elder_primary"/>
+        </shape>
+    </item>
+</selector>

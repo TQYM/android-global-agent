@@ -1,17 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <!--
-  二级设置页（SettingsActivity）
-  主页只保留任务输入 / 运行 / 语音 / 状态 / 日志 / 截图 / 管理入口；
-  API 配置（Base URL、API Key、模型、步数、纯视觉）连同 Token 统计、设备形态、
-  保活入口、账号额度与兑换码一起收进本页。
-  控件 id 与原 activity_main.xml 完全一致，Prefs 读写逻辑原样保留。
+  二级设置页（SettingsActivity · 手机适老化版）
+
+  分两层，老人只需要看上半页：
+    常用：① 我的账号（登录 / 额度 / 充值 / 兑换）  ② 让小帮手正常工作（无障碍 / 自启动 / 后台）
+    高级设置（默认收起，「一般不用改，可以请家人帮忙」）：
+          模型与接口配置 / 用量统计 / 屏幕适配 / 信息同步
+
+  全部控件 id 与改版前一致，SettingsActivity 的 Prefs 读写逻辑原样保留；
+  新增的只有收起/展开开关 btnAdvanced 与容器 advancedGroup。
 -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/rootSettings"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/color_surface"
+    android:background="@color/elder_bg"
     android:fillViewport="true">
 
     <LinearLayout
@@ -19,697 +23,435 @@
         android:orientation="vertical"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:paddingLeft="@dimen/space_l"
-        android:paddingRight="@dimen/space_l"
-        android:paddingTop="@dimen/space_l"
-        android:paddingBottom="@dimen/space_l">
+        android:paddingLeft="@dimen/elder_page_margin"
+        android:paddingRight="@dimen/elder_page_margin"
+        android:paddingTop="@dimen/elder_gap"
+        android:paddingBottom="@dimen/elder_card_padding">
 
-        <!-- 顶栏 -->
+        <!-- 顶栏：返回放左边、做大，老人最常找的就是它 -->
         <LinearLayout
             android:orientation="horizontal"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:gravity="center_vertical">
-            <LinearLayout
-                android:orientation="vertical"
+            <Button
+                android:id="@+id/btnBack"
+                style="@style/Elder.Button.Secondary"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="0dp"
+                android:drawableStart="@drawable/ic_elder_back"
+                android:text="返回"/>
+            <TextView
+                style="@style/Elder.Text.Title"
                 android:layout_width="0dp"
                 android:layout_weight="1"
-                android:layout_height="wrap_content">
-                <TextView
-                    android:text="设置"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:textColor="@color/color_on_surface"
-                    android:textSize="@dimen/text_title"
-                    android:fontFamily="sans-serif-medium"
-                    android:textStyle="bold"/>
-                <TextView
-                    android:text="账号 / 模型 / 同步 / 保活"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:textColor="@color/color_on_surface_variant"
-                    android:textSize="@dimen/text_label"/>
-            </LinearLayout>
-            <Button
-            android:background="@drawable/btn_ghost"
-                android:id="@+id/btnBack"
-                android:layout_width="wrap_content"
-                android:layout_height="@dimen/btn_h"
-                android:text="返回"
-                android:textSize="@dimen/text_body"
-                android:textColor="@color/color_on_surface"
-                                android:paddingLeft="@dimen/space_l"
-                android:paddingRight="@dimen/space_l"
-                android:minWidth="0dp"
-                android:minHeight="0dp"
-                android:maxLines="1"
-                android:ellipsize="end"/>
+                android:layout_height="wrap_content"
+                android:layout_marginLeft="@dimen/elder_gap"
+                android:text="设置"/>
         </LinearLayout>
 
-        <!-- ===== 一、账号与额度 ===== -->
+        <!-- ===== 一、我的账号 ===== -->
         <LinearLayout
-            android:orientation="vertical"
+            style="@style/Elder.Card"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="@dimen/space_m"
-            android:padding="@dimen/space_m"
-            android:background="@drawable/bg_card">
-
+            android:layout_height="wrap_content">
             <TextView
-                android:text="账号与额度"
-                android:layout_width="wrap_content"
+                style="@style/Elder.Text.Section"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:textSize="@dimen/text_body"
-                android:textStyle="bold"
-                android:textColor="@color/color_on_surface"/>
-
+                android:text="我的账号"/>
             <TextView
                 android:id="@+id/tvAccount"
+                style="@style/Elder.Text"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/space_s"
-                android:textSize="@dimen/text_body"
-                android:textColor="@color/color_on_surface_variant"
+                android:layout_marginTop="@dimen/elder_gap_s"
                 android:text="当前未登录"/>
-
             <TextView
                 android:id="@+id/tvQuota"
+                style="@style/Elder.Text"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/space_xs"
-                android:textSize="@dimen/text_body"
-                android:textColor="@color/color_on_surface"
-                android:text="额度：-- units"/>
+                android:layout_marginTop="@dimen/elder_gap_s"
+                android:text="额度：--"/>
 
-            <LinearLayout
-                android:orientation="horizontal"
+            <Button
+                android:id="@+id/btnAccountAction"
+                style="@style/Elder.Button.Primary"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/space_s">
-                <Button
-            android:background="@drawable/btn_chip"
-                    android:id="@+id/btnRefreshQuota"
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
-                    android:layout_height="@dimen/btn_h"
-                    android:text="刷新额度"
-                    android:textSize="@dimen/text_body"
-                    android:textColor="@color/color_primary_text"
-                                        android:minWidth="0dp"
-                    android:minHeight="0dp"
-                android:maxLines="1"
-                android:ellipsize="end"/>
-                <Button
-            android:background="@drawable/btn_chip"
-                    android:id="@+id/btnAccountAction"
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
-                    android:layout_height="@dimen/btn_h"
-                    android:layout_marginLeft="@dimen/space_s"
-                    android:text="登录 / 切换账号"
-                    android:textSize="@dimen/text_body"
-                    android:textColor="@color/color_primary_text"
-                                        android:minWidth="0dp"
-                    android:minHeight="0dp"
-                android:maxLines="1"
-                android:ellipsize="end"/>
-                <Button
-            android:background="@drawable/btn_chip"
-                    android:id="@+id/btnLogout"
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
-                    android:layout_height="@dimen/btn_h"
-                    android:layout_marginLeft="@dimen/space_s"
-                    android:text="退出登录"
-                    android:textSize="@dimen/text_body"
-                    android:textColor="@color/color_on_surface_variant"
-                                        android:minWidth="0dp"
-                    android:minHeight="0dp"
-                android:maxLines="1"
-                android:ellipsize="end"/>
-            </LinearLayout>
+                android:layout_marginTop="@dimen/elder_gap"
+                android:drawableStart="@drawable/ic_elder_person"
+                android:text="登录 / 换个账号"/>
+            <Button
+                android:id="@+id/btnBuy"
+                style="@style/Elder.Button.Secondary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="充值"/>
+            <Button
+                android:id="@+id/btnRefreshQuota"
+                style="@style/Elder.Button.Secondary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="刷新额度"/>
 
             <!-- 兑换码 -->
-            <LinearLayout
-                android:orientation="horizontal"
+            <TextView
+                style="@style/Elder.Text.Label"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/space_s"
-                android:gravity="center_vertical">
-                <EditText
-                    android:id="@+id/etRedeem"
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
-                    android:layout_height="@dimen/input_h"
-                    android:hint="兑换码"
-                    android:textSize="@dimen/text_body"
-                    android:singleLine="true"
-                    android:inputType="textVisiblePassword"
-                    android:textColor="@color/color_on_surface"
-                    android:textColorHint="@color/color_text_hint"
-                    android:background="@drawable/bg_input"
-                    android:paddingLeft="@dimen/space_m"
-                    android:paddingRight="@dimen/space_m"/>
-                <Button
-                    android:background="@drawable/btn_primary"
-                    android:id="@+id/btnBuy"
-                    android:layout_width="wrap_content"
-                    android:layout_height="@dimen/btn_h"
-                    android:layout_marginLeft="@dimen/space_s"
-                    android:text="充值"
-                    android:textSize="@dimen/text_body"
-                    android:textColor="@color/color_on_primary" />
-
-                <Button
-            android:background="@drawable/btn_primary"
-                    android:id="@+id/btnRedeem"
-                    android:layout_width="wrap_content"
-                    android:layout_height="@dimen/btn_h"
-                    android:layout_marginLeft="@dimen/space_s"
-                    android:text="兑换"
-                    android:textSize="@dimen/text_body"
-                    android:textColor="@color/color_on_primary"
-                                        android:paddingLeft="@dimen/space_l"
-                    android:paddingRight="@dimen/space_l"
-                    android:minWidth="0dp"
-                    android:minHeight="0dp"
-                android:maxLines="1"
-                android:ellipsize="end"/>
-            </LinearLayout>
+                android:text="有兑换码？填在这里："/>
+            <EditText
+                android:id="@+id/etRedeem"
+                style="@style/Elder.Input"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="兑换码"
+                android:singleLine="true"
+                android:inputType="textVisiblePassword"/>
+            <Button
+                android:id="@+id/btnRedeem"
+                style="@style/Elder.Button.Secondary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="兑换"/>
 
             <!-- 同账号设备列表 -->
             <TextView
-                android:text="本账号设备（同一账号可多台设备共用额度）"
+                style="@style/Elder.Text.Label"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/space_m"
-                android:textSize="@dimen/text_body"
-                android:textStyle="bold"
-                android:textColor="@color/color_on_surface"/>
-
+                android:text="这个账号登录过的设备（可多台共用额度）"/>
             <TextView
                 android:id="@+id/tvDevices"
+                style="@style/Elder.Text"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/space_xs"
-                android:textSize="@dimen/text_body"
-                android:lineSpacingMultiplier="1.2"
-                android:textColor="@color/color_on_surface_variant"
-                android:text="登录后点击「刷新额度」查看"/>
-        </LinearLayout>
-
-        <!-- ===== 二、模型与 API 配置（原主页配置面板整体迁入） ===== -->
-        <LinearLayout
-            android:orientation="vertical"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="@dimen/space_m"
-            android:padding="@dimen/space_m"
-            android:background="@drawable/bg_card">
-
-            <TextView
-                android:text="模型与 API 配置"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:textSize="@dimen/text_body"
-                android:textStyle="bold"
-                android:textColor="@color/color_on_surface"/>
-
-            <EditText
-                android:id="@+id/etBase"
-                android:hint="Base URL"
-                android:layout_width="match_parent"
-                android:layout_height="@dimen/input_h"
-                android:layout_marginTop="@dimen/space_s"
-                android:textSize="@dimen/text_body"
-                android:singleLine="true"
-                android:textColor="@color/color_on_surface"
-                android:textColorHint="@color/color_text_hint"
-                android:background="@drawable/bg_input"
-                android:paddingLeft="@dimen/space_m"
-                android:paddingRight="@dimen/space_m"/>
-            <EditText
-                android:id="@+id/etKey"
-                android:inputType="textPassword"
-                android:hint="API Key"
-                android:layout_width="match_parent"
-                android:layout_height="@dimen/input_h"
-                android:layout_marginTop="@dimen/space_s"
-                android:textSize="@dimen/text_body"
-                android:singleLine="true"
-                android:textColor="@color/color_on_surface"
-                android:textColorHint="@color/color_text_hint"
-                android:background="@drawable/bg_input"
-                android:paddingLeft="@dimen/space_m"
-                android:paddingRight="@dimen/space_m"/>
-            <EditText
-                android:id="@+id/etModel"
-                android:hint="视觉主模型（默认 qwen3.5-omni-plus）"
-                android:layout_width="match_parent"
-                android:layout_height="@dimen/input_h"
-                android:layout_marginTop="@dimen/space_s"
-                android:textSize="@dimen/text_body"
-                android:singleLine="true"
-                android:textColor="@color/color_on_surface"
-                android:textColorHint="@color/color_text_hint"
-                android:background="@drawable/bg_input"
-                android:paddingLeft="@dimen/space_m"
-                android:paddingRight="@dimen/space_m"/>
-            <Switch
-                android:id="@+id/swSingleModel"
-                android:text="单模型模式（省钱：所有请求只用一个模型）"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/space_m"
-                android:textSize="@dimen/text_body"
-                android:textColor="@color/color_on_surface"/>
-            <TextView
-                android:id="@+id/tvSingleModelHint"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/space_xs"
-                android:textSize="@dimen/text_caption"
-                android:textColor="@color/color_text_hint"
-                android:text=""/>
-            <EditText
-                android:id="@+id/etAsr"
-                android:hint="指定远端语音模型（如 glm-asr-2512；本地模式忽略）"
-                android:layout_width="match_parent"
-                android:layout_height="@dimen/input_h"
-                android:layout_marginTop="@dimen/space_s"
-                android:textSize="@dimen/text_body"
-                android:singleLine="true"
-                android:textColor="@color/color_on_surface"
-                android:textColorHint="@color/color_text_hint"
-                android:background="@drawable/bg_input"
-                android:paddingLeft="@dimen/space_m"
-                android:paddingRight="@dimen/space_m"/>
-            <EditText
-                android:id="@+id/etAsrBase"
-                android:hint="云端语音端点（如 https://open.bigmodel.cn/api/paas/v4）"
-                android:layout_width="match_parent"
-                android:layout_height="@dimen/input_h"
-                android:layout_marginTop="@dimen/space_s"
-                android:textSize="@dimen/text_body"
-                android:singleLine="true"
-                android:inputType="textUri"
-                android:textColor="@color/color_on_surface"
-                android:textColorHint="@color/color_text_hint"
-                android:background="@drawable/bg_input"
-                android:paddingLeft="@dimen/space_m"
-                android:paddingRight="@dimen/space_m"/>
-            <EditText
-                android:id="@+id/etAsrKey"
-                android:hint="独立语音密钥（留空不发鉴权，不使用主密钥）"
-                android:layout_width="match_parent"
-                android:layout_height="@dimen/input_h"
-                android:layout_marginTop="@dimen/space_s"
-                android:textSize="@dimen/text_body"
-                android:singleLine="true"
-                android:inputType="textPassword"
-                android:textColor="@color/color_on_surface"
-                android:textColorHint="@color/color_text_hint"
-                android:background="@drawable/bg_input"
-                android:paddingLeft="@dimen/space_m"
-                android:paddingRight="@dimen/space_m"/>
-            <TextView
-                android:id="@+id/tvAsrHint"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/space_xs"
-                android:textSize="@dimen/text_caption"
-                android:textColor="@color/color_text_hint"
-                android:text="语音模式：端点留空仅本地离线；填写端点仅请求该服务一次，失败不切换。"/>
-            <Button
-                android:id="@+id/btnAsrTest"
-                android:layout_width="match_parent"
-                android:layout_height="@dimen/btn_h"
-                android:layout_marginTop="@dimen/space_s"
-                android:background="@drawable/btn_ghost"
-                android:text="测试语音转写链路"
-                android:textSize="@dimen/text_body"
-                android:textColor="@color/color_on_surface"/>
-            <EditText
-                android:id="@+id/etPlanner"
-                android:hint="语义规划模型（默认 qwen3.5-flash，留空=关闭规划）"
-                android:layout_width="match_parent"
-                android:layout_height="@dimen/input_h"
-                android:layout_marginTop="@dimen/space_s"
-                android:textSize="@dimen/text_body"
-                android:singleLine="true"
-                android:textColor="@color/color_on_surface"
-                android:textColorHint="@color/color_text_hint"
-                android:background="@drawable/bg_input"
-                android:paddingLeft="@dimen/space_m"
-                android:paddingRight="@dimen/space_m"/>
-            <EditText
-                android:id="@+id/etMaxSteps"
-                android:hint="最大步数（默认 50）"
-                android:layout_width="match_parent"
-                android:layout_height="@dimen/input_h"
-                android:layout_marginTop="@dimen/space_s"
-                android:textSize="@dimen/text_body"
-                android:singleLine="true"
-                android:inputType="number"
-                android:textColor="@color/color_on_surface"
-                android:textColorHint="@color/color_text_hint"
-                android:background="@drawable/bg_input"
-                android:paddingLeft="@dimen/space_m"
-                android:paddingRight="@dimen/space_m"/>
-            <Switch
-                android:id="@+id/swVision"
-                android:text="纯视觉模式（全流程截图感知）"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/space_s"
-                android:textSize="@dimen/text_body"
-                android:textColor="@color/color_on_surface"/>
+                android:layout_marginTop="@dimen/elder_gap_s"
+                android:text="登录后点「刷新额度」查看"/>
 
             <Button
-            android:background="@drawable/btn_primary"
-                android:id="@+id/btnSave"
-                android:text="保存配置"
+                android:id="@+id/btnLogout"
+                style="@style/Elder.Button.Danger"
                 android:layout_width="match_parent"
-                android:layout_height="@dimen/btn_h"
-                android:layout_marginTop="@dimen/space_m"
-                android:textSize="@dimen/text_body"
-                android:textColor="@color/color_on_primary"
-                                android:minHeight="0dp"
-                android:maxLines="1"
-                android:ellipsize="end"/>
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/elder_gap"
+                android:text="退出登录"/>
         </LinearLayout>
 
-        <!-- ===== 三、Token 统计 ===== -->
+        <!-- ===== 二、让小帮手正常工作（原「保活与后台运行」） ===== -->
         <LinearLayout
-            android:orientation="vertical"
+            style="@style/Elder.Card"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="@dimen/space_m"
-            android:padding="@dimen/space_m"
-            android:background="@drawable/bg_card">
-            <LinearLayout
-                android:orientation="horizontal"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:gravity="center_vertical">
-                <TextView
-                    android:text="累计消耗 Token"
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
-                    android:layout_height="wrap_content"
-                    android:textSize="@dimen/text_body"
-                    android:textStyle="bold"
-                    android:textColor="@color/color_on_surface"/>
-                <Button
-            android:background="@drawable/btn_chip"
-                    android:id="@+id/btnResetTokens"
-                    android:text="重置"
-                    android:textSize="@dimen/text_label"
-                    android:layout_width="wrap_content"
-                    android:layout_height="@dimen/btn_h"
-                    android:textColor="@color/color_primary_text"
-                                        android:minWidth="0dp"
-                    android:minHeight="0dp"
-                    android:paddingLeft="@dimen/space_s"
-                    android:paddingRight="@dimen/space_s"
-                android:maxLines="1"
-                android:ellipsize="end"/>
-            </LinearLayout>
+            android:layout_height="wrap_content">
             <TextView
-                android:id="@+id/tvTokens"
-                android:text="总计: 0 | 输入: 0 | 输出: 0"
+                style="@style/Elder.Text.Section"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/space_xs"
-                android:textSize="@dimen/text_body"
-                android:textColor="@color/color_on_surface_variant"/>
-        </LinearLayout>
-
-        <!-- ===== 四、设备形态（异形屏适配） ===== -->
-        <LinearLayout
-            android:orientation="vertical"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="@dimen/space_m"
-            android:padding="@dimen/space_m"
-            android:background="@drawable/bg_card">
-            <LinearLayout
-                android:orientation="horizontal"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:gravity="center_vertical">
-                <TextView
-                    android:text="设备形态（挖孔/曲面/系统栏）"
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
-                    android:layout_height="wrap_content"
-                    android:textSize="@dimen/text_body"
-                    android:textStyle="bold"
-                    android:textColor="@color/color_on_surface"/>
-                <Button
-            android:background="@drawable/btn_chip"
-                    android:id="@+id/btnDisplayCalib"
-                    android:text="坐标校准"
-                    android:textSize="@dimen/text_label"
-                    android:layout_width="wrap_content"
-                    android:layout_height="@dimen/btn_h"
-                    android:layout_marginRight="@dimen/space_s"
-                    android:textColor="@color/color_primary_text"
-                                        android:minWidth="0dp"
-                    android:minHeight="0dp"
-                    android:paddingLeft="@dimen/space_s"
-                    android:paddingRight="@dimen/space_s"
-                android:maxLines="1"
-                android:ellipsize="end"/>
-                <Button
-            android:background="@drawable/btn_chip"
-                    android:id="@+id/btnDisplayRefresh"
-                    android:text="重新采集"
-                    android:textSize="@dimen/text_label"
-                    android:layout_width="wrap_content"
-                    android:layout_height="@dimen/btn_h"
-                    android:textColor="@color/color_primary_text"
-                                        android:minWidth="0dp"
-                    android:minHeight="0dp"
-                    android:paddingLeft="@dimen/space_s"
-                    android:paddingRight="@dimen/space_s"
-                android:maxLines="1"
-                android:ellipsize="end"/>
-            </LinearLayout>
+                android:text="让小帮手正常工作"/>
             <TextView
-                android:id="@+id/tvDisplay"
-                android:text="无障碍服务未连接，无法采集"
+                style="@style/Elder.Text.Note"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/space_xs"
-                android:textSize="@dimen/text_label"
-                android:textColor="@color/color_on_surface_variant"/>
-        </LinearLayout>
-
-        <!-- ===== 五、保活与后台运行 ===== -->
-        <LinearLayout
-            android:orientation="vertical"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="@dimen/space_m"
-            android:padding="@dimen/space_m"
-            android:background="@drawable/bg_card">
-
-            <TextView
-                android:text="保活与后台运行"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:textSize="@dimen/text_body"
-                android:textStyle="bold"
-                android:textColor="@color/color_on_surface"/>
-
+                android:layout_marginTop="@dimen/elder_gap_s"
+                android:text="如果小帮手经常「没反应」或者「自己关掉」，按顺序点下面三个按钮，在弹出的系统页面里打开对应开关。"/>
             <TextView
                 android:id="@+id/tvKeepAlive"
-                android:text="自检中…"
+                style="@style/Elder.Text"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/space_xs"
-                android:textSize="@dimen/text_label"
-                android:textColor="@color/color_on_surface_variant"/>
-
-            <LinearLayout
-                android:orientation="horizontal"
+                android:layout_marginTop="@dimen/elder_gap_s"
+                android:text="自检中…"/>
+            <Button
+                android:id="@+id/btnA11y"
+                style="@style/Elder.Button.Primary"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/space_m">
-                <Button
-            android:background="@drawable/btn_chip"
-                    android:id="@+id/btnAutoStart"
-                    android:text="自启动设置"
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
-                    android:layout_height="@dimen/btn_h"
-                    android:textSize="@dimen/text_label"
-                    android:textColor="@color/color_primary_text"
-                                        android:minWidth="0dp"
-                    android:minHeight="0dp"
-                    android:paddingLeft="@dimen/space_s"
-                    android:paddingRight="@dimen/space_s"
-                android:maxLines="1"
-                android:ellipsize="end"/>
-                <Button
-            android:background="@drawable/btn_chip"
-                    android:id="@+id/btnBatteryIgnore"
-                    android:text="电池无限制"
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
-                    android:layout_height="@dimen/btn_h"
-                    android:layout_marginLeft="@dimen/space_s"
-                    android:textSize="@dimen/text_label"
-                    android:textColor="@color/color_primary_text"
-                                        android:minWidth="0dp"
-                    android:minHeight="0dp"
-                    android:paddingLeft="@dimen/space_s"
-                    android:paddingRight="@dimen/space_s"
-                android:maxLines="1"
-                android:ellipsize="end"/>
-                <Button
-            android:background="@drawable/btn_chip"
-                    android:id="@+id/btnA11y"
-                    android:text="系统无障碍"
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
-                    android:layout_height="@dimen/btn_h"
-                    android:layout_marginLeft="@dimen/space_s"
-                    android:textSize="@dimen/text_label"
-                    android:textColor="@color/color_primary_text"
-                                        android:minWidth="0dp"
-                    android:minHeight="0dp"
-                    android:paddingLeft="@dimen/space_s"
-                    android:paddingRight="@dimen/space_s"
-                android:maxLines="1"
-                android:ellipsize="end"/>
-            </LinearLayout>
+                android:layout_marginTop="@dimen/elder_gap"
+                android:text="① 打开无障碍开关"/>
+            <Button
+                android:id="@+id/btnAutoStart"
+                style="@style/Elder.Button.Secondary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="② 允许自动启动"/>
+            <Button
+                android:id="@+id/btnBatteryIgnore"
+                style="@style/Elder.Button.Secondary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="③ 允许后台运行（电池不限制）"/>
         </LinearLayout>
 
-        <!-- ===== 六、信息同步 ===== -->
+        <!-- ===== 高级设置开关 ===== -->
+        <Button
+            android:id="@+id/btnAdvanced"
+            style="@style/Elder.Button.Tile"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/elder_gap"
+            android:drawableStart="@drawable/ic_elder_tune"
+            android:text="高级设置（点开）\n一般不用改，可以请家人帮忙"/>
+
         <LinearLayout
+            android:id="@+id/advancedGroup"
             android:orientation="vertical"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="@dimen/space_m"
-            android:padding="@dimen/space_m"
-            android:background="@drawable/bg_card">
+            android:visibility="gone">
 
-            <TextView
-                android:text="信息同步（agentlite-server）"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:textSize="@dimen/text_body"
-                android:textStyle="bold"
-                android:textColor="@color/color_on_surface"/>
-
-            <!-- 守则 S-4：同步必须默认关闭且显式 opt-in —— 该开关此前只存在于代码里，UI 上无入口 -->
+            <!-- ===== 三、模型与 API 配置（原主页配置面板整体迁入） ===== -->
             <LinearLayout
-                android:orientation="horizontal"
+                style="@style/Elder.Card"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/space_s"
-                android:gravity="center_vertical">
+                android:layout_height="wrap_content">
+                <TextView
+                    style="@style/Elder.Text.Section"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="模型与 API 配置"/>
 
-                <LinearLayout
-                    android:orientation="vertical"
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
-                    android:layout_height="wrap_content">
+                <TextView style="@style/Elder.Text.Label" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:text="服务地址（Base URL）"/>
+                <EditText
+                    android:id="@+id/etBase"
+                    style="@style/Elder.Input"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="Base URL"
+                    android:singleLine="true"
+                    android:inputType="textUri"/>
 
-                    <TextView
-                        android:text="允许上传本机历史与记忆"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:textSize="@dimen/text_body"
-                        android:textColor="@color/color_on_surface"/>
+                <TextView style="@style/Elder.Text.Label" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:text="密钥（API Key）"/>
+                <EditText
+                    android:id="@+id/etKey"
+                    style="@style/Elder.Input"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="textPassword"
+                    android:hint="API Key"
+                    android:singleLine="true"/>
 
-                    <TextView
-                        android:id="@+id/tvSyncHint"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="@dimen/space_xs"
-                        android:textSize="@dimen/text_label"
-                        android:textColor="@color/color_on_surface_variant"
-                        android:text="关闭后只存本机，不上传服务器"/>
-                </LinearLayout>
+                <TextView style="@style/Elder.Text.Label" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:text="主模型"/>
+                <EditText
+                    android:id="@+id/etModel"
+                    style="@style/Elder.Input"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="视觉主模型（默认 qwen3.5-omni-plus）"
+                    android:singleLine="true"/>
 
                 <Switch
-                    android:id="@+id/swSync"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"/>
+                    android:id="@+id/swSingleModel"
+                    style="@style/Elder.Switch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/elder_gap"
+                    android:text="单模型模式（省钱：所有请求只用一个模型）"/>
+                <TextView
+                    android:id="@+id/tvSingleModelHint"
+                    style="@style/Elder.Text.Note"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text=""/>
+
+                <TextView style="@style/Elder.Text.Label" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:text="语音转文字"/>
+                <EditText
+                    android:id="@+id/etAsr"
+                    style="@style/Elder.Input"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="指定远端语音模型（如 glm-asr-2512；本地模式忽略）"
+                    android:singleLine="true"/>
+                <EditText
+                    android:id="@+id/etAsrBase"
+                    style="@style/Elder.Input"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="云端语音端点（如 https://open.bigmodel.cn/api/paas/v4）"
+                    android:singleLine="true"
+                    android:inputType="textUri"/>
+                <EditText
+                    android:id="@+id/etAsrKey"
+                    style="@style/Elder.Input"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="独立语音密钥（留空不发鉴权，不使用主密钥）"
+                    android:singleLine="true"
+                    android:inputType="textPassword"/>
+                <TextView
+                    android:id="@+id/tvAsrHint"
+                    style="@style/Elder.Text.Note"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/elder_gap_s"
+                    android:text="语音模式：端点留空仅本地离线；填写端点仅请求该服务一次，失败不切换。"/>
+                <Button
+                    android:id="@+id/btnAsrTest"
+                    style="@style/Elder.Button.Secondary"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="测试语音转写链路"/>
+
+                <TextView style="@style/Elder.Text.Label" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:text="语义规划模型"/>
+                <EditText
+                    android:id="@+id/etPlanner"
+                    style="@style/Elder.Input"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="语义规划模型（默认 qwen3.5-flash，留空=关闭规划）"
+                    android:singleLine="true"/>
+
+                <TextView style="@style/Elder.Text.Label" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:text="最多操作几步"/>
+                <EditText
+                    android:id="@+id/etMaxSteps"
+                    style="@style/Elder.Input"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="最大步数（默认 50）"
+                    android:singleLine="true"
+                    android:inputType="number"/>
+
+                <Switch
+                    android:id="@+id/swVision"
+                    style="@style/Elder.Switch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/elder_gap"
+                    android:text="纯视觉模式（全流程截图感知）"/>
+
+                <Button
+                    android:id="@+id/btnSave"
+                    style="@style/Elder.Button.Primary"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/elder_gap"
+                    android:text="保存配置"/>
             </LinearLayout>
 
-            <TextView
-                android:id="@+id/tvSyncStatus"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/space_xs"
-                android:textSize="@dimen/text_body"
-                android:textColor="@color/color_on_surface_variant"
-                android:text="尚未同步"/>
-
-            <EditText
-                android:id="@+id/etSyncServer"
-                android:hint="同步服务器地址"
-                android:layout_width="match_parent"
-                android:layout_height="@dimen/input_h"
-                android:layout_marginTop="@dimen/space_s"
-                android:textSize="@dimen/text_body"
-                android:singleLine="true"
-                android:textColor="@color/color_on_surface"
-                android:textColorHint="@color/color_text_hint"
-                android:background="@drawable/bg_input"
-                android:paddingLeft="@dimen/space_m"
-                android:paddingRight="@dimen/space_m"/>
-
+            <!-- ===== 四、Token 统计 ===== -->
             <LinearLayout
-                android:orientation="horizontal"
+                style="@style/Elder.Card"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/space_s">
+                android:layout_height="wrap_content">
+                <TextView
+                    style="@style/Elder.Text.Section"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="累计消耗 Token"/>
+                <TextView
+                    android:id="@+id/tvTokens"
+                    style="@style/Elder.Text"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/elder_gap_s"
+                    android:text="总计: 0 | 输入: 0 | 输出: 0"/>
                 <Button
-            android:background="@drawable/btn_chip"
+                    android:id="@+id/btnResetTokens"
+                    style="@style/Elder.Button.Secondary"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="重置"/>
+            </LinearLayout>
+
+            <!-- ===== 五、设备形态（异形屏适配） ===== -->
+            <LinearLayout
+                style="@style/Elder.Card"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content">
+                <TextView
+                    style="@style/Elder.Text.Section"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="设备形态（挖孔/曲面/系统栏）"/>
+                <TextView
+                    android:id="@+id/tvDisplay"
+                    style="@style/Elder.Text.Note"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/elder_gap_s"
+                    android:text="无障碍服务未连接，无法采集"/>
+                <Button
+                    android:id="@+id/btnDisplayCalib"
+                    style="@style/Elder.Button.Secondary"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="坐标校准"/>
+                <Button
+                    android:id="@+id/btnDisplayRefresh"
+                    style="@style/Elder.Button.Secondary"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="重新采集"/>
+            </LinearLayout>
+
+            <!-- ===== 六、信息同步 ===== -->
+            <LinearLayout
+                style="@style/Elder.Card"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content">
+                <TextView
+                    style="@style/Elder.Text.Section"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="信息同步（agentlite-server）"/>
+
+                <!-- 守则 S-4：同步必须默认关闭且显式 opt-in -->
+                <Switch
+                    android:id="@+id/swSync"
+                    style="@style/Elder.Switch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/elder_gap"
+                    android:text="允许上传本机历史与记忆"/>
+                <TextView
+                    android:id="@+id/tvSyncHint"
+                    style="@style/Elder.Text.Note"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="关闭后只存本机，不上传服务器"/>
+                <TextView
+                    android:id="@+id/tvSyncStatus"
+                    style="@style/Elder.Text"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/elder_gap_s"
+                    android:text="尚未同步"/>
+                <TextView style="@style/Elder.Text.Label" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:text="同步服务器地址"/>
+                <EditText
+                    android:id="@+id/etSyncServer"
+                    style="@style/Elder.Input"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="同步服务器地址"
+                    android:singleLine="true"
+                    android:inputType="textUri"/>
+                <Button
                     android:id="@+id/btnSyncSave"
-                    android:text="保存地址"
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
-                    android:layout_height="@dimen/btn_h"
-                    android:textSize="@dimen/text_body"
-                    android:textColor="@color/color_primary_text"
-                                        android:minWidth="0dp"
-                    android:minHeight="0dp"
-                android:maxLines="1"
-                android:ellipsize="end"/>
+                    style="@style/Elder.Button.Secondary"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="保存地址"/>
                 <Button
-            android:background="@drawable/btn_chip"
                     android:id="@+id/btnSyncNow"
-                    android:text="立即同步"
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
-                    android:layout_height="@dimen/btn_h"
-                    android:layout_marginLeft="@dimen/space_s"
-                    android:textSize="@dimen/text_body"
-                    android:textColor="@color/color_primary_text"
-                                        android:minWidth="0dp"
-                    android:minHeight="0dp"
-                android:maxLines="1"
-                android:ellipsize="end"/>
+                    style="@style/Elder.Button.Secondary"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="立即同步"/>
                 <Button
-            android:background="@drawable/btn_chip"
                     android:id="@+id/btnLanRendezvous"
-                    android:text="局域网会合"
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
-                    android:layout_height="@dimen/btn_h"
-                    android:layout_marginLeft="@dimen/space_s"
-                    android:textSize="@dimen/text_body"
-                    android:textColor="@color/color_primary_text"
-                                        android:minWidth="0dp"
-                    android:minHeight="0dp"
-                android:maxLines="1"
-                android:ellipsize="end"/>
+                    style="@style/Elder.Button.Secondary"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="局域网会合"/>
             </LinearLayout>
         </LinearLayout>
     </LinearLayout>

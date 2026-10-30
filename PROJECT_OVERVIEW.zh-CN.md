@@ -2715,3 +2715,14 @@ adb shell "rm /sdcard/Android/data/com.dsh.agentlite/files/project_progress.txt"
 - 16:39 fix(unified)：`--check` 改用 sha256 内容比对（macOS openrsync 不支持 `-c`，git checkout 刷新 mtime 会假报「上游已更新」），验证 touch 不报、改内容能报（源:文件:agent-unified/scripts/sync-sources.sh:52-77）
 - 16:42 工具链：`brew install gh` 升到 2.103.3，`~/.local/bin/gh` 与 `/opt/homebrew/bin/gh` 均指向 Cellar 新二进制（旧 2.96.0 留作 `gh-2.96.0.bak`），`gh auth status` 认证保留（源:命令:brew install gh；ln -sf）
 - 16:43 终态: done（PR 渠道开通：模板 + 本地钩子 + CI 门禁 + 分支保护；main 已合并；镜像校验假阳性已修；gh CLI 已升级）
+
+### 2026-10-30 14:15 +08 · 项目:agent-lite +repo · 会话:local · 手机端适老化前端改版
+- 14:15 读工作日志尾恢复上下文；wt new 建 worktree .wt/安卓智能体/elder-friendly-ui（agent/elder-friendly-ui，基线 origin/main e5b5cc9）（源:命令:wt new；git fetch）
+- 14:20 盘点 UI 接口：手机 5 页（主页/设置/登录/充值/语音召唤）+ 悬浮层 OverlayController + 弹窗；手表 2 页不在本次范围（源:文件:agent-lite/res/layout/*.xml；文件:agent-lite/src/com/dsh/agentlite/MainActivity.java）
+- 14:30 新增适老化令牌与样式（浅色高对比、正文 20sp、按钮 ≥64dp）与 ElderUi（主题切换/对话框放大/大字列表），手表形态由 UiForm.isWatch 判定保持原样（源:文件:agent-lite/res/values/elder.xml；文件:agent-lite/src/com/dsh/agentlite/ElderUi.java）
+- 14:40 五页布局重写（全部原 id 保留）；主页加大字提示框与例句，危险操作加二次确认；设置页高级项默认收起；登录页拆出手表原布局 activity_login_watch.xml（源:文件:agent-lite/res/layout/activity_main.xml；文件:agent-lite/res/layout/activity_settings.xml）
+- 14:42 新增门禁 tests/elder_ui_guard.py 22 项接入 make ui，变异验证 4 处注入缺陷全被拦下（源:命令:python3 tests/elder_ui_guard.py）
+- 14:43 scratch 构建 APK 通过（含 6 个 ASR .so，19.6MB）；apk_readability 无硬违规；make check 除 ui_widget_guard 外全绿——该项因本机缺 ~/.agent-lite-m3-deps 退出 2（布局无全限定控件，无可校验项）（源:命令:bash agent-lite/build-mac.sh；make check；python3 tests/apk_readability.py）
+- 14:43 sync-sources 同步镜像（client 副本与 agent-lite 逐字节一致）（源:命令:bash agent-unified/scripts/sync-sources.sh --check）
+- 14:52 推送分支、开 PR #5；main 期间并入 #4（CI 门禁 / 镜像排除 vendor/asr/lib / ui_widget_guard 跳过语义），rebase 到 b545506，冲突仅工作日志与 sources.lock.json，镜像重新同步（源:命令:git rebase origin/main；gh pr create）
+- 17:05 终态: done（PR #5 待 review 与 CI；未安装真机、未发版；字体最大档裁字与实测对比度待真机补测）（源:本轮验收）
