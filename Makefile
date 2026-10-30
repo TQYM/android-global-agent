@@ -53,7 +53,11 @@ ui:
 	@echo "== UI 文案守卫 =="
 	@bash tests/ui_text_guard.sh
 	@echo "== UI 控件守卫 =="
-	@python3 tests/ui_widget_guard.py
+	@python3 tests/ui_widget_guard.py; \
+	  code=$$?; \
+	  if [ $$code -eq 2 ]; then \
+	    echo "  ↳ SKIP：无 android.jar / classes.jar（干净检出未构建 APK），控件类型断言跳过；构建后自动恢复"; \
+	  elif [ $$code -ne 0 ]; then exit $$code; fi
 	@echo "== SPEC-UX-001 零门槛守则（手册 §16.4）=="
 	@python3 tests/spec_ux_001_guard.py
 	@echo "== 动作词表一致性（手册 §16.9 / UX-10）=="

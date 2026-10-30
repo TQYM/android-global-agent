@@ -26,8 +26,13 @@ ROOT="$(cd "$UNI/.." && pwd)"
 CLIENT_SRC="$ROOT/agent-lite"
 SERVER_SRC="$ROOT/agentlite-server"
 
+# 3) vendor/asr/lib/  离线语音转写的原生库（18MB 构建产物，源项目里已被
+#                      .gitignore 排除、由 build-mac.sh 本机准备）。它不是源码，
+#                      两端都不入库，比较时一并跳过——否则干净检出后副本会
+#                      因「源没有、副本有」被判成改写。
 CLIENT_EXCLUDES=(--exclude 'build/' --exclude 'build-m3/' --exclude 'dev.local'
-                 --exclude 'assets/agentlite_sync_ca.pem' --exclude '.DS_Store')
+                 --exclude 'assets/agentlite_sync_ca.pem' --exclude '.DS_Store'
+                 --exclude 'vendor/asr/lib/')
 SERVER_EXCLUDES=(--exclude 'agentlite-server' --exclude '.DS_Store')
 
 CHECK=0
