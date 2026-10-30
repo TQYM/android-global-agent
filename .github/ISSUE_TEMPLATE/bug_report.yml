@@ -1,0 +1,65 @@
+name: 缺陷报告
+description: 报告一个可复现的缺陷（客户端 / 服务端 / 构建脚本）
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        安全相关问题请不要用公开 issue：见 [SECURITY.md](../blob/main/SECURITY.md)。
+        提交前先搜一下是否已有同类 issue。
+  - type: dropdown
+    id: area
+    attributes:
+      label: 影响范围
+      options:
+        - 客户端（agent-lite / agent-client）
+        - 服务端（agentlite-server / agentd-go）
+        - 统一构建与发布（agent-unified）
+        - 测试与门禁（tests / Makefile）
+        - 文档
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: 版本
+      description: APK 的 versionName，或 git commit（`git rev-parse --short HEAD`）
+      placeholder: "0.7.0 / e5b5cc9"
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: 设备与系统
+      description: 机型、Android 版本、是否 Root（涉及真机的缺陷必填）
+      placeholder: "Xiaomi 14 / Android 15 / 未 Root"
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 从冷启动开始写，越具体越好
+      placeholder: |
+        1. 打开 …
+        2. 点击 …
+        3. 观察到 …
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期行为
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为
+      description: 有日志或截图请贴在这里（注意先去掉 token / 账号等敏感信息）
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: 补充信息
+      description: 是否必现、是否只在特定网络 / 特定页面出现、`make check` 结果等

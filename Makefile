@@ -25,7 +25,7 @@ JAVA_RELEASE ?= 11
 CLIENT_SRC := agent-lite/src/com/dsh/agentlite
 TMP := $(CURDIR)/.check-tmp
 
-.PHONY: check go contract drill ui jvm clean
+.PHONY: check go contract drill ui jvm hooks clean
 
 check: go contract drill ui jvm
 	@echo ""
@@ -152,3 +152,13 @@ jvm:
 clean:
 	@rm -rf "$(TMP)"
 	@echo "已清理 $(TMP)"
+
+# 启用仓库自带的 git 钩子（提交渠道的本地一半）。每台克隆执行一次。
+# 钩子只做本地快速拦截；远端正本见 .github/workflows/ci.yml。
+hooks:
+	@git config core.hooksPath .githooks
+	@chmod +x .githooks/pre-commit .githooks/commit-msg .githooks/pre-push
+	@echo "已启用 .githooks（core.hooksPath=.githooks）"
+	@echo "  pre-commit：冲突标记 / 大文件 / 密钥 / 镜像一致性"
+	@echo "  commit-msg：Conventional Commits"
+	@echo "  pre-push：契约门禁 + 镜像校验（全量：AGENTLITE_PRE_PUSH_FULL=1）"

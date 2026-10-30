@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+#
+# pre-push：push 前的本地闸门。
+#
+# 默认只跑「快但容易红」的两项（约 10 秒）：
+#   * 两端契约门禁（verify-contract.py，25 项）
+#   * agent-unified 镜像逐字节一致性
+# 全量门禁（Go 单测 + 迁移演练 + 全部 UI 守卫 + 桌面 JVM）由 CI 的
+# contract-gate 工作流兜底；想本地也跑一遍：
+#
+#   AGENTLITE_PRE_PUSH_FULL=1 git push
+#
+# 跳过：git push --no-verify 或 AGENTLITE_SKIP_HOOKS=1 git push
+set -euo pipefail
+
+[ "${AGENTLITE_SKIP_HOOKS:-0}" = "1" ] && exit 0
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+echo "== push 前门禁：契约 + 镜像一致性 =="
+
+if ! bash agent-unified/scripts/sync-sources.sh --check >/tmp/.agentlite-prepush-sync 2>&1; then
+  echo "✗ agent-unified 副本与原项目不一致：" >&2
+  sed -n '1,14p' /tmp/.agentlite-prepush-sync | sed 's/^/  /' >&2
+  echo "  修复：bash agent-unified/scripts/sync-sources.sh && git add agent-unified/" >&2
+  echo "  跳过：git push --no-verify" >&2
+  exit 1
+fi
+
+if ! make contract >/tmp/.agentlite-prepush-contract 2>&1; then
+  echo "✗ 两端契约门禁未通过：" >&2
+  tail -30 /tmp/.agentlite-prepush-contract | sed 's/^/  /' >&2
+  echo "  跳过：git push --no-verify" >&2
+  exit 1
+fi
+
+if [ "${AGENTLITE_PRE_PUSH_FULL:-0}" = "1" ]; then
+  echo "== 全量门禁（AGENTLITE_PRE_PUSH_FULL=1） =="
+  if ! make check; then
+    echo "✗ 全量门禁未通过，终止 push（跳过：git push --no-verify）" >&2
+    exit 1
+  fi
+fi
+
+echo "✓ push 前门禁通过"
+exit 0
