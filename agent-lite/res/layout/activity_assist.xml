@@ -1,9 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!--
+  系统召唤的语音助手抽屉（AssistActivity · 适老化版）
+  召唤即开始听：最大的按钮就是「说完了」，其次「直接开始」，关闭放在右上角。
+  全部 id 不变。
+-->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/assistRoot"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#80000000">
+    android:background="@color/elder_scrim">
 
     <LinearLayout
         android:id="@+id/assistDialog"
@@ -11,99 +17,66 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom"
-        android:layout_margin="@dimen/space_l"
-        android:background="@drawable/bg_card"
-        android:padding="@dimen/page_margin">
+        android:layout_margin="@dimen/elder_gap"
+        android:background="@drawable/bg_elder_card"
+        android:padding="@dimen/elder_card_padding">
 
         <LinearLayout
             android:orientation="horizontal"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:gravity="center_vertical">
-
             <TextView
                 android:id="@+id/tvAssistTitle"
-                android:text="Agent 语音助手"
-                android:textSize="@dimen/text_section"
-                android:textStyle="bold"
-                android:textColor="@color/color_on_surface"
+                style="@style/Elder.Text.Section"
+                android:text="语音小帮手"
                 android:layout_width="0dp"
                 android:layout_weight="1"
                 android:layout_height="wrap_content"/>
-
             <Button
-            android:background="@drawable/btn_chip"
                 android:id="@+id/btnAssistClose"
+                style="@style/Elder.Button.Secondary"
+                android:layout_marginTop="0dp"
                 android:text="关闭"
-                android:textSize="@dimen/text_body"
-                android:textColor="@color/color_on_surface_variant"
-                                android:layout_width="wrap_content"
-                android:layout_height="@dimen/btn_h"
-                android:minWidth="0dp"
-                android:minHeight="0dp"
-                android:paddingLeft="@dimen/space_m"
-                android:paddingRight="@dimen/space_m"
-                android:maxLines="1"
-                android:ellipsize="end"/>
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"/>
         </LinearLayout>
 
         <TextView
             android:id="@+id/tvAssistHint"
-            android:text="请说话，下达任何自动化指令…"
-            android:textSize="@dimen/text_body"
-            android:textColor="@color/color_on_surface_variant"
-            android:layout_marginTop="@dimen/space_l"
+            style="@style/Elder.Text"
+            android:text="请说您要我做什么…"
+            android:layout_marginTop="@dimen/elder_gap"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:accessibilityLiveRegion="polite"/>
+
+        <Button
+            android:id="@+id/btnAssistMic"
+            style="@style/Elder.Button.Primary"
+            android:text="我要说话"
+            android:drawableStart="@drawable/ic_elder_mic"
+            android:minHeight="@dimen/elder_touch_run"
+            android:textSize="@dimen/elder_text_hero"
+            android:layout_marginTop="@dimen/elder_gap"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"/>
 
         <EditText
             android:id="@+id/etAssistInput"
-            android:hint="或在此直接输入指令并运行"
-            android:textSize="@dimen/text_body"
-            android:textColor="@color/color_on_surface"
-            android:textColorHint="@color/color_text_hint"
-            android:background="@drawable/bg_input"
-            android:paddingLeft="@dimen/space_m"
-            android:paddingRight="@dimen/space_m"
-            android:paddingTop="@dimen/space_m"
-            android:paddingBottom="@dimen/space_m"
-            android:layout_marginTop="@dimen/space_m"
+            style="@style/Elder.Input"
+            android:hint="或者打字告诉我"
+            android:layout_marginTop="@dimen/elder_gap"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:maxLines="3"/>
 
-        <LinearLayout
-            android:orientation="horizontal"
+        <Button
+            android:id="@+id/btnAssistRun"
+            style="@style/Elder.Button.Secondary"
+            android:text="直接开始"
+            android:drawableStart="@drawable/ic_elder_play"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="@dimen/space_l">
-
-            <Button
-            android:background="@drawable/btn_ghost"
-                android:id="@+id/btnAssistMic"
-                android:text="按住/点按说话"
-                android:textSize="@dimen/text_body"
-                android:textColor="@color/color_on_surface"
-                                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_height="@dimen/btn_h"
-                android:minHeight="0dp"
-                android:maxLines="1"
-                android:ellipsize="end"/>
-
-            <Button
-            android:background="@drawable/btn_primary"
-                android:id="@+id/btnAssistRun"
-                android:text="立即执行"
-                android:textSize="@dimen/text_body"
-                android:textColor="@color/color_on_primary"
-                                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_height="@dimen/btn_h"
-                android:layout_marginLeft="@dimen/space_m"
-                android:minHeight="0dp"
-                android:maxLines="1"
-                android:ellipsize="end"/>
-        </LinearLayout>
+            android:layout_height="wrap_content"/>
     </LinearLayout>
 </FrameLayout>

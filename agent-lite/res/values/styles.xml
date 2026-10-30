@@ -20,6 +20,144 @@
         <item name="android:textColorHint">@color/color_text_hint</item>
     </style>
 
+    <!--
+      适老化主题（手机形态）：浅色高对比、系统对话框同为浅色。
+      手表形态仍用上面的深色 Theme.AgentLite —— 由 ElderUi.applyTheme() 在 setContentView 前切换，
+      清单里的主题声明不变，所以手表与悬浮层的观感零改动。
+    -->
+    <style name="Theme.AgentLite.Elder" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/elder_bg</item>
+        <item name="android:colorBackground">@color/elder_bg</item>
+        <item name="android:colorPrimary">@color/elder_primary</item>
+        <item name="android:colorPrimaryDark">@color/elder_bg</item>
+        <item name="android:colorAccent">@color/elder_primary</item>
+        <item name="android:colorControlActivated">@color/elder_primary</item>
+
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+
+        <item name="android:textColorPrimary">@color/elder_text</item>
+        <item name="android:textColorSecondary">@color/elder_text_2</item>
+        <item name="android:textColorHint">@color/elder_hint</item>
+        <item name="android:alertDialogTheme">@style/Theme.AgentLite.Elder.Dialog</item>
+    </style>
+
+    <style name="Theme.AgentLite.Elder.Dialog" parent="@android:style/Theme.Material.Light.Dialog.Alert">
+        <item name="android:colorAccent">@color/elder_primary</item>
+        <item name="android:colorPrimary">@color/elder_primary</item>
+        <item name="android:textColorPrimary">@color/elder_text</item>
+        <item name="android:textColorSecondary">@color/elder_text_2</item>
+        <!-- 不覆盖 windowBackground：平台对话框背景是带四周留白的 inset drawable，换成普通形状会贴边 -->
+    </style>
+
+    <style name="Theme.AgentLite.Elder.Translucent" parent="Theme.AgentLite.Elder">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:colorBackground">@android:color/transparent</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowAnimationStyle">@android:style/Animation.Dialog</item>
+    </style>
+
+    <!-- ===== 适老化控件样式（布局里 style="@style/Elder.xxx" 引用，省去逐个控件重复属性） ===== -->
+    <style name="Elder"/>   <!-- 点号命名的隐式父样式根，本身不带属性 -->
+    <style name="Elder.Text">
+        <item name="android:textColor">@color/elder_text</item>
+        <item name="android:textSize">@dimen/elder_text_body</item>
+        <item name="android:lineSpacingMultiplier">1.25</item>
+    </style>
+    <style name="Elder.Text.Title">
+        <item name="android:textSize">@dimen/elder_text_title</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+    <style name="Elder.Text.Section">
+        <item name="android:textSize">@dimen/elder_text_section</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+    <style name="Elder.Text.Note">
+        <item name="android:textColor">@color/elder_text_2</item>
+        <item name="android:textSize">@dimen/elder_text_small</item>
+    </style>
+
+    <style name="Elder.Card">
+        <item name="android:background">@drawable/bg_elder_card</item>
+        <item name="android:padding">@dimen/elder_card_padding</item>
+        <item name="android:orientation">vertical</item>
+        <item name="android:layout_marginTop">@dimen/elder_gap</item>
+    </style>
+
+    <style name="Elder.Button">
+        <item name="android:minHeight">@dimen/elder_touch</item>
+        <item name="android:minWidth">0dp</item>
+        <item name="android:textSize">@dimen/elder_text_button</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:paddingLeft">@dimen/elder_gap</item>
+        <item name="android:paddingRight">@dimen/elder_gap</item>
+        <item name="android:paddingTop">@dimen/elder_gap_s</item>
+        <item name="android:paddingBottom">@dimen/elder_gap_s</item>
+        <item name="android:drawablePadding">@dimen/elder_gap_s</item>
+        <item name="android:stateListAnimator">@null</item>
+        <item name="android:layout_marginTop">@dimen/elder_gap_s</item>
+    </style>
+    <style name="Elder.Button.Primary">
+        <item name="android:background">@drawable/btn_elder_primary</item>
+        <item name="android:textColor">@color/elder_on_primary</item>
+        <item name="android:drawableTint">@color/elder_on_primary</item>
+    </style>
+    <style name="Elder.Button.Secondary">
+        <item name="android:background">@drawable/btn_elder_secondary</item>
+        <item name="android:textColor">@color/elder_primary</item>
+        <item name="android:drawableTint">@color/elder_primary</item>
+    </style>
+    <style name="Elder.Button.Danger">
+        <item name="android:background">@drawable/btn_elder_danger</item>
+        <item name="android:textColor">@color/elder_on_primary</item>
+        <item name="android:drawableTint">@color/elder_on_primary</item>
+    </style>
+    <!-- 功能入口块：左图标 + 两行字（标题 + 一句话说明），整块可点 -->
+    <style name="Elder.Button.Tile">
+        <item name="android:background">@drawable/btn_elder_tile</item>
+        <item name="android:textColor">@color/elder_text</item>
+        <item name="android:drawableTint">@color/elder_primary</item>
+        <item name="android:gravity">start|center_vertical</item>
+        <item name="android:textStyle">normal</item>
+        <item name="android:textSize">@dimen/elder_text_body</item>
+        <item name="android:minHeight">88dp</item>
+        <item name="android:paddingLeft">@dimen/elder_card_padding</item>
+        <item name="android:paddingRight">@dimen/elder_card_padding</item>
+        <item name="android:drawablePadding">@dimen/elder_gap</item>
+        <item name="android:layout_marginTop">@dimen/elder_gap_s</item>
+    </style>
+
+    <style name="Elder.Input">
+        <item name="android:background">@drawable/bg_elder_input</item>
+        <item name="android:textColor">@color/elder_text</item>
+        <item name="android:textColorHint">@color/elder_hint</item>
+        <item name="android:textSize">@dimen/elder_text_body</item>
+        <item name="android:minHeight">@dimen/elder_input_min</item>
+        <item name="android:paddingLeft">@dimen/elder_gap</item>
+        <item name="android:paddingRight">@dimen/elder_gap</item>
+        <item name="android:paddingTop">@dimen/elder_gap_s</item>
+        <item name="android:paddingBottom">@dimen/elder_gap_s</item>
+        <item name="android:layout_marginTop">@dimen/elder_gap_s</item>
+    </style>
+    <!-- 输入框上方的说明标签：老人看不清灰色提示字，标签常驻在框外 -->
+    <style name="Elder.Text.Label">
+        <item name="android:textStyle">bold</item>
+        <item name="android:layout_marginTop">@dimen/elder_gap</item>
+    </style>
+
+    <style name="Elder.Switch">
+        <item name="android:textColor">@color/elder_text</item>
+        <item name="android:textSize">@dimen/elder_text_body</item>
+        <item name="android:minHeight">@dimen/elder_touch</item>
+        <item name="android:switchMinWidth">64dp</item>
+        <item name="android:layout_marginTop">@dimen/elder_gap_s</item>
+    </style>
+
     <style name="Theme.AgentLite.Translucent" parent="Theme.AgentLite">
         <item name="android:windowIsTranslucent">true</item>
         <item name="android:windowBackground">@android:color/transparent</item>

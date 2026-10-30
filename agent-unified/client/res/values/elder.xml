@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!--
+  适老化设计令牌（手机形态专用；手表与悬浮层的深色令牌在 colors.xml / dimens.xml，未改动）
+
+  面向人群：老年人与不便使用手机的人。取值依据（工信部《移动互联网应用（APP）适老化通用设计规范》
+  + WCAG 2.1 AA）：
+    · 浅色高对比：深字浅底，正文对比度 ≥ 7:1，按钮文字 ≥ 4.5:1，边框等非文字元素 ≥ 3:1；
+      不跟随莫奈取色（动态色无法保证对比度），values-v31 不覆盖本文件。
+    · 大字号：正文 20sp、按钮 24sp、标题 30sp，最小不低于 18sp；全部用 sp，叠加系统字体放大。
+    · 大触控：常规按钮 ≥ 64dp，主操作 80dp 以上，输入框 ≥ 72dp（规范要求 ≥ 60×60dp）。
+    · 控件高度一律用 minHeight，不写死 layout_height，系统字体放大后文字不被裁切。
+-->
+<resources>
+    <!-- ===== 颜色 ===== -->
+    <color name="elder_bg">#F6F3EE</color>            <!-- 页面底色：暖白，不刺眼 -->
+    <color name="elder_card">#FFFFFF</color>          <!-- 卡片 -->
+    <color name="elder_card_inner">#F6F3EE</color>    <!-- 卡片内嵌块 -->
+    <color name="elder_border">#8C8C8C</color>        <!-- 卡片/输入框边框（3.4:1 非文字对比） -->
+    <color name="elder_divider">#D6D1C8</color>
+
+    <color name="elder_text">#1A1A1A</color>          <!-- 主文字 17.4:1 on white -->
+    <color name="elder_text_2">#3D3D3D</color>        <!-- 次要说明 10.9:1 on white -->
+    <color name="elder_hint">#636363</color>          <!-- 输入提示 6.0:1 on white -->
+
+    <color name="elder_primary">#0B5CAD</color>       <!-- 主操作蓝（白字 6.7:1） -->
+    <color name="elder_primary_pressed">#08427D</color>
+    <color name="elder_primary_soft">#E3EEFA</color>  <!-- 次按钮按下底色 -->
+    <color name="elder_on_primary">#FFFFFF</color>
+
+    <color name="elder_danger">#B42318</color>        <!-- 停止 / 退出（白字 6.5:1） -->
+    <color name="elder_danger_pressed">#8A1A12</color>
+
+    <color name="elder_ok_bg">#E4F4E8</color>
+    <color name="elder_ok_text">#145A2C</color>       <!-- 7.3:1 on ok_bg -->
+    <color name="elder_warn_bg">#FFF3D1</color>
+    <color name="elder_warn_border">#C98A00</color>
+    <color name="elder_warn_text">#5C3B00</color>     <!-- 9.1:1 on warn_bg -->
+    <color name="elder_err_bg">#FCE8E6</color>
+    <color name="elder_err_text">#8C1D18</color>      <!-- 7.7:1 on err_bg -->
+    <color name="elder_disabled_bg">#C9C6C0</color>
+    <color name="elder_disabled_text">#4A4A4A</color>
+    <color name="elder_scrim">#99000000</color>        <!-- 语音召唤抽屉背后的遮罩（60% 黑） -->
+
+    <!-- ===== 字号 ===== -->
+    <dimen name="elder_text_title">30sp</dimen>       <!-- 页面标题 -->
+    <dimen name="elder_text_hero">28sp</dimen>        <!-- 「点我说话」「开始」两颗主按钮 -->
+    <dimen name="elder_text_button">24sp</dimen>      <!-- 常规按钮 -->
+    <dimen name="elder_text_section">24sp</dimen>     <!-- 卡片标题 -->
+    <dimen name="elder_text_body">20sp</dimen>        <!-- 正文 -->
+    <dimen name="elder_text_small">18sp</dimen>       <!-- 最小字号（说明文字），不得再小 -->
+
+    <!-- ===== 尺寸 ===== -->
+    <dimen name="elder_touch">64dp</dimen>            <!-- 常规按钮最小高度 -->
+    <dimen name="elder_touch_hero">96dp</dimen>       <!-- 主操作按钮最小高度 -->
+    <dimen name="elder_touch_run">80dp</dimen>        <!-- 开始 / 停止 -->
+    <dimen name="elder_input_min">72dp</dimen>
+    <dimen name="elder_page_margin">20dp</dimen>
+    <dimen name="elder_card_padding">20dp</dimen>
+    <dimen name="elder_gap">16dp</dimen>
+    <dimen name="elder_gap_s">10dp</dimen>
+    <dimen name="elder_icon_pad">14dp</dimen>
+</resources>

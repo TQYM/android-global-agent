@@ -4,18 +4,16 @@
      旧的「下单 → 兑换码支付 → 订单记录」链路已按决策从本页移除（服务端代码保留）。
      支付必须由用户本人在官方页面完成，App 内不代收、也不替用户确认付款。
 
-     布局改版要点（同批次的其余 6 个页面早已令牌化，本页此前是唯一 0 令牌的页面）：
-     - 按真实任务流分区：说明 → ① API Key → ② 单模型模式 → ③ 官方充值 → 状态；
-       此前是「平铺一堆裸 TextView」，用户看不出先做哪一步；
-     - 全部改用 @dimen / @color 设计令牌与既有 drawable（bg_card / bg_input / btn_*）；
-     - 拆开「兑换码输入框 + 两个按钮」挤在同一行的横向布局（窄屏必然挤爆）；
-     - 旧链路的「订单记录」标题此前是无 id 的孤儿，Java 只隐藏了内容、标题永远挂在页面上；
-       现包进 orderArea 容器由 Java 整体隐藏。 -->
+     适老化改版（手机形态，本页只从设置页进入）：
+     - 浅色高对比 + 大字号（正文 20sp，按钮 24sp，按钮 ≥64dp）；
+     - 仍按真实任务流分区：说明 → ① API Key → ② 单模型模式 → ③ 官方充值 → 状态，
+       每一步标题前带序号，老人知道先做哪一步；
+     - 全部 id 不变（含复用的 etCode / btnCancel / 被 Java 整体隐藏的 orderArea）。 -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/rootPurchase"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/color_surface"
+    android:background="@color/elder_bg"
     android:fillViewport="true">
 
     <LinearLayout
@@ -23,311 +21,220 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:paddingLeft="@dimen/page_margin"
-        android:paddingRight="@dimen/page_margin"
-        android:paddingTop="@dimen/space_l"
-        android:paddingBottom="@dimen/space_l">
+        android:paddingLeft="@dimen/elder_page_margin"
+        android:paddingRight="@dimen/elder_page_margin"
+        android:paddingTop="@dimen/elder_gap"
+        android:paddingBottom="@dimen/elder_card_padding">
 
         <!-- 顶栏 -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:gravity="center_vertical"
-            android:orientation="horizontal">
-
-            <LinearLayout
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:orientation="vertical">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:fontFamily="sans-serif-medium"
-                    android:text="额度充值"
-                    android:textColor="@color/color_on_surface"
-                    android:textSize="@dimen/text_title"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="充值与 Key 都在你自己的 DeepSeek 账号里，App 不代收费用"
-                    android:textColor="@color/color_on_surface_variant"
-                    android:textSize="@dimen/text_label" />
-            </LinearLayout>
-
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
             <Button
                 android:id="@+id/btnBack"
+                style="@style/Elder.Button.Secondary"
                 android:layout_width="wrap_content"
-                android:layout_height="@dimen/btn_h"
-                android:background="@drawable/btn_ghost"
-                android:ellipsize="end"
-                android:maxLines="1"
-                android:minWidth="0dp"
-                android:minHeight="0dp"
-                android:paddingLeft="@dimen/space_l"
-                android:paddingRight="@dimen/space_l"
-                android:text="返回"
-                android:textAllCaps="false"
-                android:textColor="@color/color_on_surface"
-                android:textSize="@dimen/text_body" />
+                android:layout_height="wrap_content"
+                android:layout_marginTop="0dp"
+                android:drawableStart="@drawable/ic_elder_back"
+                android:text="返回"/>
+            <TextView
+                style="@style/Elder.Text.Title"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:layout_marginLeft="@dimen/elder_gap"
+                android:text="额度充值"/>
         </LinearLayout>
-
-        <!-- 购买方式说明（文案由 PurchaseActivity.renderPacks() 覆写） -->
         <TextView
-            android:id="@+id/tvPayHint"
+            style="@style/Elder.Text.Note"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="@dimen/space_m"
-            android:background="@drawable/bg_card"
-            android:padding="@dimen/space_m"
-            android:text="购买方式：在 DeepSeek 官方页面充值（按量计费），然后创建 API Key。"
-            android:textColor="@color/color_warning_text"
-            android:textSize="@dimen/text_caption" />
+            android:layout_marginTop="@dimen/elder_gap_s"
+            android:text="充值与 Key 都在你自己的 DeepSeek 账号里，App 不代收费用"/>
+
+        <TextView
+            android:id="@+id/tvPayHint"
+            style="@style/Elder.Text"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/elder_gap"
+            android:background="@drawable/bg_elder_neutral"
+            android:padding="@dimen/elder_gap"
+            android:text="购买方式：在 DeepSeek 官方页面充值（按量计费），然后创建 API Key。"/>
 
         <!-- ① API Key：DeepSeek 控制台创建后粘贴到这里（官方无自动创建接口） -->
         <LinearLayout
+            style="@style/Elder.Card"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="@dimen/card_gap"
-            android:background="@drawable/bg_card"
-            android:orientation="vertical"
-            android:padding="@dimen/card_padding">
-
+            android:layout_height="wrap_content">
             <TextView
+                style="@style/Elder.Text.Section"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="① 配置 API Key"
-                android:textColor="@color/color_on_surface"
-                android:textSize="@dimen/text_section"
-                android:textStyle="bold" />
-
+                android:text="① 配置 API Key"/>
             <TextView
                 android:id="@+id/tvAkLabel"
+                style="@style/Elder.Text.Label"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/space_xs"
-                android:text="DeepSeek API Key（仅存本机，Keystore 加密）"
-                android:textColor="@color/color_on_surface_variant"
-                android:textSize="@dimen/text_caption" />
-
+                android:text="DeepSeek API Key（仅存本机，Keystore 加密）"/>
             <EditText
                 android:id="@+id/etAkId"
+                style="@style/Elder.Input"
                 android:layout_width="match_parent"
-                android:layout_height="@dimen/input_h"
-                android:layout_marginTop="@dimen/space_s"
-                android:background="@drawable/bg_input"
+                android:layout_height="wrap_content"
                 android:hint="sk-…（在 DeepSeek 控制台创建）"
-                android:paddingLeft="@dimen/space_m"
-                android:paddingRight="@dimen/space_m"
-                android:singleLine="true"
-                android:textColor="@color/color_on_surface"
-                android:textColorHint="@color/color_text_hint"
-                android:textSize="@dimen/text_body" />
+                android:singleLine="true"/>
 
             <!-- DeepSeek 只需一个 API Key 字段，AccessKeySecret 一栏不再需要（2026-09-15 充值改版） -->
             <TextView
                 android:id="@+id/tvAkSecretLabel"
+                style="@style/Elder.Text.Label"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/space_m"
                 android:text="AccessKeySecret"
-                android:textColor="@color/color_on_surface_variant"
-                android:textSize="@dimen/text_label"
-                android:visibility="gone" />
+                android:visibility="gone"/>
 
             <!-- 复用 id=etCode（源自兑换码时代），Java 侧在此录入 AccessKeySecret。
-                 改用 textPassword：这是长期凭据，此前 textVisiblePassword 会明文显示在屏幕上。 -->
+                 textPassword：这是长期凭据，不明文显示在屏幕上。 -->
             <EditText
                 android:id="@+id/etCode"
+                style="@style/Elder.Input"
                 android:layout_width="match_parent"
-                android:layout_height="@dimen/input_h"
+                android:layout_height="wrap_content"
                 android:visibility="gone"
-                android:layout_marginTop="@dimen/space_xs"
-                android:background="@drawable/bg_input"
                 android:hint="仅存本机，绝不上传"
                 android:inputType="textPassword"
-                android:paddingLeft="@dimen/space_m"
-                android:paddingRight="@dimen/space_m"
-                android:singleLine="true"
-                android:textColor="@color/color_on_surface"
-                android:textColorHint="@color/color_text_hint"
-                android:textSize="@dimen/text_body" />
+                android:singleLine="true"/>
 
-            <!-- 凭据规则事前讲清（与登录页同一取舍：提交失败之前就让用户知道规则）。
-                 放这里而不是塞进 hint——hint 是单行，系统字体放大后必被截断。 -->
+            <!-- 凭据规则事前讲清；不塞进 hint——hint 是单行，系统字体放大后必被截断。 -->
             <TextView
+                style="@style/Elder.Text.Note"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/space_s"
-                android:text="Key 只存本机（Keystore 加密）；随时可在 DeepSeek 控制台吊销。"
-                android:textColor="@color/color_on_surface_variant"
-                android:textSize="@dimen/text_caption" />
+                android:layout_marginTop="@dimen/elder_gap_s"
+                android:text="Key 只存本机（Keystore 加密）；随时可在 DeepSeek 控制台吊销。"/>
 
-            <!-- 复用 id=btnCancel（源自取消下单），Java 侧文案为「保存 AccessKey / 更换 AccessKey」 -->
+            <!-- 复用 id=btnCancel（源自取消下单），Java 侧文案为「保存 API Key / 更换 API Key」 -->
             <Button
                 android:id="@+id/btnCancel"
+                style="@style/Elder.Button.Primary"
                 android:layout_width="match_parent"
-                android:layout_height="@dimen/btn_h"
-                android:layout_marginTop="@dimen/space_m"
-                android:background="@drawable/btn_ghost"
-                android:ellipsize="end"
-                android:maxLines="1"
-                android:minWidth="0dp"
-                android:minHeight="0dp"
-                android:text="保存 API Key"
-                android:textAllCaps="false"
-                android:textColor="@color/color_on_surface"
-                android:textSize="@dimen/text_body" />
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/elder_gap"
+                android:text="保存 API Key"/>
         </LinearLayout>
 
-        <!-- ② 单模型模式：百炼资源包按模型名严格匹配，买之前就要讲清口径 -->
+        <!-- ② 单模型模式：资源包按模型名严格匹配，买之前就要讲清口径 -->
         <LinearLayout
+            style="@style/Elder.Card"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="@dimen/card_gap"
-            android:background="@drawable/bg_card"
-            android:orientation="vertical"
-            android:padding="@dimen/card_padding">
-
+            android:layout_height="wrap_content">
             <Switch
                 android:id="@+id/swSingleModelBuy"
+                style="@style/Elder.Switch"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:minHeight="@dimen/touch_min"
-                android:text="② 单模型模式"
-                android:textColor="@color/color_on_surface"
-                android:textSize="@dimen/text_section" />
-
+                android:layout_marginTop="0dp"
+                android:textSize="@dimen/elder_text_section"
+                android:textStyle="bold"
+                android:text="② 单模型模式"/>
             <TextView
+                style="@style/Elder.Text.Note"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/space_xs"
-                android:text="省钱：所有请求只用一个模型。官方资源包按模型名严格匹配（qwen-plus 的包不抵扣 qwen-max），只有单模型时才能被同一个包抵扣。"
-                android:textColor="@color/color_on_surface_variant"
-                android:textSize="@dimen/text_caption" />
+                android:layout_marginTop="@dimen/elder_gap_s"
+                android:text="省钱：所有请求只用一个模型。官方资源包按模型名严格匹配（qwen-plus 的包不抵扣 qwen-max），只有单模型时才能被同一个包抵扣。"/>
         </LinearLayout>
 
         <!-- ③ 官方页购买：App 内不代收、不预选档位 -->
         <LinearLayout
+            style="@style/Elder.Card"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="@dimen/card_gap"
-            android:background="@drawable/bg_card"
-            android:orientation="vertical"
-            android:padding="@dimen/card_padding">
-
+            android:layout_height="wrap_content">
             <TextView
+                style="@style/Elder.Text.Section"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="③ 在官方页面购买"
-                android:textColor="@color/color_on_surface"
-                android:textSize="@dimen/text_section"
-                android:textStyle="bold" />
-
+                android:text="③ 在官方页面购买"/>
             <TextView
+                style="@style/Elder.Text.Note"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/space_xs"
-                android:text="App 不代收费用，也不会替你选档位——官方页面无法用链接预选套餐，请在那里自行确认价格与用量后支付。付款后返回本页，会自动创建并启用 API Key。"
-                android:textColor="@color/color_on_surface_variant"
-                android:textSize="@dimen/text_caption" />
+                android:layout_marginTop="@dimen/elder_gap_s"
+                android:text="App 不代收费用，也不会替你选档位——官方页面无法用链接预选套餐，请在那里自行确认价格与用量后支付。付款后返回本页，会自动创建并启用 API Key。"/>
 
             <!-- 档位卡片由 PurchaseActivity.renderPacks() 动态填充 -->
             <LinearLayout
                 android:id="@+id/packsContainer"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/space_s"
-                android:orientation="vertical" />
+                android:layout_marginTop="@dimen/elder_gap"
+                android:orientation="vertical"/>
 
             <Button
                 android:id="@+id/btnPay"
+                style="@style/Elder.Button.Primary"
                 android:layout_width="match_parent"
-                android:layout_height="@dimen/btn_h_primary"
-                android:layout_marginTop="@dimen/space_m"
-                android:background="@drawable/btn_primary"
-                android:ellipsize="end"
-                android:maxLines="1"
-                android:minWidth="0dp"
-                android:minHeight="0dp"
-                android:text="打开官方购买页"
-                android:textAllCaps="false"
-                android:textColor="@color/color_on_primary"
-                android:textSize="@dimen/text_body" />
+                android:layout_height="wrap_content"
+                android:minHeight="@dimen/elder_touch_run"
+                android:text="打开官方购买页"/>
         </LinearLayout>
 
         <!-- 当前状态：Key / 我方额度 / 上一步结果（tvMsg 由 Java 覆写） -->
         <LinearLayout
+            style="@style/Elder.Card"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="@dimen/card_gap"
-            android:background="@drawable/bg_card"
-            android:orientation="vertical"
-            android:padding="@dimen/card_padding">
-
+            android:layout_height="wrap_content">
             <TextView
+                style="@style/Elder.Text.Section"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="当前状态"
-                android:textColor="@color/color_on_surface"
-                android:textSize="@dimen/text_section"
-                android:textStyle="bold" />
-
+                android:text="当前状态"/>
             <TextView
                 android:id="@+id/tvCurrentOrder"
+                style="@style/Elder.Text"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/space_s"
-                android:text="尚未选择套餐"
-                android:textColor="@color/color_on_surface_variant"
-                android:textSize="@dimen/text_body" />
-
+                android:layout_marginTop="@dimen/elder_gap_s"
+                android:text="尚未选择套餐"/>
             <TextView
                 android:id="@+id/tvQuota"
+                style="@style/Elder.Text"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/space_xs"
-                android:text="额度：—"
-                android:textColor="@color/color_on_surface_variant"
-                android:textSize="@dimen/text_caption" />
-
+                android:layout_marginTop="@dimen/elder_gap_s"
+                android:text="额度：—"/>
             <TextView
                 android:id="@+id/tvMsg"
+                style="@style/Elder.Text"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/space_s"
-                android:text=""
-                android:textColor="@color/color_on_surface_variant"
-                android:textSize="@dimen/text_caption" />
+                android:layout_marginTop="@dimen/elder_gap_s"
+                android:accessibilityLiveRegion="polite"
+                android:text=""/>
         </LinearLayout>
 
-        <!-- 旧链路的订单记录：整块由 Java 隐藏（此前只隐藏了 tvOrders，标题成了孤儿的永远显示） -->
+        <!-- 旧链路的订单记录：整块由 Java 隐藏 -->
         <LinearLayout
             android:id="@+id/orderArea"
+            style="@style/Elder.Card"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="@dimen/card_gap"
-            android:orientation="vertical">
-
+            android:layout_height="wrap_content">
             <TextView
+                style="@style/Elder.Text.Section"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="订单记录（旧链路，已废弃）"
-                android:textColor="@color/color_on_surface"
-                android:textSize="@dimen/text_section"
-                android:textStyle="bold" />
-
+                android:text="订单记录（旧链路，已废弃）"/>
             <TextView
                 android:id="@+id/tvOrders"
+                style="@style/Elder.Text"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/space_xs"
-                android:text="暂无订单"
-                android:textColor="@color/color_on_surface_variant"
-                android:textSize="@dimen/text_caption" />
+                android:text="暂无订单"/>
         </LinearLayout>
     </LinearLayout>
 </ScrollView>

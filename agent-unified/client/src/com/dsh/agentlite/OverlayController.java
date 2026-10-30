@@ -58,14 +58,32 @@ public class OverlayController {
     private boolean taskActive;
     private boolean paused;
 
+    /**
+     * 适老化放大（手机形态）：卡片与控制面板是用户在**别的应用上面**做决定的地方
+     * （停止 / 接管 / 授权 / 回答提问），原 12–15sp 小字与 40dp 矮按钮对老年用户太难点。
+     * 手表小屏保持原尺寸，避免卡片撑出圆形表盘。
+     */
+    private final boolean roomy;
+
     public OverlayController(Context serviceCtx) {
         svc = serviceCtx;
         wm = (WindowManager) svc.getSystemService(Context.WINDOW_SERVICE);
+        roomy = ElderUi.enabled(serviceCtx);
     }
 
     private int dp(int v) {
         return (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v,
                 svc.getResources().getDisplayMetrics());
+    }
+
+    /** 字号：手机放大约 1.4 倍且不低于 18sp（胶囊等纯展示文字由调用方单独取值）。 */
+    private float ts(float base) {
+        return roomy ? Math.max(18f, Math.round(base * 1.4f)) : base;
+    }
+
+    /** 可点控件高度：手机不低于 60dp（适老化规范触控区 ≥ 60×60dp）。 */
+    private int th(int baseDp) {
+        return dp(roomy ? Math.max(baseDp, 60) : baseDp);
     }
 
     /** 构造底部沉浸窗口参数 */
@@ -239,13 +257,16 @@ public class OverlayController {
             box.addView(monetButton("单次允许", v -> AgentEngine.get(svc).submitAuth(0)));
             Button always = new Button(svc);
             always.setText("始终允许");
+            always.setTextSize(ts(15));
             always.setTextColor(0xFF3A3F4B);
             always.setBackgroundResource(R.drawable.btn_ghost);
             box.addView(always, vMargin());
             always.setOnClickListener(v -> AgentEngine.get(svc).submitAuth(1));
             Button deny = new Button(svc);
             deny.setText("拒绝");
-            deny.setTextColor(0xFF8B93A3);
+            deny.setTextSize(ts(15));
+            // 手机浅色卡片上原灰字只有约 3:1，改深灰保证读得清
+            deny.setTextColor(roomy ? 0xFF4A4F5B : 0xFF8B93A3);
             deny.setBackground(null);
             box.addView(deny, vMargin());
             deny.setOnClickListener(v -> AgentEngine.get(svc).submitAuth(2));
@@ -290,6 +311,19 @@ public class OverlayController {
         });
     }
 
+    /** 提问卡片的按钮布局参数：手表横排按权重分宽；手机竖排、每个占满一行。 */
+    private LinearLayout.LayoutParams askBtnLp(float weight, boolean gapAfter) {
+        if (roomy) {
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, th(42));
+            if (gapAfter) lp.bottomMargin = dp(8);
+            return lp;
+        }
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(42), weight);
+        if (gapAfter) lp.rightMargin = dp(8);
+        return lp;
+    }
+
     /** 灵动岛 Agent 提问交互卡片：直接悬浮前台，提供输入框/快速确认/跳过 */
     public void showAsk(String question) {
         ui.post(() -> {
@@ -304,18 +338,19 @@ public class OverlayController {
                 etAnswer.setHint("输入回答，或直接点击下方选项…");
                 etAnswer.setHintTextColor(0xFF9E9E9E);
                 etAnswer.setTextColor(0xFF1B1F27);
-                etAnswer.setTextSize(14);
+                etAnswer.setTextSize(ts(14));
                 etAnswer.setBackgroundResource(R.drawable.bg_input);
                 etAnswer.setPadding(dp(14), dp(10), dp(14), dp(10));
                 etAnswer.setSingleLine(true);
                 LinearLayout.LayoutParams etLp = new LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.MATCH_PARENT, dp(44));
+                        LinearLayout.LayoutParams.MATCH_PARENT, th(44));
                 etLp.topMargin = dp(12);
                 box.addView(etAnswer, etLp);
 
                 // 快捷操作栏（确认完成 / 是 / 否 / 提交）
                 LinearLayout btnRow = new LinearLayout(svc);
-                btnRow.setOrientation(LinearLayout.HORIZONTAL);
+                // 手机放大后三个按钮挤在一行会折行被裁：改为上下排列、每个占满一行
+                btnRow.setOrientation(roomy ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
                 btnRow.setGravity(Gravity.CENTER_VERTICAL);
                 LinearLayout.LayoutParams btnRowLp = new LinearLayout.LayoutParams(
                         LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
@@ -324,31 +359,29 @@ public class OverlayController {
                 // 快捷回答「已完成/好」
                 Button btnOk = new Button(svc);
                 btnOk.setText("已确认/已完成");
-                btnOk.setTextSize(13);
+                btnOk.setTextSize(ts(13));
                 btnOk.setTextColor(0xFFFFFFFF);
                 btnOk.setTypeface(null, android.graphics.Typeface.BOLD);
                 btnOk.setBackgroundResource(R.drawable.btn_primary);
-                LinearLayout.LayoutParams okLp = new LinearLayout.LayoutParams(0, dp(42), 1.3f);
-                okLp.rightMargin = dp(8);
+                LinearLayout.LayoutParams okLp = askBtnLp(1.3f, true);
                 btnRow.addView(btnOk, okLp);
 
                 // 提交自定义输入
                 Button btnSubmit = new Button(svc);
                 btnSubmit.setText("发送输入");
-                btnSubmit.setTextSize(13);
+                btnSubmit.setTextSize(ts(13));
                 btnSubmit.setTextColor(0xFF3A3F4B);
                 btnSubmit.setBackgroundResource(R.drawable.btn_ghost);
-                LinearLayout.LayoutParams submitLp = new LinearLayout.LayoutParams(0, dp(42), 1.0f);
-                submitLp.rightMargin = dp(8);
+                LinearLayout.LayoutParams submitLp = askBtnLp(1.0f, true);
                 btnRow.addView(btnSubmit, submitLp);
 
                 // 跳过
                 Button btnSkip = new Button(svc);
                 btnSkip.setText("跳过");
-                btnSkip.setTextSize(13);
-                btnSkip.setTextColor(0xFF8B93A3);
+                btnSkip.setTextSize(ts(13));
+                btnSkip.setTextColor(roomy ? 0xFF4A4F5B : 0xFF8B93A3);
                 btnSkip.setBackground(null);
-                LinearLayout.LayoutParams skipLp = new LinearLayout.LayoutParams(0, dp(42), 0.7f);
+                LinearLayout.LayoutParams skipLp = askBtnLp(0.7f, false);
                 btnRow.addView(btnSkip, skipLp);
 
                 box.addView(btnRow, btnRowLp);
@@ -460,21 +493,22 @@ public class OverlayController {
         // 左侧 AI 状态呼吸点
         tvIslandDot = new TextView(svc);
         tvIslandDot.setText("●");
-        tvIslandDot.setTextSize(12);
+        tvIslandDot.setTextSize(roomy ? 14 : 12);
         tvIslandDot.setTextColor(MonetColors.accent(svc));
         tvIslandDot.setGravity(Gravity.CENTER);
-        box.addView(tvIslandDot, new LinearLayout.LayoutParams(dp(18), dp(18)));
+        box.addView(tvIslandDot, new LinearLayout.LayoutParams(dp(roomy ? 24 : 18), dp(roomy ? 24 : 18)));
 
         // 中间实时滚动文本
         tvCapsule = new TextView(svc);
         tvCapsule.setTextColor(0xFFFFFFFF);
-        tvCapsule.setTextSize(13);
+        // 胶囊压在其它应用之上且会进入截图：只适度放大（13→16sp），不按卡片比例放大
+        tvCapsule.setTextSize(roomy ? 16 : 13);
         tvCapsule.setTypeface(null, android.graphics.Typeface.BOLD);
         tvCapsule.setSingleLine(true);
         tvCapsule.setEllipsize(android.text.TextUtils.TruncateAt.MARQUEE);
         tvCapsule.setMarqueeRepeatLimit(-1);
         tvCapsule.setSelected(true);
-        tvCapsule.setMaxWidth(dp(220));
+        tvCapsule.setMaxWidth(dp(roomy ? 260 : 220));
         LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         tlp.leftMargin = dp(8);
@@ -577,17 +611,17 @@ public class OverlayController {
         TextView tvHead = new TextView(svc);
         tvHead.setText("Agent · 实时控制面板");
         tvHead.setTextColor(0xFFFFFFFF);
-        tvHead.setTextSize(14);
+        tvHead.setTextSize(ts(14));
         tvHead.setTypeface(null, android.graphics.Typeface.BOLD);
         header.addView(tvHead, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
 
         Button btnClose = new Button(svc);
         btnClose.setText("X");
         btnClose.setTextColor(0xFF94A3B8);
-        btnClose.setTextSize(14);
+        btnClose.setTextSize(ts(14));
         btnClose.setBackground(null);
         btnClose.setOnClickListener(v -> togglePanel());
-        header.addView(btnClose, new LinearLayout.LayoutParams(dp(36), dp(36)));
+        header.addView(btnClose, new LinearLayout.LayoutParams(th(36), th(36)));
         box.addView(header);
 
         // 任务目标卡片
@@ -595,7 +629,7 @@ public class OverlayController {
             TextView tvTarget = new TextView(svc);
             tvTarget.setText("任务：" + currentTask);
             tvTarget.setTextColor(0xFF94A3B8);
-            tvTarget.setTextSize(12);
+            tvTarget.setTextSize(ts(12));
             tvTarget.setPadding(dp(10), dp(6), dp(10), dp(6));
             tvTarget.setBackgroundResource(R.drawable.bg_card);
             LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(
@@ -607,7 +641,7 @@ public class OverlayController {
         // 当前实时动作展示
         tvPanelStatus = new TextView(svc);
         tvPanelStatus.setTextColor(0xFFF1F5F9);
-        tvPanelStatus.setTextSize(13);
+        tvPanelStatus.setTextSize(ts(13));
         tvPanelStatus.setTypeface(null, android.graphics.Typeface.BOLD);
         tvPanelStatus.setText(tvCapsule == null ? "AI 正在执行…" : tvCapsule.getText());
         LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(
@@ -623,19 +657,19 @@ public class OverlayController {
         etSupp.setHint("补充指令，例如：只要上午的车次");
         etSupp.setTextColor(0xFFF1F5F9);
         etSupp.setHintTextColor(0xFF64748B);
-        etSupp.setTextSize(13);
+        etSupp.setTextSize(ts(13));
         etSupp.setSingleLine(true);
         etSupp.setBackgroundResource(R.drawable.bg_input);
         etSupp.setPadding(dp(12), 0, dp(12), 0);
-        suppRow.addView(etSupp, new LinearLayout.LayoutParams(0, dp(42), 1));
+        suppRow.addView(etSupp, new LinearLayout.LayoutParams(0, th(42), 1));
 
         Button send = new Button(svc);
         send.setText("发送");
-        send.setTextSize(13);
+        send.setTextSize(ts(13));
         send.setTextColor(0xFFFFFFFF);
         send.setBackgroundResource(R.drawable.btn_primary);
         LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, dp(42));
+                LinearLayout.LayoutParams.WRAP_CONTENT, th(42));
         blp.leftMargin = dp(8);
         suppRow.addView(send, blp);
         send.setOnClickListener(v -> {
@@ -655,32 +689,32 @@ public class OverlayController {
         ctl.setOrientation(LinearLayout.HORIZONTAL);
         btnTakeover = new Button(svc);
         btnTakeover.setText(paused ? "交还 AI" : "暂停接管");
-        btnTakeover.setTextSize(12);
+        btnTakeover.setTextSize(ts(12));
         btnTakeover.setTextColor(0xFFFFFFFF);
         btnTakeover.setBackgroundResource(R.drawable.btn_chip);
         btnTakeover.setOnClickListener(v -> {
             if (paused) AgentEngine.get(svc).requestResume();
             else AgentEngine.get(svc).requestTakeover();
         });
-        ctl.addView(btnTakeover, new LinearLayout.LayoutParams(0, dp(40), 1));
+        ctl.addView(btnTakeover, new LinearLayout.LayoutParams(0, th(40), 1));
 
         Button stop = new Button(svc);
         stop.setText("停止任务");
-        stop.setTextSize(12);
+        stop.setTextSize(ts(12));
         stop.setTextColor(0xFFF87171);
         stop.setBackgroundResource(R.drawable.btn_ghost);
-        LinearLayout.LayoutParams slp2 = new LinearLayout.LayoutParams(0, dp(40), 1);
+        LinearLayout.LayoutParams slp2 = new LinearLayout.LayoutParams(0, th(40), 1);
         slp2.leftMargin = dp(8);
         ctl.addView(stop, slp2);
         stop.setOnClickListener(v -> AgentEngine.get(svc).stop());
 
         Button collapse = new Button(svc);
         collapse.setText("收起");
-        collapse.setTextSize(12);
+        collapse.setTextSize(ts(12));
         collapse.setTextColor(0xFF94A3B8);
         collapse.setBackgroundResource(R.drawable.btn_ghost);
         LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(
-                dp(68), dp(40));
+                dp(roomy ? 84 : 68), th(40));
         clp.leftMargin = dp(8);
         ctl.addView(collapse, clp);
         collapse.setOnClickListener(v -> togglePanel());
@@ -788,7 +822,7 @@ public class OverlayController {
         TextView icon = new TextView(svc);
         icon.setText(glyph);
         icon.setTextColor(0xFFFFFFFF);
-        icon.setTextSize(14);
+        icon.setTextSize(ts(14));
         icon.setTypeface(null, android.graphics.Typeface.BOLD);
         icon.setGravity(Gravity.CENTER);
         android.graphics.drawable.GradientDrawable circle =
@@ -796,12 +830,12 @@ public class OverlayController {
         circle.setShape(android.graphics.drawable.GradientDrawable.OVAL);
         circle.setColor(color);
         icon.setBackground(circle);
-        row.addView(icon, new LinearLayout.LayoutParams(dp(34), dp(34)));
+        row.addView(icon, new LinearLayout.LayoutParams(dp(roomy ? 44 : 34), dp(roomy ? 44 : 34)));
 
         TextView tv = new TextView(svc);
         tv.setText(title);
         tv.setTextColor(0xFF1B1F27);
-        tv.setTextSize(17);
+        tv.setTextSize(ts(17));
         tv.setTypeface(null, android.graphics.Typeface.BOLD);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
@@ -814,7 +848,7 @@ public class OverlayController {
         TextView tv = new TextView(svc);
         tv.setText(s);
         tv.setTextColor(0xFF3A3F4B);
-        tv.setTextSize(14);
+        tv.setTextSize(ts(14));
         tv.setLineSpacing(0, 1.2f);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
@@ -827,7 +861,7 @@ public class OverlayController {
         Button b = new Button(svc);
         b.setText(text);
         b.setTextColor(0xFFFFFFFF);
-        b.setTextSize(15);
+        b.setTextSize(ts(15));
         b.setTypeface(null, android.graphics.Typeface.BOLD);
         b.setBackgroundResource(R.drawable.btn_primary);
         b.setLayoutParams(vMargin());
@@ -837,7 +871,7 @@ public class OverlayController {
 
     private LinearLayout.LayoutParams vMargin() {
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(46));
+                LinearLayout.LayoutParams.MATCH_PARENT, th(46));
         lp.topMargin = dp(12);
         return lp;
     }
@@ -849,6 +883,7 @@ public class OverlayController {
         if (withSupplement) {
             Button supp = new Button(svc);
             supp.setText("补充");
+            supp.setTextSize(ts(15));
             supp.setTextColor(0xFF3A3F4B);
             supp.setBackground(null);
             supp.setOnClickListener(v -> {
@@ -856,16 +891,17 @@ public class OverlayController {
                 ui.postDelayed(this::ensureCapsule, 300);
                 ui.postDelayed(() -> { if (capsule != null && panel == null) togglePanel(); }, 600);
             });
-            row.addView(supp, new LinearLayout.LayoutParams(0,
-                    LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+            row.addView(supp, new LinearLayout.LayoutParams(0, th(44), 1));
         }
         Button stop = new Button(svc);
         stop.setText("停止");
-        stop.setTextColor(0xFFF85149);
+        stop.setTextSize(ts(15));
+        stop.setTypeface(null, android.graphics.Typeface.BOLD);
+        // 手机：白卡片上用深红（6.5:1），原 #F85149 在白底只有约 3.4:1
+        stop.setTextColor(roomy ? 0xFFB42318 : 0xFFF85149);
         stop.setBackground(null);
         stop.setOnClickListener(v -> AgentEngine.get(svc).stop());
-        row.addView(stop, new LinearLayout.LayoutParams(0,
-                    LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+        row.addView(stop, new LinearLayout.LayoutParams(0, th(44), 1));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         lp.topMargin = dp(4);

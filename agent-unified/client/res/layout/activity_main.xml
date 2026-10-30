@@ -1,34 +1,41 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 <!--
-  Agent Lite 主界面
-  常驻：顶栏（设置）+ 状态行 + 账号状态行
-  主视图 mainContent：四大模块（放大）+ 任务下达 + 调试台
-  API 配置（Base URL / API Key / 模型 / 步数 / 纯视觉）连同 Token 统计、设备与显示、
-  保活与后台、数据与调试设置项已全部搬到独立二级页面 SettingsActivity
-  （res/layout/activity_settings.xml，控件 id 原样保留，Prefs 读写逻辑不变）。
-  截屏回显与日志按前一版需求保留隐藏（控件保留，供内部逻辑使用）。
+  Agent Lite 主界面（手机 · 适老化版）
+
+  面向老年人与不便使用手机的人，自上而下只有一条路：
+    ① 看状态（准备好了 / 还差一步）→ ② 点「我要说话」或打字 → ③ 点「开始」→ ④ 看提示。
+  不常用的「做过的事 / 授权 / 应用限制 / 记住的事」收在页面下方，账号在最底部。
+
+  约束（改版前后一致）：
+    · 全部控件 id 原样保留，MainActivity 的绑定与逻辑不变；
+    · 截屏回显与日志仍按前一版需求隐藏（控件保留，供内部逻辑使用）；
+    · 首屏文案不出现技术词（tests/spec_ux_001_guard.py UX-2）；
+    · 控件只写 minHeight 不写死高度：系统字体调到最大时文字整行换行，不被裁切。
+  手表形态不用本布局（见 activity_main_watch.xml，未改动）。
 -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/rootLayout"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/color_surface"
+    android:background="@color/elder_bg"
     android:fillViewport="true"
-     android:clipToPadding="false">
+    android:clipToPadding="false">
 
 <LinearLayout
     android:orientation="vertical"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:paddingLeft="@dimen/space_l"
-    android:paddingRight="@dimen/space_l">
+    android:paddingLeft="@dimen/elder_page_margin"
+    android:paddingRight="@dimen/elder_page_margin"
+    android:paddingBottom="@dimen/elder_gap">
 
     <!-- 顶栏：标题 + 设置 -->
     <LinearLayout
         android:orientation="horizontal"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="@dimen/space_s"
+        android:layout_marginTop="@dimen/elder_gap_s"
         android:gravity="center_vertical">
 
         <LinearLayout
@@ -37,84 +44,56 @@
             android:layout_weight="1"
             android:layout_height="wrap_content">
             <TextView
+                style="@style/Elder.Text.Title"
                 android:text="Agent Lite"
                 android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:textColor="@color/color_on_surface"
-                android:textSize="@dimen/text_title"
-                android:fontFamily="sans-serif-medium"
-                android:textStyle="bold"/>
+                android:layout_height="wrap_content"/>
             <TextView
-                android:text="原生智能体 · 灵动交互"
+                style="@style/Elder.Text.Note"
+                android:text="手机小帮手：说一句话，我帮您操作手机"
                 android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:textColor="@color/color_on_surface_variant"
-                android:textSize="@dimen/text_label"/>
+                android:layout_height="wrap_content"/>
         </LinearLayout>
 
         <Button
-            android:background="@drawable/btn_ghost"
             android:id="@+id/btnConfig"
+            style="@style/Elder.Button.Secondary"
             android:layout_width="wrap_content"
-            android:layout_height="@dimen/btn_h"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="0dp"
+            android:layout_marginLeft="@dimen/elder_gap_s"
+            android:drawableStart="@drawable/ic_elder_tune"
             android:text="设置"
-            android:textSize="@dimen/text_body"
-            android:textColor="@color/color_on_surface"
-                        android:paddingLeft="@dimen/space_l"
-            android:paddingRight="@dimen/space_l"
-            android:minWidth="0dp"
-            android:minHeight="0dp"
-                android:maxLines="1"
-                android:ellipsize="end"/>
+            android:contentDescription="打开设置"/>
     </LinearLayout>
 
-    <!-- 状态行 -->
+    <!-- 状态卡：一句话告诉老人「现在能不能用」 -->
     <LinearLayout
-        android:orientation="horizontal"
+        style="@style/Elder.Card"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="@dimen/space_s"
-        android:gravity="center_vertical">
+        android:layout_height="wrap_content">
         <TextView
             android:id="@+id/tvStatus"
-            android:layout_width="wrap_content"
+            style="@style/Elder.Text.Section"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="空闲"
-            android:textColor="@color/color_on_surface_variant"
-            android:textSize="@dimen/text_body"
-            android:background="@drawable/pill_gray"
-            android:paddingLeft="@dimen/space_m"
-            android:paddingRight="@dimen/space_m"
-            android:paddingTop="@dimen/space_xs"
-            android:paddingBottom="@dimen/space_xs"/>
+            android:text="准备好了"
+            android:accessibilityLiveRegion="polite"/>
         <TextView
             android:id="@+id/tvA11y"
-            android:layout_width="wrap_content"
+            style="@style/Elder.Text"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginLeft="@dimen/space_s"
-            android:textSize="@dimen/text_body"
-            android:text="无障碍"
-            android:background="@drawable/pill_gray"
-            android:paddingLeft="@dimen/space_m"
-            android:paddingRight="@dimen/space_m"
-            android:paddingTop="@dimen/space_xs"
-            android:paddingBottom="@dimen/space_xs"/>
+            android:layout_marginTop="@dimen/elder_gap_s"
+            android:minHeight="48dp"
+            android:gravity="center_vertical"
+            android:background="@drawable/bg_elder_neutral"
+            android:paddingLeft="@dimen/elder_gap"
+            android:paddingRight="@dimen/elder_gap"
+            android:paddingTop="@dimen/elder_gap_s"
+            android:paddingBottom="@dimen/elder_gap_s"
+            android:text="正在检查手机权限…"/>
     </LinearLayout>
-
-    <!-- 账号状态行：未登录 / 令牌失效时点这里直接进登录页 -->
-    <TextView
-        android:id="@+id/tvAccount"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="@dimen/space_s"
-        android:textSize="@dimen/text_body"
-        android:paddingLeft="@dimen/space_m"
-        android:paddingRight="@dimen/space_m"
-        android:paddingTop="@dimen/space_s"
-        android:paddingBottom="@dimen/space_s"
-        android:background="@drawable/pill_gray"
-        android:textColor="@color/color_on_surface_variant"
-        android:text="账号：检测中…"/>
 
     <!-- ===================== 主视图 ===================== -->
     <LinearLayout
@@ -123,165 +102,209 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content">
 
+        <!-- 还差一步：无障碍未开启时置顶显示 -->
         <LinearLayout
             android:id="@+id/a11yBanner"
-            android:orientation="horizontal"
+            android:orientation="vertical"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="@dimen/space_m"
-            android:background="@drawable/bg_card"
-            android:padding="@dimen/space_m"
-            android:gravity="center_vertical"
+            android:layout_marginTop="@dimen/elder_gap"
+            android:background="@drawable/bg_elder_warn"
+            android:padding="@dimen/elder_card_padding"
             android:visibility="gone">
             <TextView
-                android:text="提示：需要开启无障碍服务，Agent 才能看屏与模拟操作"
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_height="wrap_content"
-                android:textColor="@color/color_warning_text"
-                android:textSize="@dimen/text_body"/>
+                style="@style/Elder.Text.Section"
+                android:textColor="@color/elder_warn_text"
+                android:drawableStart="@drawable/ic_elder_warning"
+                android:drawableTint="@color/elder_warn_text"
+                android:drawablePadding="@dimen/elder_gap_s"
+                android:gravity="center_vertical"
+                android:text="还差一步"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"/>
+            <TextView
+                style="@style/Elder.Text"
+                android:textColor="@color/elder_warn_text"
+                android:layout_marginTop="@dimen/elder_gap_s"
+                android:text="需要在手机设置里打开「无障碍」开关，我才能看到屏幕、替您点按。点下面的按钮，找到「Agent Lite 无障碍服务」并打开即可。"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"/>
             <Button
-            android:background="@drawable/btn_primary"
                 android:id="@+id/btnA11yBanner"
-                android:text="一键开启"
-                android:layout_width="wrap_content"
-                android:layout_height="@dimen/btn_h"
-                android:textSize="@dimen/text_body"
-                android:textColor="@color/color_on_primary"
-                                android:paddingLeft="@dimen/space_l"
-                android:paddingRight="@dimen/space_l"
-                android:minWidth="0dp"
-                android:minHeight="0dp"
-                android:maxLines="1"
-                android:ellipsize="end"/>
+                style="@style/Elder.Button.Primary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/elder_gap"
+                android:text="去打开开关"/>
         </LinearLayout>
 
-        <!-- 四大模块（放大） -->
+        <!-- 第一步：说话（老人打字难，语音放在最显眼的位置） -->
+        <Button
+            android:id="@+id/btnMic"
+            style="@style/Elder.Button.Primary"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/elder_gap"
+            android:minHeight="@dimen/elder_touch_hero"
+            android:textSize="@dimen/elder_text_hero"
+            android:drawableStart="@drawable/ic_elder_mic"
+            android:text="我要说话"
+            android:contentDescription="我要说话。点一下开始说，说完再点一下"/>
+        <TextView
+            android:id="@+id/tvMicHint"
+            style="@style/Elder.Text.Note"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/elder_gap_s"
+            android:gravity="center_horizontal"
+            android:text="点一下开始说，说完再点一下，我就开始做"/>
+
+        <!-- 或者打字 -->
+        <TextView
+            style="@style/Elder.Text.Label"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="或者打字告诉我要做什么："/>
+        <EditText
+            android:id="@+id/etTask"
+            style="@style/Elder.Input"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="例如：把声音调大一点"
+            android:minLines="1"
+            android:maxLines="4"
+            android:inputType="textMultiLine"
+            android:gravity="top|start"/>
+
+        <!-- 试试这样说：点一下只填进输入框，不会直接执行 -->
+        <TextView
+            style="@style/Elder.Text.Note"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/elder_gap"
+            android:text="不知道说什么？点一下下面的例子，会帮您填好："/>
         <LinearLayout
             android:orientation="horizontal"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="@dimen/space_l">
+            android:layout_height="wrap_content">
             <Button
-            android:background="@drawable/btn_ghost"
-                android:id="@+id/btnHistory"
-                android:text="历史记录"
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_height="96dp"
-                android:textSize="@dimen/text_section"
-                android:textColor="@color/color_on_surface"
-                                android:minWidth="0dp"
-                android:minHeight="0dp"
-                android:maxLines="1"
-                android:ellipsize="end"/>
-            <Button
-            android:background="@drawable/btn_ghost"
-                android:id="@+id/btnAuth"
-                android:layout_marginLeft="@dimen/space_m"
-                android:text="授权管理"
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_height="96dp"
-                android:textSize="@dimen/text_section"
-                android:textColor="@color/color_on_surface"
-                                android:minWidth="0dp"
-                android:minHeight="0dp"
-                android:maxLines="1"
-                android:ellipsize="end"/>
-        </LinearLayout>
-
-        <LinearLayout
-            android:orientation="horizontal"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="@dimen/space_m">
-            <Button
-            android:background="@drawable/btn_ghost"
-                android:id="@+id/btnEco"
-                android:text="省电策略"
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_height="96dp"
-                android:textSize="@dimen/text_section"
-                android:textColor="@color/color_on_surface"
-                                android:minWidth="0dp"
-                android:minHeight="0dp"
-                android:maxLines="1"
-                android:ellipsize="end"/>
-            <Button
-            android:background="@drawable/btn_ghost"
-                android:id="@+id/btnMemory"
-                android:layout_marginLeft="@dimen/space_m"
-                android:text="记忆库"
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_height="96dp"
-                android:textSize="@dimen/text_section"
-                android:textColor="@color/color_on_surface"
-                                android:minWidth="0dp"
-                android:minHeight="0dp"
-                android:maxLines="1"
-                android:ellipsize="end"/>
-        </LinearLayout>
-
-                android:ellipsize="end"/>
-
-        <!-- 任务下达：输入框 + 语音 + 运行 **同一行**。
-             注意：这里输入框用 0dp + weight=1 是正确写法（横向容器里由 weight 分宽）；
-             早先的 0dp+weight 事故是写在**纵向**容器里，那种情况下宽度会被算成 0。 -->
-        <LinearLayout
-            android:orientation="horizontal"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="@dimen/space_l"
-            android:layout_marginBottom="@dimen/space_s"
-            android:gravity="center_vertical">
-            <EditText
-                android:id="@+id/etTask"
+                android:id="@+id/btnEx1"
+                style="@style/Elder.Button.Secondary"
                 android:layout_width="0dp"
                 android:layout_weight="1"
                 android:layout_height="wrap_content"
-                android:hint="下达指令…"
-                android:textSize="@dimen/text_body"
-                android:minLines="1"
-                android:maxLines="3"
-                android:textColor="@color/color_on_surface"
-                android:textColorHint="@color/color_text_hint"
-                android:background="@drawable/bg_input"
-                android:paddingLeft="@dimen/space_l"
-                android:paddingRight="@dimen/space_l"
-                android:paddingTop="@dimen/space_m"
-                android:paddingBottom="@dimen/space_m"/>
+                android:textSize="@dimen/elder_text_body"
+                android:text="声音调大"/>
             <Button
-            android:background="@drawable/btn_ghost"
-                android:id="@+id/btnMic"
-                android:text="语音"
-                android:layout_width="wrap_content"
-                android:minWidth="56dp"
-                android:layout_height="@dimen/btn_h_primary"
-                android:layout_marginLeft="@dimen/space_s"
-                android:textSize="@dimen/text_body"
-                android:textColor="@color/color_on_surface"
-                android:minHeight="0dp"
-                android:maxLines="1"
-                android:ellipsize="end"/>
-            <Button
-            android:background="@drawable/btn_primary"
-                android:id="@+id/btnRun"
-                android:text="运行"
-                android:layout_width="wrap_content"
-                android:minWidth="84dp"
-                android:layout_height="@dimen/btn_h_primary"
-                android:layout_marginLeft="@dimen/space_s"
-                android:textSize="@dimen/text_section"
-                android:fontFamily="sans-serif-medium"
-                android:textStyle="bold"
-                android:textColor="@color/color_on_primary"
-                android:minHeight="0dp"
-                android:maxLines="1"
-                android:ellipsize="end"/>
+                android:id="@+id/btnEx2"
+                style="@style/Elder.Button.Secondary"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:layout_marginLeft="@dimen/elder_gap_s"
+                android:textSize="@dimen/elder_text_body"
+                android:text="屏幕调亮"/>
         </LinearLayout>
+        <LinearLayout
+            android:orientation="horizontal"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+            <Button
+                android:id="@+id/btnEx3"
+                style="@style/Elder.Button.Secondary"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:textSize="@dimen/elder_text_body"
+                android:text="打开微信"/>
+            <Button
+                android:id="@+id/btnEx4"
+                style="@style/Elder.Button.Secondary"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:layout_marginLeft="@dimen/elder_gap_s"
+                android:textSize="@dimen/elder_text_body"
+                android:text="帮我记住"/>
+        </LinearLayout>
+
+        <!-- 第二步：开始 / 停止 -->
+        <Button
+            android:id="@+id/btnRun"
+            style="@style/Elder.Button.Primary"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/elder_gap"
+            android:minHeight="@dimen/elder_touch_run"
+            android:textSize="@dimen/elder_text_hero"
+            android:drawableStart="@drawable/ic_elder_play"
+            android:text="开始"/>
+
+        <!-- 提示：把最近一条进度用大字说清楚（改版前只写进隐藏日志，老人看不到任何反馈） -->
+        <TextView
+            android:id="@+id/tvLastMsg"
+            style="@style/Elder.Text"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/elder_gap"
+            android:background="@drawable/bg_elder_neutral"
+            android:padding="@dimen/elder_gap"
+            android:accessibilityLiveRegion="polite"
+            android:visibility="gone"/>
+
+        <!-- 更多功能：一个功能一块，标题 + 一句话说明 -->
+        <TextView
+            style="@style/Elder.Text.Section"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/elder_gap"
+            android:text="更多功能"/>
+        <Button
+            android:id="@+id/btnHistory"
+            style="@style/Elder.Button.Tile"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:drawableStart="@drawable/ic_elder_history"
+            android:text="做过的事\n看看以前让我做过什么"/>
+        <Button
+            android:id="@+id/btnAuth"
+            style="@style/Elder.Button.Tile"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:drawableStart="@drawable/ic_elder_lock"
+            android:text="授权管理\n查看或收回允许我操作的应用"/>
+        <Button
+            android:id="@+id/btnEco"
+            style="@style/Elder.Button.Tile"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:drawableStart="@drawable/ic_elder_shield"
+            android:text="应用限制\n设置哪些应用不让我自动操作"/>
+        <Button
+            android:id="@+id/btnMemory"
+            style="@style/Elder.Button.Tile"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:drawableStart="@drawable/ic_elder_star"
+            android:text="记住的事\n查看或删除我记住的内容"/>
+
+        <!-- 账号：未登录 / 失效时点这里直接进登录页；已登录点这里看额度 -->
+        <TextView
+            android:id="@+id/tvAccount"
+            style="@style/Elder.Text"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/elder_gap"
+            android:minHeight="@dimen/elder_touch"
+            android:gravity="center_vertical"
+            android:background="@drawable/btn_elder_tile"
+            android:padding="@dimen/elder_gap"
+            android:drawableStart="@drawable/ic_elder_person"
+            android:drawableTint="@color/elder_primary"
+            android:drawablePadding="@dimen/elder_gap"
+            android:clickable="true"
+            android:focusable="true"
+            android:text="账号：检测中…"/>
 
         <!-- 已按要求移除呈现：截屏回显与日志（控件保留隐藏，供内部逻辑继续使用） -->
         <FrameLayout
@@ -292,7 +315,6 @@
                 android:id="@+id/flScreen"
                 android:layout_width="match_parent"
                 android:layout_height="190dp"
-                android:layout_marginTop="@dimen/space_s"
                 android:background="@drawable/bg_card">
                 <ImageView
                     android:id="@+id/ivScreen"
@@ -315,9 +337,7 @@
             <ScrollView
                 android:id="@+id/svLog"
                 android:layout_width="match_parent"
-                android:layout_height="0dp"
-                android:layout_weight="1"
-                android:layout_marginTop="@dimen/space_xs"
+                android:layout_height="match_parent"
                 android:background="@drawable/bg_card"
                 android:padding="@dimen/space_m">
                 <TextView

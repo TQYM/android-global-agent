@@ -1,17 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <!--
-  账号登录 / 注册页（LoginActivity）
+  账号登录 / 注册页（LoginActivity · 手机适老化版）
   设计要点：
-  - 手机与手表共用同一布局：手表下由代码把水平内边距换成 @dimen/watch_edge（圆屏内接方形）
-  - 账号名与密钥规则常驻展示（注册失败前就让用户知道规则，而不是提交后才报错）
-  - 登录成功后自动绑定本机设备（/api/v1/device/bind），失败会在消息区给出可读中文提示
+  - 输入框上方常驻标签（老人看不清框内的灰色提示字，也记不住提示消失前写的是什么）；
+  - 密钥可点「显示」核对，输错了不必整串重打（新增 cbShowKey，只影响显示方式）；
+  - 「登录」是唯一的实心主按钮；注册与「稍后再说」退为次按钮，避免点错；
+  - 规则常驻展示，提交前就知道要求；
+  - 全部 id 与手表版 activity_login_watch.xml 一致，LoginActivity 逻辑不变。
 -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/rootLogin"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/color_surface"
+    android:background="@color/elder_bg"
     android:fillViewport="true">
 
     <LinearLayout
@@ -19,10 +21,10 @@
         android:orientation="vertical"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:paddingLeft="@dimen/space_l"
-        android:paddingRight="@dimen/space_l"
-        android:paddingTop="@dimen/space_l"
-        android:paddingBottom="@dimen/space_l">
+        android:paddingLeft="@dimen/elder_page_margin"
+        android:paddingRight="@dimen/elder_page_margin"
+        android:paddingTop="@dimen/elder_gap"
+        android:paddingBottom="@dimen/elder_card_padding">
 
         <!-- 顶栏 -->
         <LinearLayout
@@ -30,218 +32,175 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:gravity="center_vertical">
-
-            <LinearLayout
-                android:orientation="vertical"
+            <Button
+                android:id="@+id/btnBack"
+                style="@style/Elder.Button.Secondary"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="0dp"
+                android:drawableStart="@drawable/ic_elder_back"
+                android:text="返回"/>
+            <TextView
+                style="@style/Elder.Text.Title"
                 android:layout_width="0dp"
                 android:layout_weight="1"
-                android:layout_height="wrap_content">
-                <TextView
-                    android:text="账号登录"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:textColor="@color/color_on_surface"
-                    android:textSize="@dimen/text_title"
-                    android:fontFamily="sans-serif-medium"
-                    android:textStyle="bold"/>
-                <TextView
-                    android:text="登录后任务历史/记忆会同步到你的账号"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:textColor="@color/color_on_surface_variant"
-                    android:textSize="@dimen/text_label"/>
-            </LinearLayout>
-
-            <Button
-            android:background="@drawable/btn_ghost"
-                android:id="@+id/btnBack"
-                android:layout_width="wrap_content"
-                android:layout_height="@dimen/btn_h"
-                android:text="返回"
-                android:textSize="@dimen/text_body"
-                android:textColor="@color/color_on_surface"
-                                android:paddingLeft="@dimen/space_l"
-                android:paddingRight="@dimen/space_l"
-                android:minWidth="0dp"
-                android:minHeight="0dp"
-                android:maxLines="1"
-                android:ellipsize="end"/>
+                android:layout_height="wrap_content"
+                android:layout_marginLeft="@dimen/elder_gap"
+                android:text="登录账号"/>
         </LinearLayout>
+        <TextView
+            style="@style/Elder.Text.Note"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/elder_gap_s"
+            android:text="登录后，做过的事和记住的事会保存到您的账号里，换手机也不会丢。不登录也可以直接用。"/>
 
         <!-- 当前登录状态 -->
         <TextView
             android:id="@+id/tvCurrent"
+            style="@style/Elder.Text"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="@dimen/space_m"
-            android:padding="@dimen/space_m"
-            android:background="@drawable/bg_card"
-            android:textColor="@color/color_on_surface_variant"
-            android:textSize="@dimen/text_body"
+            android:layout_marginTop="@dimen/elder_gap"
+            android:background="@drawable/bg_elder_neutral"
+            android:padding="@dimen/elder_gap"
             android:text="当前未登录"/>
 
         <!-- 输入卡片 -->
         <LinearLayout
-            android:orientation="vertical"
+            style="@style/Elder.Card"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="@dimen/space_m"
-            android:padding="@dimen/space_m"
-            android:background="@drawable/bg_card">
-
-            <EditText
-                android:id="@+id/etName"
-                android:layout_width="match_parent"
-                android:layout_height="@dimen/input_h"
-                android:hint="账号名"
-                android:textSize="@dimen/text_body"
-                android:singleLine="true"
-                android:inputType="text"
-                android:textColor="@color/color_on_surface"
-                android:textColorHint="@color/color_text_hint"
-                android:background="@drawable/bg_input"
-                android:paddingLeft="@dimen/space_m"
-                android:paddingRight="@dimen/space_m"/>
-
-            <EditText
-                android:id="@+id/etKey"
-                android:layout_width="match_parent"
-                android:layout_height="@dimen/input_h"
-                android:layout_marginTop="@dimen/space_s"
-                android:hint="账号密钥"
-                android:textSize="@dimen/text_body"
-                android:singleLine="true"
-                android:inputType="textPassword"
-                android:textColor="@color/color_on_surface"
-                android:textColorHint="@color/color_text_hint"
-                android:background="@drawable/bg_input"
-                android:paddingLeft="@dimen/space_m"
-                android:paddingRight="@dimen/space_m"/>
-
-            <LinearLayout
-                android:orientation="horizontal"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/space_m">
-                <Button
-            android:background="@drawable/btn_primary"
-                    android:id="@+id/btnLogin"
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
-                    android:layout_height="@dimen/btn_h"
-                    android:text="登录"
-                    android:textSize="@dimen/text_body"
-                    android:textColor="@color/color_on_primary"
-                                        android:minWidth="0dp"
-                    android:minHeight="0dp"
-                android:maxLines="1"
-                android:ellipsize="end"/>
-                <Button
-            android:background="@drawable/btn_ghost"
-                    android:id="@+id/btnRegister"
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
-                    android:layout_height="@dimen/btn_h"
-                    android:layout_marginLeft="@dimen/space_s"
-                    android:text="注册新账号"
-                    android:textSize="@dimen/text_body"
-                    android:textColor="@color/color_on_surface"
-                                        android:minWidth="0dp"
-                    android:minHeight="0dp"
-                android:maxLines="1"
-                android:ellipsize="end"/>
-            </LinearLayout>
+            android:layout_height="wrap_content">
 
             <TextView
-                android:id="@+id/tvMsg"
+                style="@style/Elder.Text.Label"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/space_s"
-                android:textSize="@dimen/text_body"
-                android:textColor="@color/color_on_surface_variant"
+                android:layout_marginTop="0dp"
+                android:text="账号名"/>
+            <EditText
+                android:id="@+id/etName"
+                style="@style/Elder.Input"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="小写字母或数字，例如 laowang"
+                android:singleLine="true"
+                android:inputType="text"
+                android:importantForAutofill="no"/>
+
+            <TextView
+                style="@style/Elder.Text.Label"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="账号密钥（相当于密码）"/>
+            <EditText
+                android:id="@+id/etKey"
+                style="@style/Elder.Input"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="至少 8 位"
+                android:singleLine="true"
+                android:inputType="textPassword"
+                android:importantForAutofill="no"/>
+            <CheckBox
+                android:id="@+id/cbShowKey"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:minHeight="@dimen/elder_touch"
+                android:textSize="@dimen/elder_text_body"
+                android:textColor="@color/elder_text"
+                android:buttonTint="@color/elder_primary"
+                android:text="显示密钥，方便核对"/>
+
+            <!-- 消息区（登录中 / 错误原因） -->
+            <TextView
+                android:id="@+id/tvMsg"
+                style="@style/Elder.Text"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/elder_gap_s"
+                android:accessibilityLiveRegion="polite"
                 android:visibility="gone"/>
 
             <Button
-            android:background="@drawable/btn_ghost"
-                android:id="@+id/btnSkip"
+                android:id="@+id/btnLogin"
+                style="@style/Elder.Button.Primary"
                 android:layout_width="match_parent"
-                android:layout_height="@dimen/btn_h"
-                android:layout_marginTop="@dimen/space_s"
-                android:text="稍后再说"
-                android:textSize="@dimen/text_body"
-                android:textColor="@color/color_on_surface_variant"
-                                android:minWidth="0dp"
-                android:minHeight="0dp"
-                android:maxLines="1"
-                android:ellipsize="end"/>
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/elder_gap"
+                android:minHeight="@dimen/elder_touch_run"
+                android:textSize="@dimen/elder_text_hero"
+                android:text="登录"/>
+            <Button
+                android:id="@+id/btnRegister"
+                style="@style/Elder.Button.Secondary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="还没有账号？注册新账号"/>
+            <Button
+                android:id="@+id/btnSkip"
+                style="@style/Elder.Button.Secondary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="稍后再说"/>
         </LinearLayout>
 
         <!-- 规则说明：注册前就能看到账号名与密钥要求 -->
         <LinearLayout
-            android:orientation="vertical"
+            style="@style/Elder.Card"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="@dimen/space_m"
-            android:padding="@dimen/space_m"
-            android:background="@drawable/bg_card">
-
+            android:layout_height="wrap_content">
             <TextView
-                android:text="账号规则"
-                android:layout_width="wrap_content"
+                style="@style/Elder.Text.Section"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:textSize="@dimen/text_body"
-                android:textStyle="bold"
-                android:textColor="@color/color_on_surface"/>
-
+                android:text="账号规则"/>
             <TextView
                 android:id="@+id/tvRuleName"
+                style="@style/Elder.Text"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/space_xs"
-                android:textSize="@dimen/text_body"
-                android:textColor="@color/color_on_surface_variant"
+                android:layout_marginTop="@dimen/elder_gap_s"
                 android:text="· 账号名 3-32 位，仅小写字母、数字、下划线 _、连字符 -"/>
-
             <TextView
                 android:id="@+id/tvRuleKey"
+                style="@style/Elder.Text"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/space_xs"
-                android:textSize="@dimen/text_body"
-                android:textColor="@color/color_on_surface_variant"
+                android:layout_marginTop="@dimen/elder_gap_s"
                 android:text="· 账号密钥至少 8 位（最多 256 位）"/>
-
             <TextView
+                style="@style/Elder.Text"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/space_s"
-                android:textSize="@dimen/text_body"
-                android:textColor="@color/color_on_surface_variant"
-                android:text="· 新账号注册即赠送 500 units（1 unit = 1000 tokens）"/>
-
+                android:layout_marginTop="@dimen/elder_gap_s"
+                android:text="· 新账号注册即赠送 500 额度（1 额度 = 1000 tokens）"/>
             <TextView
+                style="@style/Elder.Text"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/space_xs"
-                android:textSize="@dimen/text_body"
-                android:textColor="@color/color_on_surface_variant"
+                android:layout_marginTop="@dimen/elder_gap_s"
                 android:text="· 每次登录都会轮换账号令牌，其他设备上的旧令牌会立即失效"/>
-
             <TextView
+                style="@style/Elder.Text"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/space_xs"
-                android:textSize="@dimen/text_body"
-                android:textColor="@color/color_on_surface_variant"
+                android:layout_marginTop="@dimen/elder_gap_s"
                 android:text="· 密钥只在本机保存并用于换取令牌，服务端只存不可逆哈希"/>
+            <TextView
+                style="@style/Elder.Text.Note"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/elder_gap"
+                android:textStyle="bold"
+                android:text="密钥丢了无法找回，请抄在本子上收好。"/>
 
             <TextView
                 android:id="@+id/tvSyncTarget"
+                style="@style/Elder.Text.Note"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="@dimen/space_s"
-                android:textSize="@dimen/text_label"
-                android:textColor="@color/color_text_hint"/>
+                android:layout_marginTop="@dimen/elder_gap_s"/>
         </LinearLayout>
     </LinearLayout>
 </ScrollView>

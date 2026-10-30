@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- 适老化功能入口块：白卡片，按下变浅蓝 -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_pressed="true">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/elder_primary_soft"/>
+            <corners android:radius="18dp"/>
+            <stroke android:width="3dp" android:color="@color/elder_primary"/>
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/elder_card"/>
+            <corners android:radius="18dp"/>
+            <stroke android:width="2dp" android:color="@color/elder_divider"/>
+        </shape>
+    </item>
+</selector>

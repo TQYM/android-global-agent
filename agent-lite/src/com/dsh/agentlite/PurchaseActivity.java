@@ -88,6 +88,7 @@ public final class PurchaseActivity extends Activity {
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
+        ElderUi.applyTheme(this);   // 手机：浅色大字主题（须在 setContentView 之前）
         setContentView(R.layout.activity_purchase);
         prefs = new Prefs(this);
         akStore = new AkStore(this);
@@ -175,14 +176,14 @@ public final class PurchaseActivity extends Activity {
         LinearLayout card = card();
         TextView t = new TextView(this);
         t.setText(title);
-        t.setTextColor(getColor(R.color.color_on_surface));
-        textSize(t, R.dimen.text_body);
+        t.setTextColor(getColor(R.color.elder_text));
+        textSize(t, R.dimen.elder_text_body);
         t.setTypeface(null, android.graphics.Typeface.BOLD);
         card.addView(t);
         TextView d = new TextView(this);
         d.setText(detail);
-        d.setTextColor(getColor(R.color.color_on_surface_variant));
-        textSize(d, R.dimen.text_caption);
+        d.setTextColor(getColor(R.color.elder_text_2));
+        textSize(d, R.dimen.elder_text_small);
         d.setPadding(0, dimen(R.dimen.space_xs), 0, 0);
         card.addView(d);
         return card;
@@ -192,28 +193,29 @@ public final class PurchaseActivity extends Activity {
         LinearLayout card = card();
         TextView t = new TextView(this);
         t.setText(name);
-        t.setTextColor(getColor(R.color.color_on_surface));
-        textSize(t, R.dimen.text_section);
+        t.setTextColor(getColor(R.color.elder_text));
+        textSize(t, R.dimen.elder_text_section);
         t.setTypeface(null, android.graphics.Typeface.BOLD);
         card.addView(t);
 
         TextView d = new TextView(this);
         d.setText(note + "　·　点击后跳到 DeepSeek 官方充值页");
-        d.setTextColor(getColor(R.color.color_on_surface_variant));
-        textSize(d, R.dimen.text_caption);
+        d.setTextColor(getColor(R.color.elder_text_2));
+        textSize(d, R.dimen.elder_text_small);
         d.setPadding(0, dimen(R.dimen.space_xs), 0, dimen(R.dimen.space_s));
         card.addView(d);
 
         Button buy = new Button(this);
         buy.setText("去官方页面购买");
         buy.setAllCaps(false);   // 平台主题默认把按钮文字转全大写（真机实测「保存 ACCESSKEY」）
-        buy.setBackgroundResource(R.drawable.btn_ghost);
-        buy.setTextColor(getColor(R.color.color_on_surface));
-        textSize(buy, R.dimen.text_body);
+        buy.setBackgroundResource(R.drawable.btn_elder_secondary);
+        buy.setTextColor(getColor(R.color.elder_primary));
+        textSize(buy, R.dimen.elder_text_body);
+        buy.setTypeface(null, android.graphics.Typeface.BOLD);
+        buy.setStateListAnimator(null);
         buy.setMinWidth(0);
-        buy.setMinHeight(0);
-        buy.setMaxLines(1);
-        buy.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        // 适老化：按钮至少 64dp 高、允许换行（系统字体放大后不被截成「去官方页…」）
+        buy.setMinHeight(dimen(R.dimen.elder_touch));
         buy.setOnClickListener(v -> openOfficialBuyPage());
         pressFeedback(buy);
         card.addView(buy);
@@ -229,13 +231,13 @@ public final class PurchaseActivity extends Activity {
     private LinearLayout card() {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
-        int padH = dimen(R.dimen.card_padding);
-        int padV = dimen(R.dimen.space_m);
+        int padH = dimen(R.dimen.elder_card_padding);
+        int padV = dimen(R.dimen.elder_gap);
         card.setPadding(padH, padV, padH, padV);
-        card.setBackgroundResource(R.drawable.bg_card_inner);
+        card.setBackgroundResource(R.drawable.bg_elder_card_inner);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        lp.bottomMargin = dimen(R.dimen.space_s);
+        lp.bottomMargin = dimen(R.dimen.elder_gap_s);
         card.setLayoutParams(lp);
         return card;
     }
@@ -415,13 +417,13 @@ public final class PurchaseActivity extends Activity {
 
     private void msg(String text, boolean error) {
         tvMsg.setText(text);
-        tvMsg.setTextColor(getColor(error ? R.color.color_error_text
-                : R.color.color_on_surface_variant));
+        tvMsg.setTextColor(getColor(error ? R.color.elder_err_text
+                : R.color.elder_text));
         fadeIn(tvMsg);
     }
 
     private void toast(String s) {
-        Toast.makeText(this, s, Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, s, Toast.LENGTH_LONG).show();   // 适老化：显示时间加长
     }
 
     // ------------------------------------------------------------------

@@ -13,7 +13,6 @@ import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.TextView;
-import android.widget.Toast;
 
 /**
  * 系统级长按召唤助手界面（透明悬浮底抽屉）。
@@ -36,6 +35,7 @@ public class AssistActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        ElderUi.applyTranslucentTheme(this);   // 手机：浅色大字的透明抽屉主题
         setContentView(R.layout.activity_assist);
 
         prefs = new Prefs(this);
@@ -51,7 +51,7 @@ public class AssistActivity extends Activity {
         btnRun.setOnClickListener(v -> {
             String task = etInput.getText().toString().trim();
             if (task.isEmpty()) {
-                Toast.makeText(this, "请输入或说出指令", Toast.LENGTH_SHORT).show();
+                tvHint.setText("请先点「我要说话」说一句，或者打字告诉我要做什么");
                 return;
             }
             startTask(task);
@@ -87,28 +87,32 @@ public class AssistActivity extends Activity {
             }));
         }
         if (recorder.start()) {
-            tvHint.setText("正在倾听中…说完请点停止或执行");
-            btnMic.setText("停止倾听");
+            tvHint.setText("我在听，请说…说完点下面红色的「说完了」");
+            btnMic.setText("说完了");
+            btnMic.setBackgroundResource(R.drawable.btn_elder_danger);
+            btnMic.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_elder_stop, 0, 0, 0);
         } else {
-            tvHint.setText("录音启动失败，请检查麦克风权限");
+            tvHint.setText("麦克风打不开，请检查是否允许了麦克风权限，也可以直接打字");
         }
     }
 
     private void stopAndTranscribe() {
         if (recorder == null || !recorder.isRecording()) return;
         byte[] wav = recorder.stopToWav();
-        tvHint.setText("正在识别语音内容…");
-        btnMic.setText("识别中…");
+        tvHint.setText("正在听懂您说的话，请稍等…");
+        btnMic.setText("正在识别…");
+        btnMic.setEnabled(false);
+        btnMic.setBackgroundResource(R.drawable.btn_elder_primary);
         new Thread(() -> {
             try {
                 // 转写走统一入口：本地离线 whisper 优先，其次端点，最后主模型音频
                 String text = AsrRouter.transcribe(this, prefs, wav);
                 ui.post(() -> {
-                    btnMic.setText("按住说话");
+                    resetMic();
                     if (text == null || text.trim().isEmpty()) {
-                        tvHint.setText("未识别到清晰语音，请重新录制或打字输入");
+                        tvHint.setText("没听清楚，请靠近手机再说一次，或者直接打字");
                     } else {
-                        tvHint.setText("已识别：" + text);
+                        tvHint.setText("我听到的是：「" + text + "」");
                         etInput.setText(text);
                         // 识别成功后立即自动执行
                         startTask(text);
@@ -116,11 +120,21 @@ public class AssistActivity extends Activity {
                 });
             } catch (Exception e) {
                 ui.post(() -> {
-                    btnMic.setText("按住说话");
-                    tvHint.setText("识别失败: " + e.getMessage());
+                    resetMic();
+                    // 技术原因只进日志，界面上给能照着做的一句话（守则 T-4）
+                    android.util.Log.w("AgentAssist", "识别失败: " + e.getMessage());
+                    tvHint.setText("这次没听出来，请再点「我要说话」试一次，或者直接打字");
                 });
             }
         }, "assist-asr").start();
+    }
+
+    /** 「我要说话」按钮回到待命样子（蓝色、可点）。 */
+    private void resetMic() {
+        btnMic.setEnabled(true);
+        btnMic.setText("我要说话");
+        btnMic.setBackgroundResource(R.drawable.btn_elder_primary);
+        btnMic.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_elder_mic, 0, 0, 0);
     }
 
     private void startTask(String task) {

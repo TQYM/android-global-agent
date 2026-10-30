@@ -34,7 +34,10 @@ public class LoginActivity extends Activity {
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
-        setContentView(R.layout.activity_login);
+        // 手机：适老化浅色大字版布局与主题；手表：改版前的原布局（两套布局 id 完全一致）
+        boolean watch = UiForm.isWatch(this);
+        ElderUi.applyTheme(this);
+        setContentView(watch ? R.layout.activity_login_watch : R.layout.activity_login);
         prefs = new Prefs(this);
 
         // 圆形表盘：内容收进内接方形（手机保持 16dp 边距不变）
@@ -53,6 +56,18 @@ public class LoginActivity extends Activity {
         btnSkip = findViewById(R.id.btnSkip);
         tvMsg = findViewById(R.id.tvMsg);
         tvCurrent = findViewById(R.id.tvCurrent);
+
+        // 「显示密钥」：只切换显示方式，不改变存储与提交（手表版布局无此控件）
+        android.widget.CheckBox cbShow = findViewById(R.id.cbShowKey);
+        if (cbShow != null) {
+            cbShow.setOnCheckedChangeListener((btn, show) -> {
+                int sel = etKey.getSelectionEnd();
+                etKey.setInputType(android.text.InputType.TYPE_CLASS_TEXT | (show
+                        ? android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+                        : android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD));
+                etKey.setSelection(Math.max(0, Math.min(sel, etKey.length())));
+            });
+        }
 
         // 已登录过则回填账号名，省得重新输入
         etName.setText(prefs.accountName());
@@ -87,7 +102,7 @@ public class LoginActivity extends Activity {
     private void refreshCurrent() {
         if (prefs.loggedIn()) {
             tvCurrent.setText("已登录：" + prefs.accountName() + "（" + prefs.accountId() + "）\n"
-                    + "额度 " + prefs.accountQuota() + " units · 已用 " + prefs.accountQuotaUsed()
+                    + "剩余额度 " + prefs.accountQuota() + " · 已用 " + prefs.accountQuotaUsed()
                     + (prefs.syncDeviceId().isEmpty() ? " · 本机尚未绑定" : " · 本机已绑定"));
             btnSkip.setText("退出登录");
         } else {
@@ -101,7 +116,15 @@ public class LoginActivity extends Activity {
     private void msg(String text, boolean error) {
         tvMsg.setVisibility(View.VISIBLE);
         tvMsg.setText(text);
-        tvMsg.setTextColor(error ? 0xFFF87171 : 0xFF34D399);
+        if (ElderUi.enabled(this)) {
+            // 浅色底上原先的浅红/浅绿字对比度不足，改用适老化语义色并加底色块
+            tvMsg.setTextColor(getColor(error ? R.color.elder_err_text : R.color.elder_ok_text));
+            tvMsg.setBackgroundResource(error ? R.drawable.bg_elder_err : R.drawable.bg_elder_ok);
+            int pad = getResources().getDimensionPixelSize(R.dimen.elder_gap_s);
+            tvMsg.setPadding(pad, pad, pad, pad);
+        } else {
+            tvMsg.setTextColor(error ? 0xFFF87171 : 0xFF34D399);
+        }
     }
 
     private void setBusy(boolean v) {
@@ -146,15 +169,14 @@ public class LoginActivity extends Activity {
     private void confirmRegister() {
         if (busy) return;
         // 注册前把规则与风险讲清楚（账号名不可改、密钥丢失无法找回）
-        new AlertDialog.Builder(this)
+        ElderUi.show(new AlertDialog.Builder(this)
                 .setTitle("注册新账号")
                 .setMessage("将创建新账号并获得 500 units 试用额度。\n\n"
                         + "· " + AccountClient.NAME_RULE + "\n"
                         + "· " + AccountClient.KEY_RULE + "\n\n"
                         + "账号密钥无法找回，请自行妥善保存。")
                 .setNegativeButton("取消", null)
-                .setPositiveButton("确认注册", (d, w) -> doRegister())
-                .show();
+                .setPositiveButton("确认注册", (d, w) -> doRegister()));
     }
 
     private void doRegister() {
@@ -238,7 +260,7 @@ public class LoginActivity extends Activity {
     // ---------- 退出登录 ----------
 
     private void confirmLogout() {
-        new AlertDialog.Builder(this)
+        ElderUi.show(new AlertDialog.Builder(this)
                 .setTitle("退出登录")
                 .setMessage("将清除本机保存的账号令牌与设备绑定。\n"
                         + "任务历史与记忆仍保留在本机；下次登录会重新绑定本机设备。")
@@ -250,8 +272,7 @@ public class LoginActivity extends Activity {
                     msg("已退出登录", false);
                     refreshCurrent();
                     toast("已退出登录");
-                })
-                .show();
+                }));
     }
 
     private void toast(String s) {

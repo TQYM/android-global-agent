@@ -66,6 +66,7 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
     private EditText etTask;
     private Button btnRun, btnMic;
     private View vTap;
+    private TextView tvLastMsg;   // 手机适老化主页：最近一条提示（大字常驻，代替一闪而过的 Toast）
     private ImageView ivScreen;
     private ScrollView svLog;
     private FrameLayout flScreen;
@@ -97,6 +98,8 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
         }
 
         watchUi = isWatchUi();
+        // 手机形态：浅色高对比的适老化主题（大字、大按钮）；手表保持原深色紧凑主题
+        if (!watchUi) ElderUi.applyTheme(this);
         setContentView(watchUi ? R.layout.activity_main_watch : R.layout.activity_main);
 
         // 启动即与同步服务对账一次：账号令牌鉴权（Bearer + X-Device-Id），增量上行 + 配置下发。
@@ -151,7 +154,7 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
         // 功能启用级弹窗（报告 §5.1.1：首次打开时告知操作与权限使用场景）
         if (!prefs.sp.getBoolean("intro_shown", false)) {
             prefs.sp.edit().putBoolean("intro_shown", true).apply();
-            new android.app.AlertDialog.Builder(this)
+            ElderUi.show(new android.app.AlertDialog.Builder(this)
                     .setTitle("Agent 操作手机说明")
                     .setMessage("本助手通过无障碍服务读取屏幕并模拟点击来替你操作手机。开始前，先说清三件事：\n\n"
                             + "【数据去哪】屏幕内容与截图会发送给你配置的模型服务（登录账号时走账号额度网关），"
@@ -162,9 +165,8 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
                             + "【怎么停】点胶囊里的「停止」立即结束；点「接管」则暂停等你操作，"
                             + "处理完点「交还 AI」继续。\n\n"
                             + "支付、协议、验证码等敏感环节会强制暂停，由你手动完成；"
-                            + "任务结束后可在「历史 / 授权 / 记忆」中回查与撤回。")
-                    .setPositiveButton("知道了", null)
-                    .show();
+                            + "任务结束后可在「做过的事 / 授权管理 / 记住的事」中回查与撤回。")
+                    .setPositiveButton("知道了", null));
         }
 
         // 未登录引导：启动后直接打开登录页（不强制——返回键可回到主页继续本机使用）。
@@ -201,6 +203,7 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
         ivScreen = findViewById(R.id.ivScreen);
         svLog = findViewById(R.id.svLog);
         flScreen = findViewById(R.id.flScreen);
+        tvLastMsg = findViewById(R.id.tvLastMsg);
     }
 
     /** 键盘出现时把任务输入行滚入可见区域，避免 ScrollView 的底部控件被 IME 覆盖。 */
@@ -271,20 +274,20 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
     private void refreshAccount() {
         if (tvAccount == null) return;
         if (!prefs.loggedIn()) {
-            tvAccount.setText("账号：未登录 · 点此登录（未登录时历史与记忆只存本机）");
-            tvAccount.setTextColor(0xFFFCD34D);
+            tvAccount.setText("账号：还没登录 · 点这里登录\n（不登录也能用，记录只存在这台手机上）");
+            tvAccount.setTextColor(getColor(R.color.elder_warn_text));
             return;
         }
         if (prefs.accountInvalid()) {
-            tvAccount.setText("账号：" + prefs.accountName() + " · ⚠ 登录已失效，点此重新登录");
-            tvAccount.setTextColor(0xFFF87171);
+            tvAccount.setText("账号：" + prefs.accountName() + "\n登录已过期，点这里重新登录");
+            tvAccount.setTextColor(getColor(R.color.elder_err_text));
             authPrompted = false;   // 允许再次提示
             return;
         }
         // 服务端 quota 语义就是当前剩余量；quota_used 是累计用量，不能再次相减。
         long left = Math.max(0, prefs.accountQuota());
-        tvAccount.setText("账号：" + prefs.accountName() + " · 剩余 " + left + " units · 点此查看额度与设备");
-        tvAccount.setTextColor(0xFF94A3B8);
+        tvAccount.setText("账号：" + prefs.accountName() + "\n剩余额度 " + left + " · 点这里查看额度与设备");
+        tvAccount.setTextColor(getColor(R.color.elder_text));
     }
 
     private void wire() {
@@ -316,6 +319,10 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
         });
 
         find(R.id.btnA11yBanner).setOnClickListener(v -> openA11ySettingsDirectly());
+        // 状态行写着「点此开启」：手机上同样可点，直达系统无障碍页
+        tvA11y.setOnClickListener(v -> {
+            if (AgentA11yService.get() == null) openA11ySettingsDirectly();
+        });
 
         // 管理入口（豆包规格事后层：可回查、可撤回、可清除）
         find(R.id.btnHistory).setOnClickListener(v -> showHistory());
@@ -328,6 +335,44 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
 
         btnMic.setOnClickListener(v -> toggleMic());
 
+        // 「试试这样说」：只把例句填进输入框，由用户自己点「开始」——不替用户做决定
+        fillExample(R.id.btnEx1, "把声音调大一点");
+        fillExample(R.id.btnEx2, "把屏幕调亮一点");
+        fillExample(R.id.btnEx3, "打开微信");
+        fillExample(R.id.btnEx4, "记一下：");   // 显式记忆通道（见 onRunClicked「记一下」分支）
+    }
+
+    /** 例句按钮：填入输入框并把光标放到末尾；「记一下：」需要接着输入，顺手弹出键盘。 */
+    private void fillExample(int id, String text) {
+        find(id).setOnClickListener(v -> {
+            etTask.setText(text);
+            etTask.setSelection(text.length());
+            if (text.endsWith("：")) {
+                etTask.requestFocus();
+                android.view.inputmethod.InputMethodManager imm =
+                        (android.view.inputmethod.InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+                if (imm != null) imm.showSoftInput(etTask, 0);
+                say("请接着输入要我记住的事，例如：记一下：我住在3号楼2单元。然后点「开始」。");
+            } else {
+                say("已填好：「" + text + "」。确认没问题，就点下面的「开始」。");
+            }
+        });
+    }
+
+    /**
+     * 面向用户的即时反馈：写日志的同时，在手机主页的提示框里用大字显示。
+     *
+     * <p>改版前这类反馈（「已写入记忆」「录音中…」「已撤回授权」）只进隐藏的日志区，
+     * 用户点了按钮看不到任何变化——对老年用户来说等于「没反应」，会反复点。
+     * 引擎自己的技术日志仍只走 {@link #onLog}，不在这里展示（守则 T-4）。
+     */
+    private void say(String line) {
+        onLog(line);
+        if (watchUi || tvLastMsg == null) return;
+        ui.post(() -> {
+            tvLastMsg.setText(line);
+            tvLastMsg.setVisibility(View.VISIBLE);
+        });
     }
 
     private AgentA11yService svc() {
@@ -346,13 +391,14 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
             return;
         }
         String task = etTask.getText().toString().trim();
-        if (task.isEmpty()) { toast("请输入任务"); return; }
+        if (task.isEmpty()) { toast(watchUi ? "请输入任务" : "请先点「我要说话」说一句，或者打字告诉我要做什么"); return; }
         // 记忆写入显式通道（报告 §7.1）：「记一下…」直接写入全局记忆，不进入执行循环
         if (task.startsWith("记一下")) {
             String mem = task.substring(3).trim();
+            if (mem.startsWith("：") || mem.startsWith(":")) mem = mem.substring(1).trim();
             if (mem.isEmpty()) { toast("「记一下」后面跟上要记住的内容"); return; }
             MemoryStore.add(this, mem);
-            onLog("已写入记忆：" + mem + "（之后任务会静默使用）");
+            say("好的，我记住了：" + mem + "（以后做事时会用上）");
             etTask.setText("");
             return;
         }
@@ -402,7 +448,7 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
                 + "账号额度由应用账号扣减，自己的配置由对应服务账号计费。"
                 + "模型请求可能上传任务文字和截图，并非只在本机处理。"
                 + "切换方式需要你主动选择，失败时不会自动换来源。";
-        new android.app.AlertDialog.Builder(this)
+        ElderUi.show(new android.app.AlertDialog.Builder(this)
                 .setTitle("还差一步就能开始")
                 .setMessage(msg)
                 .setPositiveButton(needsLogin ? "登录账号" : "选择使用方式", (d, w) -> {
@@ -410,8 +456,7 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
                     else CredentialRouteUi.showChooser(this, prefs, this::refreshAccount);
                 })
                 .setNeutralButton("打开设置", (d, w) -> openSettings())
-                .setNegativeButton("稍后", null)
-                .show();
+                .setNegativeButton("稍后", null));
     }
 
     /**
@@ -429,15 +474,21 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
         }
         refreshA11y();
         if (!networkReady()) {
-            toast("网络不可用：请检查手表 WiFi（省电模式下会被关闭）");
+            toast(watchUi ? "网络不可用：请检查手表 WiFi（省电模式下会被关闭）"
+                    : "现在没有网络：请检查手机是否连上了无线网（WiFi）或打开了移动数据");
             return;
         }
         // 走到这里说明真要跑任务了：此时才解释并申请通知权限（SPEC-UX-001 §5）
         ensureNotifyPermission();
         acquireWifiLock();
         engine.start(task);
-        toast("使用" + prefs.credentialRoute(prefs.model()).payerLabel()
-                + "，任务已启动；灵动岛将显示进度");
+        if (watchUi) {
+            toast("使用" + prefs.credentialRoute(prefs.model()).payerLabel()
+                    + "，任务已启动；灵动岛将显示进度");
+        } else {
+            say("好的，我开始做了（使用" + prefs.credentialRoute(prefs.model()).payerLabel() + "）。\n"
+                    + "屏幕边上亮起粉色光圈，就是我在操作；想停下来，回到这里点红色的「停止」。");
+        }
         if (watchUi) {
             ui.postDelayed(() -> moveTaskToBack(true), 800);
         }
@@ -501,25 +552,35 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
     private void toggleMic() {
         if (recorder != null && recorder.isRecording()) {
             byte[] wav = recorder.stopToWav();
-            btnMic.setText("语音");
-            onLog("识别中…");
+            if (watchUi) {
+                btnMic.setText("语音");
+            } else {
+                setMicLook(MIC_BUSY);
+            }
+            say("正在听懂您说的话，请稍等…");
             new Thread(() -> {
                 try {
                     // 转写走统一入口：本地离线 whisper 优先，其次独立端点，最后主模型音频
                     String text = AsrRouter.transcribe(this, prefs, wav);
-                    if (text.isEmpty()) { onLog("识别结果为空"); return; }
+                    ui.post(() -> setMicLook(MIC_IDLE));
+                    if (text.isEmpty()) { say("没听清楚，请靠近手机再说一次，或者直接打字"); return; }
+                    say("我听到的是：「" + text + "」");
                     onLog("[语音输入] " + text);
                     ui.post(() -> {
                         etTask.setText(text);
                         btnRun.performClick();
                     });
                 } catch (Exception e) {
+                    ui.post(() -> setMicLook(MIC_IDLE));
+                    // 技术原因只进日志；用户看到的是能照着做的一句话
                     onLog("语音识别失败：" + e.getMessage() + asrHint(e));
+                    if (!watchUi) say("这次没听出来，请再点「我要说话」试一次，或者直接打字");
                 }
             }, "asr").start();
             return;
         }
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            if (!watchUi) say("第一次用语音，手机会问是否允许使用麦克风，请点「允许」，然后再点一次「我要说话」");
             requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, 2);
             return;
         }
@@ -528,14 +589,47 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
         // 30 秒上限到点自动收尾：与用户主动点「结束」走同一条路径
         r.setOnAutoStop(() -> ui.post(() -> {
             if (recorder != r) return;      // 已被其它路径结束
-            onLog("录音已达 30 秒上限，自动结束");
+            say("已经说了 30 秒，我先停下来听一听");
             toggleMic();
         }));
         if (recorder.start()) {
-            btnMic.setText("■");
-            onLog("录音中…再点一次结束");
+            if (watchUi) {
+                btnMic.setText("■");
+            } else {
+                setMicLook(MIC_REC);
+            }
+            say("我在听，请说…说完点「说完了」");
         } else {
-            onLog("✗ 无法启动录音");
+            say("麦克风打不开，请检查是否允许了麦克风权限，也可以直接打字");
+        }
+    }
+
+    private static final int MIC_IDLE = 0, MIC_REC = 1, MIC_BUSY = 2;
+
+    /** 手机主页「我要说话」按钮的三种样子：待命（蓝）/ 正在听（红，点了就结束）/ 识别中（灰，不可点）。 */
+    private void setMicLook(int state) {
+        if (watchUi || btnMic == null) return;
+        TextView hint = findViewById(R.id.tvMicHint);
+        switch (state) {
+            case MIC_REC:
+                btnMic.setEnabled(true);
+                btnMic.setText("说完了，点这里");
+                btnMic.setBackgroundResource(R.drawable.btn_elder_danger);
+                btnMic.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_elder_stop, 0, 0, 0);
+                if (hint != null) hint.setText("正在听…最多 30 秒，说完点上面的红色按钮");
+                break;
+            case MIC_BUSY:
+                btnMic.setEnabled(false);
+                btnMic.setText("正在识别…");
+                btnMic.setBackgroundResource(R.drawable.btn_elder_primary);
+                if (hint != null) hint.setText("请稍等，马上就好");
+                break;
+            default:
+                btnMic.setEnabled(true);
+                btnMic.setText("我要说话");
+                btnMic.setBackgroundResource(R.drawable.btn_elder_primary);
+                btnMic.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_elder_mic, 0, 0, 0);
+                if (hint != null) hint.setText("点一下开始说，说完再点一下，我就开始做");
         }
     }
 
@@ -585,11 +679,18 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
     public void onStatus(boolean running, int step) {
         if (!running) releaseWifiLock();   // 任务结束：释放 WiFi 高性能锁
         ui.post(() -> {
-            tvStatus.setText(running ? "运行中 · 第 " + step + " 步" : "就绪");
-            if (watchUi) return;   // 手表极简主页：只更新状态文字
-            tvStatus.setTextColor(running ? 0xFF34D399 : 0xFF94A3B8);
-            tvStatus.setBackgroundResource(running ? R.drawable.pill_green : R.drawable.pill_gray);
-            btnRun.setText(running ? "停止" : "运行");
+            if (watchUi) {   // 手表极简主页：只更新状态文字
+                tvStatus.setText(running ? "运行中 · 第 " + step + " 步" : "就绪");
+                return;
+            }
+            taskRunning = running;
+            tvStatus.setText(running ? "正在帮您操作…（第 " + step + " 步）" : idleStatusText());
+            tvStatus.setTextColor(getColor(running ? R.color.elder_ok_text : R.color.elder_text));
+            // 运行中：「开始」变成红色「停止」，同一个位置、同一个按钮，老人不用找
+            btnRun.setText(running ? "停止" : "开始");
+            btnRun.setBackgroundResource(running ? R.drawable.btn_elder_danger : R.drawable.btn_elder_primary);
+            btnRun.setCompoundDrawablesRelativeWithIntrinsicBounds(
+                    running ? R.drawable.ic_elder_stop : R.drawable.ic_elder_play, 0, 0, 0);
         });
     }
 
@@ -635,7 +736,7 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
         askDialogShowing = true;
         final android.widget.EditText input = new android.widget.EditText(this);
         input.setHint("输入回答…");
-        new android.app.AlertDialog.Builder(this)
+        ElderUi.show(new android.app.AlertDialog.Builder(this)
                 .setTitle("Agent 提问")
                 .setMessage(pendingAsk)
                 .setView(input)
@@ -649,8 +750,7 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
                     engine.answerAsk("");
                     pendingAsk = null; askDialogShowing = false;
                     cancelAskNotification();
-                })
-                .show();
+                }));
     }
 
     private static final int ASK_NOTIF_ID = 9021;
@@ -726,15 +826,14 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
     private void promptRelogin() {
         if (isFinishing()) return;
         authPrompted = true;
-        new android.app.AlertDialog.Builder(this)
+        ElderUi.show(new android.app.AlertDialog.Builder(this)
                 .setTitle("登录已失效")
                 .setMessage("登录状态已失效，需要重新登录一次。\n"
                         + "重新登录后任务历史与记忆会继续同步；"
                         + "同一账号的多台设备（手机 / 手表）现在可同时在线，不会互相挤掉。")
                 .setNegativeButton("稍后", null)
                 .setPositiveButton("重新登录", (d, w) ->
-                        startActivity(new Intent(this, LoginActivity.class)))
-                .show();
+                        startActivity(new Intent(this, LoginActivity.class))));
     }
 
     /** 二级设置页（模型 / 接口 / 账号额度 / 同步 / 保活）。 */
@@ -816,14 +915,27 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
             tvA11y.setVisibility(hint == null ? View.GONE : View.VISIBLE);
             return;
         }
+        a11yReady = a11yOn;
         tvA11y.setText(a11yOn
-                ? (root ? "无障碍已开启 (Root)" : "无障碍已开启")
+                ? (root ? "无障碍开关已打开（Root 加速可用），我可以帮您操作手机" : "无障碍开关已打开，我可以帮您操作手机")
                 : hint);
-        tvA11y.setTextColor(a11yOn ? 0xFF3FB950 : 0xFFF85149);
-        tvA11y.setBackgroundResource(a11yOn ? R.drawable.pill_green : R.drawable.pill_red);
+        tvA11y.setTextColor(getColor(a11yOn ? R.color.elder_ok_text : R.color.elder_err_text));
+        tvA11y.setBackgroundResource(a11yOn ? R.drawable.bg_elder_ok : R.drawable.bg_elder_err);
+        if (!taskRunning) {
+            tvStatus.setText(idleStatusText());
+            tvStatus.setTextColor(getColor(R.color.elder_text));
+        }
         // 引导横幅：无障碍未开时置顶显示一键开启
         View banner = find(R.id.a11yBanner);
         if (banner != null) banner.setVisibility(a11yOn ? View.GONE : View.VISIBLE);
+    }
+
+    /** 手机主页状态卡（不在运行时）：与无障碍状态一致，避免「准备好了」和「还差一步」同屏打架。 */
+    private boolean a11yReady = true;
+    private boolean taskRunning;
+
+    private String idleStatusText() {
+        return a11yReady ? "准备好了，请告诉我要做什么" : "还差一步：请先打开无障碍开关";
     }
 
     // ---- 事后管理（报告 §5.1.3：可回查 / 可撤回 / 可清除） ----
@@ -834,15 +946,15 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
         StringBuilder b = new StringBuilder();
         if (rs.isEmpty()) b.append("暂无任务记录");
         for (TaskHistory.Record r : rs) b.append(r.line()).append("\n\n");
-        new android.app.AlertDialog.Builder(this)
-                .setTitle("任务记录")
+        ElderUi.show(new android.app.AlertDialog.Builder(this)
+                .setTitle("做过的事")
                 .setMessage(b.toString().trim())
                 .setPositiveButton("关闭", null)
-                .setNeutralButton("清空", (d, w) -> {
-                    TaskHistory.clear(this);
-                    onLog("任务记录已清空");
-                })
-                .show();
+                .setNeutralButton("清空", rs.isEmpty() ? null : (d, w) -> confirm(
+                        "清空全部记录？", "清空后以前做过的事就看不到了，不能恢复。", "清空", () -> {
+                            TaskHistory.clear(this);
+                            say("做过的事已全部清空");
+                        })));
     }
 
     /** 预授权管理：点按逐条撤回，可全部重置；撤回后再次发起会重走授权弹窗。 */
@@ -850,29 +962,28 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
         AuthStore store = new AuthStore(this);
         List<String> scopes = store.list();
         if (scopes.isEmpty()) {
-            new android.app.AlertDialog.Builder(this)
-                .setTitle("预授权管理")
+            ElderUi.show(new android.app.AlertDialog.Builder(this)
+                .setTitle("授权管理")
                 .setMessage("当前所有应用均已开放直接打开与操作。\n不再弹出授权阻断框。")
-                .setPositiveButton("关闭", null)
-                .show();
+                .setPositiveButton("关闭", null));
             return;
         }
         String[] items = new String[scopes.size()];
         for (int i = 0; i < scopes.size(); i++) {
             items[i] = scopes.get(i).replace("app|", "操作应用：") + "　[始终允许]";
         }
-        new android.app.AlertDialog.Builder(this)
-                .setTitle("预授权管理（点按撤回）")
-                .setItems(items, (d, which) -> {
+        ElderUi.show(new android.app.AlertDialog.Builder(this)
+                .setTitle("授权管理（点一项就收回）")
+                .setAdapter(ElderUi.list(this, items), (d, which) -> {
                     store.revoke(scopes.get(which));
-                    onLog("已撤回授权：" + scopes.get(which));
+                    say("已收回授权：" + scopes.get(which).replace("app|", "") + "。下次操作它前会先问您");
                 })
-                .setNeutralButton("全部重置", (d, w) -> {
-                    store.clearAll();
-                    onLog("预授权已全部重置");
-                })
-                .setPositiveButton("关闭", null)
-                .show();
+                .setNeutralButton("全部重置", (d, w) -> confirm(
+                        "收回全部授权？", "以后每次操作这些应用前，都会先问您一次。", "全部重置", () -> {
+                            store.clearAll();
+                            say("已收回全部授权");
+                        }))
+                .setPositiveButton("关闭", null));
     }
 
     /** 生态清单：三档梯度（可全自动/可登录不可AI操作/受限·纯视觉尝试），点按循环切换。 */
@@ -885,20 +996,21 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
             items[i] = e.name + "　[" + EcoPolicy.tierLabel(e.tier) + "]"
                     + (e.altName != null ? "　→ 替代：" + e.altName : "");
         }
-        new android.app.AlertDialog.Builder(this)
-                .setTitle("生态清单（点按切换档位）")
-                .setItems(items, (d, which) -> {
+        ElderUi.show(new android.app.AlertDialog.Builder(this)
+                .setTitle("应用限制（点一项换一档）")
+                .setAdapter(ElderUi.list(this, items), (d, which) -> {
                     EcoPolicy.Entry e = es.get(which);
                     e.tier = (e.tier + 1) % 3;
                     eco.save(es);
-                    onLog("「" + e.name + "」已变更为 " + EcoPolicy.tierLabel(e.tier));
+                    say("「" + e.name + "」已改为：" + EcoPolicy.tierLabel(e.tier));
+                    showEco();   // 重新打开，方便连续调整、立刻看到新档位
                 })
-                .setNeutralButton("恢复默认", (d, w) -> {
-                    eco.reset();
-                    onLog("生态清单已恢复默认");
-                })
-                .setPositiveButton("关闭", null)
-                .show();
+                .setNeutralButton("恢复默认", (d, w) -> confirm(
+                        "恢复默认设置？", "您改过的应用限制会全部改回出厂设置。", "恢复默认", () -> {
+                            eco.reset();
+                            say("应用限制已恢复默认");
+                        }))
+                .setPositiveButton("关闭", null));
     }
 
     /**
@@ -919,8 +1031,8 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
                 + (on ? "关闭" : "开启"));
         acts.add(() -> {
             new Prefs(this).setFlowMemory(!on);
-            onLog(!on ? "操作记忆已开启：成功路径会存入记忆库，同款任务直接复现"
-                      : "操作记忆已关闭：仍保留已记录内容，但不再自动记录与复现");
+            say(!on ? "已打开：做成功的事我会记住步骤，下次同样的事做得更快"
+                      : "已关闭：以前记住的还在，但不再自动记新的");
             showMemory();
         });
         for (int i = 0; i < flows.size(); i++) {
@@ -929,7 +1041,7 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
             items.add("操作记忆 · " + shorten(r.task, 14) + " · " + FlowMemory.label(r));
             acts.add(() -> {
                 FlowMemory.delete(this, idx);
-                onLog("已删除操作记忆：" + shorten(r.task, 20));
+                say("已删除：" + shorten(r.task, 20));
                 showMemory();
             });
         }
@@ -939,27 +1051,42 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
             items.add("用户记忆 · " + shorten(it.text, 20));
             acts.add(() -> {
                 MemoryStore.delete(this, idx);
-                onLog("已删除记忆：" + shorten(it.text, 20));
+                say("已删除：" + shorten(it.text, 20));
                 showMemory();
             });
         }
         if (items.size() == 1) {
-            items.add("（还没有记录：任务成功一次即自动写入操作记忆）");
+            items.add("（还没有记录：任务成功一次即自动写入操作记忆；也可以说「记一下……」让我记住一件事）");
             acts.add(null);
         }
 
-        new android.app.AlertDialog.Builder(this)
-                .setTitle("记忆库（点按条目删除）")
-                .setItems(items.toArray(new String[0]), (d, which) -> {
+        ElderUi.show(new android.app.AlertDialog.Builder(this)
+                .setTitle("记住的事（点一项就删除）")
+                .setAdapter(ElderUi.list(this, items.toArray(new String[0])), (d, which) -> {
                     Runnable act = acts.get(which);
                     if (act != null) act.run();
                 })
-                .setNeutralButton("清空操作记忆", (d, w) -> {
-                    FlowMemory.clear(this);
-                    onLog("操作记忆已清空（" + flows.size() + " 条）");
-                })
-                .setPositiveButton("关闭", null)
-                .show();
+                .setNeutralButton("清空操作记忆", flows.isEmpty() ? null : (d, w) -> confirm(
+                        "清空操作记忆？", "记住的做事步骤会全部删掉（共 " + flows.size() + " 条），"
+                                + "「记一下」记住的内容不受影响。", "清空", () -> {
+                            FlowMemory.clear(this);
+                            say("操作记忆已清空（" + flows.size() + " 条）");
+                        }))
+                .setPositiveButton("关闭", null));
+    }
+
+    /**
+     * 删除 / 清空 / 重置类操作的二次确认。
+     *
+     * <p>改版前这些按钮点一下就生效、且没有可见反馈；老年用户误触的概率高，
+     * 而清空的数据不能恢复。确认框用红字标出危险按钮（{@link ElderUi#isDangerWord}）。
+     */
+    private void confirm(String title, String msg, String okText, Runnable act) {
+        ElderUi.show(new android.app.AlertDialog.Builder(this)
+                .setTitle(title)
+                .setMessage(msg)
+                .setNegativeButton("不了", null)
+                .setPositiveButton(okText, (d, w) -> act.run()));
     }
 
     /** 列表项用的短文本（记忆库条目可能很长，对话框一行放不下）。 */
@@ -1001,5 +1128,12 @@ public class MainActivity extends Activity implements AgentEngine.Listener {
                 getResources().getDisplayMetrics());
     }
 
-    private void toast(String s) { Toast.makeText(this, s, Toast.LENGTH_SHORT).show(); }
+    /** 手机主页：提示写进大字提示框（Toast 两秒就消失，老人来不及看）；手表仍用 Toast。 */
+    private void toast(String s) {
+        if (!watchUi && tvLastMsg != null) {
+            say(s);
+            return;
+        }
+        Toast.makeText(this, s, Toast.LENGTH_SHORT).show();
+    }
 }

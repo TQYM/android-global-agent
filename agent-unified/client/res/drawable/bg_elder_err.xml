@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- 状态：有问题 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="@color/elder_err_bg"/>
+    <corners android:radius="14dp"/>
+    <stroke android:width="2dp" android:color="@color/elder_err_text"/>
+</shape>

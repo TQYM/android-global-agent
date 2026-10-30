@@ -44,6 +44,7 @@ public class SettingsActivity extends Activity {
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
+        ElderUi.applyTheme(this);   // 手机：浅色大字主题（须在 setContentView 之前）
         setContentView(R.layout.activity_settings);
         prefs = new Prefs(this);
 
@@ -58,6 +59,19 @@ public class SettingsActivity extends Activity {
         bind();
         loadCfg();
         wire();
+        // 还没有可用的使用方式（未登录也没填自己的配置）时，直接展开高级设置——
+        // 从主页「打开设置」过来的人正是要填这些，别让他再找一次开关
+        setAdvancedVisible(!prefs.credentialRoute(prefs.model()).isUsable());
+    }
+
+    /** 高级设置（模型 / 用量 / 屏幕适配 / 同步）收起与展开。 */
+    private void setAdvancedVisible(boolean show) {
+        android.view.View group = findViewById(R.id.advancedGroup);
+        Button toggle = findViewById(R.id.btnAdvanced);
+        if (group == null || toggle == null) return;
+        group.setVisibility(show ? android.view.View.VISIBLE : android.view.View.GONE);
+        toggle.setText(show ? "高级设置（点这里收起）\n一般不用改，可以请家人帮忙"
+                : "高级设置（点开）\n一般不用改，可以请家人帮忙");
     }
 
     private void bind() {
@@ -101,6 +115,8 @@ public class SettingsActivity extends Activity {
 
     private void wire() {
         findViewById(R.id.btnBack).setOnClickListener(v -> finish());
+        findViewById(R.id.btnAdvanced).setOnClickListener(v ->
+                setAdvancedVisible(findViewById(R.id.advancedGroup).getVisibility() != android.view.View.VISIBLE));
 
         findViewById(R.id.btnSave).setOnClickListener(v -> saveCfg());
 
@@ -112,11 +128,15 @@ public class SettingsActivity extends Activity {
             toast(checked ? "已开启单模型模式" : "已关闭单模型模式");
         });
 
-        findViewById(R.id.btnResetTokens).setOnClickListener(v -> {
-            prefs.resetTokens();
-            refreshTokens();
-            toast("Token 消耗计数已归零");
-        });
+        findViewById(R.id.btnResetTokens).setOnClickListener(v -> ElderUi.show(new AlertDialog.Builder(this)
+                .setTitle("把用量统计归零？")
+                .setMessage("只清零本机的计数，不影响账号额度。")
+                .setNegativeButton("不了", null)
+                .setPositiveButton("重置", (d, w) -> {
+                    prefs.resetTokens();
+                    refreshTokens();
+                    toast("Token 消耗计数已归零");
+                })));
 
         findViewById(R.id.btnDisplayRefresh).setOnClickListener(v -> refreshDisplay());
         findViewById(R.id.btnDisplayCalib).setOnClickListener(v -> runCalibrate());
@@ -162,11 +182,10 @@ public class SettingsActivity extends Activity {
         });
         findViewById(R.id.btnLanRendezvous).setOnClickListener(v -> {
             toast("正在会合…");
-            SyncClient.rendezvousNow(this, text -> new AlertDialog.Builder(this)
+            SyncClient.rendezvousNow(this, text -> ElderUi.show(new AlertDialog.Builder(this)
                     .setTitle("局域网会合")
                     .setMessage(text)
-                    .setPositiveButton("好", null)
-                    .show());
+                    .setPositiveButton("好", null)));
         });
     }
 
@@ -233,8 +252,8 @@ public class SettingsActivity extends Activity {
             b.append("  模型文件：").append(WhisperAsr.modelFile(this).length() / 1048576).append("MB\n");
         }
         b.append("\n提示：填了云端端点就用云端；留空则用本地离线，飞行模式下也能识别。");
-        new android.app.AlertDialog.Builder(this).setTitle("语音转写链路").setMessage(b.toString())
-                .setPositiveButton("知道了", null).show();
+        ElderUi.show(new android.app.AlertDialog.Builder(this).setTitle("语音转写链路").setMessage(b.toString())
+                .setPositiveButton("知道了", null));
     }
 
     private void saveCfg() {
@@ -273,11 +292,11 @@ public class SettingsActivity extends Activity {
                     : (prefs.syncDeviceId().isEmpty() ? "　本机未绑定设备" : "　本机已绑定设备");
             tvAccount.setText("账号：" + prefs.accountName() + "（" + prefs.accountId() + "）" + tail);
         } else {
-            tvAccount.setText("当前未登录：历史与记忆只存本机，不参与同步。");
+            tvAccount.setText("还没登录：做过的事和记住的事只存在这台手机上。");
         }
         long q = Math.max(0, prefs.accountQuota());
         long used = Math.max(0, prefs.accountQuotaUsed());
-        tvQuota.setText("额度：" + q + " units（已用 " + used + "，1 unit = 1000 tokens）");
+        tvQuota.setText("剩余额度：" + q + "（已用 " + used + "；1 额度约等于 1000 个字的用量）");
     }
 
     private void refreshSyncStatus() {
@@ -304,7 +323,7 @@ public class SettingsActivity extends Activity {
     private void refreshQuotaFromServer(boolean byUser) {
         if (!prefs.loggedIn()) {
             if (byUser) toast("尚未登录，请先登录账号");
-            tvDevices.setText("登录后点击「刷新额度」查看");
+            tvDevices.setText("登录后点「刷新额度」查看");
             return;
         }
         if (quotaFetching) return;   // 自动拉取与按钮点击可能重叠，避免重复请求
@@ -316,8 +335,8 @@ public class SettingsActivity extends Activity {
                 quotaFetching = false;
                 long quota = Math.max(0, m.quota);
                 long quotaUsed = Math.max(0, m.quotaUsed);
-                tvQuota.setText("额度：" + quota + " units（已用 " + quotaUsed
-                        + "，1 unit = 1000 tokens）");
+                tvQuota.setText("剩余额度：" + quota + "（已用 " + quotaUsed
+                        + "；1 额度约等于 1000 个字的用量）");
                 tvAccount.setText("账号：" + m.name + "（" + m.accountId + "）");
                 StringBuilder sb = new StringBuilder();
                 if (m.devices.isEmpty()) {
@@ -346,13 +365,12 @@ public class SettingsActivity extends Activity {
     }
 
     private void promptRelogin() {
-        new AlertDialog.Builder(this)
+        ElderUi.show(new AlertDialog.Builder(this)
                 .setTitle("登录已失效")
                 .setMessage("账号令牌已失效（可能在其他设备重新登录过）。\n请重新登录以继续同步。")
                 .setNegativeButton("稍后", null)
                 .setPositiveButton("重新登录", (d, w) ->
-                        startActivity(new android.content.Intent(this, LoginActivity.class)))
-                .show();
+                        startActivity(new android.content.Intent(this, LoginActivity.class))));
     }
 
     private void doRedeem() {
@@ -392,7 +410,7 @@ public class SettingsActivity extends Activity {
             toast("当前未登录");
             return;
         }
-        new AlertDialog.Builder(this)
+        ElderUi.show(new AlertDialog.Builder(this)
                 .setTitle("退出登录")
                 .setMessage("将清除本机保存的账号令牌与设备绑定，任务历史与记忆仍保留在本机。")
                 .setNegativeButton("取消", null)
@@ -401,10 +419,9 @@ public class SettingsActivity extends Activity {
                     prefs.clearAccount();
                     refreshAccount();
                     refreshSyncStatus();
-                    tvDevices.setText("登录后点击「刷新额度」查看");
+                    tvDevices.setText("登录后点「刷新额度」查看");
                     toast("已退出登录");
-                })
-                .show();
+                }));
     }
 
     // ---------- 保活 / 设备形态 ----------
@@ -441,6 +458,7 @@ public class SettingsActivity extends Activity {
     }
 
     private void toast(String s) {
-        Toast.makeText(this, s, Toast.LENGTH_SHORT).show();
+        // 手机适老化：显示时间加长（老人读得慢）
+        Toast.makeText(this, s, ElderUi.enabled(this) ? Toast.LENGTH_LONG : Toast.LENGTH_SHORT).show();
     }
 }

@@ -13,7 +13,7 @@ public final class CredentialRouteUi {
     public static void showChooser(Activity activity, Prefs prefs, Runnable changed) {
         if (activity.isFinishing() || activity.isDestroyed()) return;
         CredentialRoute current = prefs.credentialRoute(prefs.model());
-        new AlertDialog.Builder(activity)
+        ElderUi.show(new AlertDialog.Builder(activity)
                 .setTitle("选择额度来源")
                 .setMessage("当前：" + current.payerLabel() + "\n" + current.userMessage()
                         + "\n\n账号额度由应用账号扣减；自己的配置由对应服务账号计费。"
@@ -35,7 +35,6 @@ public final class CredentialRouteUi {
                     Toast.makeText(activity, prefs.credentialRoute(prefs.model()).userMessage(),
                             Toast.LENGTH_LONG).show();
                 })
-                .setNeutralButton("暂不切换", null)
-                .show();
+                .setNeutralButton("暂不切换", null));
     }
 }

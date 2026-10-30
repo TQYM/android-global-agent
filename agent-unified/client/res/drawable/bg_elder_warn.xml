@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- 提醒卡：琥珀底 + 粗边框，一眼可见 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="@color/elder_warn_bg"/>
+    <corners android:radius="18dp"/>
+    <stroke android:width="3dp" android:color="@color/elder_warn_border"/>
+</shape>
