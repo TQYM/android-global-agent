@@ -2726,3 +2726,9 @@ adb shell "rm /sdcard/Android/data/com.dsh.agentlite/files/project_progress.txt"
 - 14:43 sync-sources 同步镜像（client 副本与 agent-lite 逐字节一致）（源:命令:bash agent-unified/scripts/sync-sources.sh --check）
 - 14:52 推送分支、开 PR #5；main 期间并入 #4（CI 门禁 / 镜像排除 vendor/asr/lib / ui_widget_guard 跳过语义），rebase 到 b545506，冲突仅工作日志与 sources.lock.json，镜像重新同步（源:命令:git rebase origin/main；gh pr create）
 - 17:05 终态: done（PR #5 待 review 与 CI；未安装真机、未发版；字体最大档裁字与实测对比度待真机补测）（源:本轮验收）
+
+### 2026-10-30 17:39 +08 · 项目:repo · 会话:local · 真机无线调试检查
+- 17:39 mDNS 发现一加 13T（serial 3B15B401NPF00000）的无线调试服务，`adb connect 192.168.1.114:38119` 直连成功，未用 perl 中继（源:命令:adb mdns services；adb connect）
+- 17:40 设备 Android 17 / API 37、arm64-v8a、1216x2640 @560dpi、电量 45%、屏幕 Awake；已装 com.dsh.agentlite / com.dsh.agent / dev.dsh.remote（源:命令:adb shell getprop / pm list packages）
+- 17:42 链路：WiFi「B607」2.4GHz 2437MHz、RSSI -39、144Mbps，ping 平均 80.6ms（min 12 / max 175）；建议切 5GHz 降延迟（源:命令:adb shell cmd wifi status；ping -c 5）
+- 17:43 终态: done（无线调试可用：Android 11+ 随机端口 38119，非 5555 tcpip 模式；端口重启会变，靠 mDNS 自动更新）
