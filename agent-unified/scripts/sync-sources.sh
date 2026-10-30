@@ -9,6 +9,8 @@
 # ── 整合第一原则：不修改任何功能与逻辑 ──────────────────────────────────────
 # 统一目录里的 client/ 与 server/ 是原项目的**原样副本**，同步过程只做复制，
 # 不做任何改写、补丁、格式化或重命名。--check 用 rsync itemize 干跑对比，
+# 且必须带 -c：默认按 size+mtime 判断，git checkout / pull 会刷新源文件 mtime，
+# 会造成「内容一致却报上游已更新」的假阳性。
 # 任何差异（新增 / 删除 / 内容变化 / 类型变化）都会非零退出。
 #
 # ── 两处刻意排除（都不是「源码」，且都有专职脚本接管）──────────────────────
@@ -44,6 +46,31 @@ done
 
 hr() { printf '%s\n' "------------------------------------------------------------"; }
 
+# rsync 默认按 size+mtime 判断差异；macOS 自带的 openrsync 不支持 -c（checksum），
+# 于是 git checkout / pull 刷新源文件 mtime 后，会出现「内容一致却报上游已更新」。
+# 这里对每个差异项做一次真实内容哈希比对：哈希相同就丢弃该行，只留真差异。
+hash_file() {
+  python3 -c 'import hashlib,sys;h=hashlib.sha256();h.update(open(sys.argv[1],"rb").read());print(h.hexdigest())' "$1"
+}
+
+drop_meta_only() { # $1=src根 $2=dst根 $3=rsync itemize 输出
+  local src="$1" dst="$2" out="$3" line rel real=""
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    rel=$(printf '%s' "$line" | sed -E 's/^[^ ]+[ ]+//')
+    rel="${rel%% -> *}"
+    case "$rel" in
+      */) real="$real$line"$'\n'; continue ;;   # 目录条目交给 rsync 结论
+    esac
+    if [ -f "$src/$rel" ] && [ -f "$dst/$rel" ] \
+       && [ "$(hash_file "$src/$rel")" = "$(hash_file "$dst/$rel")" ]; then
+      continue
+    fi
+    real="$real$line"$'\n'
+  done <<< "$out"
+  printf '%s' "$real"
+}
+
 if [ "$CHECK" = "1" ]; then
   hr; echo "sync-sources --check：副本 vs 原项目（逐字节）"; hr
   fail=0; rewritten=0
@@ -52,10 +79,11 @@ if [ "$CHECK" = "1" ]; then
     # 过滤 `.d..t....`（仅目录时间戳不同）：macOS 自带的 openrsync 不回写目录 mtime，
     # 这类噪声与被比较的「内容」无关；真正关心的新增 / 删除 / 内容变化都保留。
     if [ "$name" = "client" ]; then
-      diff_out=$(rsync -ain --delete "${CLIENT_EXCLUDES[@]}" "$src/" "$dst/" 2>/dev/null | grep -vE '^\.d\.\.t' || true)
+      raw_out=$(rsync -ain --delete "${CLIENT_EXCLUDES[@]}" "$src/" "$dst/" 2>/dev/null | grep -vE '^\.d\.\.t' || true)
     else
-      diff_out=$(rsync -ain --delete "${SERVER_EXCLUDES[@]}" "$src/" "$dst/" 2>/dev/null | grep -vE '^\.d\.\.t' || true)
+      raw_out=$(rsync -ain --delete "${SERVER_EXCLUDES[@]}" "$src/" "$dst/" 2>/dev/null | grep -vE '^\.d\.\.t' || true)
     fi
+    diff_out=$(drop_meta_only "$src" "$dst" "$raw_out")
     if [ -n "$diff_out" ]; then
       # 区分两种方向完全相反的情况，避免把「上游更新了」误报成「整合层改写了副本」
       if printf '%s' "$diff_out" | grep -qE '^\*deleting|^<f'; then

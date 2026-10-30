@@ -1,8 +1,8 @@
 {
   "note": "由 scripts/sync-sources.sh 生成：记录本次同步的上游来源。",
-  "generated_at": "2026-10-30T06:27:16+00:00",
-  "repo_head": "e5b5cc991b598a737d9c00bf070cb2b9d38030d8",
-  "branch": "shell-command-backend",
+  "generated_at": "2026-10-30T08:38:44+00:00",
+  "repo_head": "44ee1f90b98d867867ebe7f8dff338c652bad302",
+  "branch": "main",
   "upstream": {
     "agent-lite": {
       "path": "agent-lite",
