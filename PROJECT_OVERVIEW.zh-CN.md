@@ -2712,4 +2712,5 @@ adb shell "rm /sdcard/Android/data/com.dsh.agentlite/files/project_progress.txt"
 - 16:31 重跑 CI run 41027096514：5/5 pass（make go/contract/drill/ui/jvm）（源:命令:gh pr checks 4）
 - 16:33 main 分支保护：要求 PR（0 审批）+ 5 个必需检查，enforce_admins=false 保留 owner 直推，禁强推/删除（源:命令:gh api PUT branches/main/protection）
 - 16:34 squash 合并 PR #4 → c9b1832，删除 ci/submit-gateway 分支（源:命令:gh pr merge 4 --squash --delete-branch）
-- 16:35 终态: done（PR 渠道开通：模板 + 本地钩子 + CI 门禁 + 分支保护；main 已合并）
+- 16:39 fix(unified)：`--check` 改用 sha256 内容比对（macOS openrsync 不支持 `-c`，git checkout 刷新 mtime 会假报「上游已更新」），验证 touch 不报、改内容能报（源:文件:agent-unified/scripts/sync-sources.sh:52-77）
+- 16:40 终态: done（PR 渠道开通：模板 + 本地钩子 + CI 门禁 + 分支保护；main 已合并；镜像校验假阳性已修）
