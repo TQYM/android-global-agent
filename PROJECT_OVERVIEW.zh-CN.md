@@ -2732,3 +2732,15 @@ adb shell "rm /sdcard/Android/data/com.dsh.agentlite/files/project_progress.txt"
 - 17:40 设备 Android 17 / API 37、arm64-v8a、1216x2640 @560dpi、电量 45%、屏幕 Awake；已装 com.dsh.agentlite / com.dsh.agent / dev.dsh.remote（源:命令:adb shell getprop / pm list packages）
 - 17:42 链路：WiFi「B607」2.4GHz 2437MHz、RSSI -39、144Mbps，ping 平均 80.6ms（min 12 / max 175）；建议切 5GHz 降延迟（源:命令:adb shell cmd wifi status；ping -c 5）
 - 17:43 终态: done（无线调试可用：Android 11+ 随机端口 38119，非 5555 tcpip 模式；端口重启会变，靠 mDNS 自动更新）
+
+### 2026-10-30 19:45 +08 · 项目:repo · 会话:local · 真机验证（v0.7.0 + 适老化改版主链路）
+- 18:00 以当前 main 构建 APK（19,612,776 字节，含适老化改版与 6 个 ASR .so），`adb install -r -d` 覆盖安装到一加 13T，versionCode 6→7 / versionName 0.6.0→0.7.0（源:命令:bash agent-lite/build-mac.sh；adb install）
+- 18:01 冷启动落在适老化登录页（「不登录也可以直接用」+「稍后再说」），点「返回」进主页；主页大字、语音/文字双入口、自检「无障碍开关已打开」（源:截图:.device-verify/home.png；.device-verify/home2.xml）
+- 18:04 设置页结构核对：高级设置默认收起，展开后为模型与 API 配置（etBase/etKey/etModel）、语音配置、保存配置；再往下是「让小帮手正常工作」三按钮引导（源:文件:agent-lite/res/layout/activity_settings.xml；.device-verify/settings3.xml）
+- 18:06 无障碍切到 com.dsh.agentlite/.AgentA11yService（原为 hello.litiaotiao.app 的 LttService），服务 connected，规格 1216×2640@560dpi（源:命令:settings put secure enabled_accessibility_services；logcat AgentA11y）
+- 18:10 点「开始」先弹凭据卡「还差一步就能开始」，选「稍后」任务不启动、再点仍弹卡——根因：`Prefs.save()` 用**保存前**的 route 写 `use_own_key`，填了密钥也只是候选，须再经 `CredentialRouteUi.showChooser` 主动选「使用自己的配置」才生效（源:文件:agent-lite/src/com/dsh/agentlite/Prefs.java:94；文件:agent-lite/src/com/dsh/agentlite/MainActivity.java:453）
+- 18:12 保存配置后选「使用自己的配置」，主页提示改为「使用自己的配置」；端点临时指向本机假模型 http://127.0.0.1:18999/v1（adb reverse），全程零公网请求（源:命令:adb reverse tcp:18999）
+- 19:41 主链路跑通：输入 open settings → 点「开始」→ 引擎感知 4 节点并执行 → 模型 done 无证据 → 追问一次 → 终态「任务结果不确定：未观察到目标达成的证据」（T04a 预期行为），未写记忆库（源:命令:adb logcat -d --pid=com.dsh.agentlite；.device-verify/result.xml）
+- 19:44 还原用户态：端点回 https://api.deepseek.com/v1、密钥清空、额度来源切回账号额度、无障碍切回 hello.litiaotiao.app、`adb reverse --remove-all`（源:本轮操作）
+- 19:44 遗留：手机切 WiFi 后无线调试换到 192.168.5.3:44621（mDNS 自适应）；未登录时每次冷启动都先落登录页，老人要多点一次「返回」，建议改为仅首启进登录页（源:本轮操作）
+- 19:45 终态: done（主链路与凭据路由真机通过；发现的 2 个 UX 项已记录，未改代码）
