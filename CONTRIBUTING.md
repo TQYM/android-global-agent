@@ -13,11 +13,43 @@
 提交前至少执行与改动范围对应的检查：
 
 ```bash
+make check                            # 全部免设备门禁（Go/契约/演练/UI/JVM）
 cd agent-lite && sh build-mac.sh      # 或 agent-client / agentd-apk
 cd agentd-go && go vet ./... && gofmt -l .
 ```
 
 改动 UI / 交互逻辑时，请附带真机或模拟器验证说明（设备型号、系统版本、是否 Root）。
+
+## 提交渠道
+
+代码进入 `main` 有两条路，都受同一套门禁约束：
+
+**1) 本地钩子（推荐每台机器执行一次）**
+
+```bash
+make hooks        # 设置 core.hooksPath=.githooks
+```
+
+- `pre-commit`：冲突标记、>10MB 大文件、疑似密钥/私钥、agent-unified 镜像漂移；
+- `commit-msg`：Conventional Commits 校验（`git commit --no-verify` 可跳过）；
+- `pre-push`：契约门禁 + 镜像逐字节校验，约 10 秒；要连全量门禁一起跑用
+  `AGENTLITE_PRE_PUSH_FULL=1 git push`。
+
+任一钩子都可用 `AGENTLITE_SKIP_HOOKS=1` 环境变量整体跳过（仅限紧急情况）。
+
+**2) Pull Request**
+
+外部贡献者 fork 后向 `main` 提 PR；仓库已启用 Pull Requests、允许 fork、
+提供 PR 模板与 issue 模板。PR 会触发 `contract-gate` 工作流（
+`.github/workflows/ci.yml`），按 `make` 目标拆成 5 个并行 job：`go` /
+`contract` / `drill` / `ui` / `jvm`。CI 红的分支不合并。
+
+改动两端源码（`agent-lite/` 或 `agentlite-server/`）时，必须同步整合层镜像，
+否则 `contract` job 会以「副本落后」失败：
+
+```bash
+bash agent-unified/scripts/sync-sources.sh && git add agent-unified/
+```
 
 ## 提交规范
 

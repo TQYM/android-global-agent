@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+#
+# commit-msg：校验 Conventional Commits（与 CONTRIBUTING.md「提交规范」一致）。
+# 允许：feat/fix/docs/style/refactor/perf/test/build/ci/chore/revert，
+#      可带 scope，可带 !（破坏性变更），正文用中文。
+# 例外：Merge / Revert / fixup! / squash! 由 git 自动生成，直接放行。
+set -euo pipefail
+
+[ "${AGENTLITE_SKIP_HOOKS:-0}" = "1" ] && exit 0
+
+msg_file="${1:-}"
+[ -n "$msg_file" ] && [ -f "$msg_file" ] || exit 0
+
+# 取第一行非空注释外的内容
+subject=$(grep -v '^#' "$msg_file" | sed '/^[[:space:]]*$/d' | head -1)
+
+case "$subject" in
+  Merge\ *|Revert\ *|fixup!\ *|squash!\ *|amend!\ *) exit 0 ;;
+esac
+
+pattern='^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([^)]+\))?!?:[[:space:]]+.+'
+
+if ! printf '%s' "$subject" | grep -Eq "$pattern"; then
+  cat >&2 <<EOF
+✗ 提交信息不符合 Conventional Commits：
+
+    $subject
+
+  期望：<type>(<scope>)?: <中文描述>
+  示例：feat(flow-memory): 支持跨会话复用操作路径
+        fix(server): 修复并发支付时兑换码重复核销
+        docs: 补充提交门禁说明
+
+  允许的 type：feat fix docs style refactor perf test build ci chore revert
+  跳过硬校验：git commit --no-verify
+EOF
+  exit 1
+fi
+
+# 标题长度提醒（不阻塞，仅提示）
+len=$(printf '%s' "$subject" | wc -m | tr -d ' ')
+if [ "$len" -gt 100 ]; then
+  printf '\033[33m! 提交标题 %s 字符，建议 ≤100\033[0m\n' "$len" >&2
+fi
+
+exit 0

@@ -1,0 +1,73 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# 提交门禁（远端正本）：每次 push / PR 到 main 都跑一遍免设备检查。
+#
+# 与本地 `make check` 完全同源：这里只是把 Makefile 的 5 个目标拆成 5 个并行
+# job，失败时能一眼看出是 Go 单测、两端契约、迁移演练、UI 守卫还是桌面 JVM
+# 挂了，而不是只看到一个笼统的红叉。
+#
+# 设计约束：
+#   * 只用 GitHub 托管 runner（ubuntu-latest），不要求 Android SDK —— 这里的
+#     检查全部不需要编译 APK（APK 构建见 agent-lite/build-mac.sh，留本地跑）；
+#   * 不碰外部网络、不碰真机，与 Makefile 注释里的「三不」原则一致；
+#   * 权限最小化：只用 contents: read。
+
+name: contract-gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: make ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [go, contract, drill, ui, jvm]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: agentd-go/go.mod
+          cache-dependency-path: agentd-go/go.sum
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Verify toolchain
+        run: |
+          go version
+          javac -version
+          python3 --version
+          openssl version
+
+      - name: make ${{ matrix.target }}
+        run: make ${{ matrix.target }}
+
+      - name: Upload failure report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failed-${{ matrix.target }}
+          path: |
+            .check-tmp/
+          retention-days: 7
+          if-no-files-found: ignore

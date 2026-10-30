@@ -1,0 +1,43 @@
+name: 功能建议
+description: 提出一个改进或新能力
+title: "[feat] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提之前建议先看 `PROJECT_OVERVIEW.zh-CN.md` 的路线图与 `docs/PROJECTS.zh-CN.md`
+        的项目归属，避免重复或提错仓库分层。
+  - type: textarea
+    id: problem
+    attributes:
+      label: 要解决的问题
+      description: 描述场景与痛点，而不是直接给方案
+      placeholder: "在 … 场景下，用户需要 …，现在只能 …"
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 期望的方案
+      description: 可以是接口、交互或实现思路；如果有多个方案请分别写
+  - type: dropdown
+    id: area
+    attributes:
+      label: 影响范围
+      options:
+        - 客户端（agent-lite / agent-client）
+        - 服务端（agentlite-server / agentd-go）
+        - 统一构建与发布（agent-unified）
+        - 测试与门禁（tests / Makefile）
+        - 文档
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 考虑过的替代方案
+  - type: textarea
+    id: extra
+    attributes:
+      label: 补充信息

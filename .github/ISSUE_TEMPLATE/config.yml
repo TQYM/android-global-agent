@@ -1,0 +1,9 @@
+blank_issues_enabled: false
+
+contact_links:
+  - name: 安全问题报告
+    url: https://github.com/TQYM/android-global-agent/blob/main/SECURITY.md
+    about: 请勿用公开 issue 报告漏洞，按 SECURITY.md 的渠道私下联系。
+  - name: 使用与构建文档
+    url: https://github.com/TQYM/android-global-agent/blob/main/README.zh-CN.md
+    about: 先看中文 README（权威版本）与 CONTRIBUTING.md，能节省一轮往返。

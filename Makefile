@@ -25,7 +25,7 @@ JAVA_RELEASE ?= 11
 CLIENT_SRC := agent-lite/src/com/dsh/agentlite
 TMP := $(CURDIR)/.check-tmp
 
-.PHONY: check go contract drill ui jvm clean
+.PHONY: check go contract drill ui jvm hooks clean
 
 check: go contract drill ui jvm
 	@echo ""
@@ -53,7 +53,11 @@ ui:
 	@echo "== UI 文案守卫 =="
 	@bash tests/ui_text_guard.sh
 	@echo "== UI 控件守卫 =="
-	@python3 tests/ui_widget_guard.py
+	@python3 tests/ui_widget_guard.py; \
+	  code=$$?; \
+	  if [ $$code -eq 2 ]; then \
+	    echo "  ↳ SKIP：无 android.jar / classes.jar（干净检出未构建 APK），控件类型断言跳过；构建后自动恢复"; \
+	  elif [ $$code -ne 0 ]; then exit $$code; fi
 	@echo "== SPEC-UX-001 零门槛守则（手册 §16.4）=="
 	@python3 tests/spec_ux_001_guard.py
 	@echo "== 动作词表一致性（手册 §16.9 / UX-10）=="
@@ -152,3 +156,13 @@ jvm:
 clean:
 	@rm -rf "$(TMP)"
 	@echo "已清理 $(TMP)"
+
+# 启用仓库自带的 git 钩子（提交渠道的本地一半）。每台克隆执行一次。
+# 钩子只做本地快速拦截；远端正本见 .github/workflows/ci.yml。
+hooks:
+	@git config core.hooksPath .githooks
+	@chmod +x .githooks/pre-commit .githooks/commit-msg .githooks/pre-push
+	@echo "已启用 .githooks（core.hooksPath=.githooks）"
+	@echo "  pre-commit：冲突标记 / 大文件 / 密钥 / 镜像一致性"
+	@echo "  commit-msg：Conventional Commits"
+	@echo "  pre-push：契约门禁 + 镜像校验（全量：AGENTLITE_PRE_PUSH_FULL=1）"

@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+#
+# pre-commit：commit 前拦截「不该进仓库的东西」。
+# 只做秒级检查；耗时门禁（编译 / 起服务）放在 pre-push 与 CI。
+#
+# 跳过：git commit --no-verify 或 AGENTLITE_SKIP_HOOKS=1 git commit ...
+set -euo pipefail
+
+[ "${AGENTLITE_SKIP_HOOKS:-0}" = "1" ] && exit 0
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+fail=0
+say_fail() { printf '\033[31m✗ %s\033[0m\n' "$1" >&2; fail=1; }
+note() { printf '  %s\n' "$1" >&2; }
+
+# 暂存的新增/修改文件（重命名取新路径，删除不检查）
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+
+if [ -z "$staged" ]; then
+  exit 0
+fi
+
+# 1) 冲突标记
+while IFS= read -r f; do
+  [ -f "$f" ] || continue
+  case "$f" in
+    *.png|*.jpg|*.jpeg|*.webp|*.apk|*.jar|*.zip|*.so|*.class) continue ;;
+  esac
+  if grep -nE '^(<<<<<<< |>>>>>>> )' "$f" >/dev/null 2>&1; then
+    say_fail "冲突标记未清理：$f"
+    grep -nE '^(<<<<<<< |>>>>>>> )' "$f" | head -3 | sed 's/^/  /' >&2
+  fi
+done <<< "$staged"
+
+# 2) 大文件（> 10MB）：仓库里不该出现，二进制请走 Release
+while IFS= read -r f; do
+  [ -f "$f" ] || continue
+  size=$(wc -c < "$f" 2>/dev/null | tr -d ' ')
+  if [ "${size:-0}" -gt 10485760 ]; then
+    say_fail "文件过大（$(echo "$size" | awk '{printf "%.1fMB", $1/1048576}')）：$f —— 二进制请走 Release 资产"
+  fi
+done <<< "$staged"
+
+# 3) 密钥 / 凭据（dev.local 已被 gitignore，这里防的是误提交的其他文件）
+secret_pat='(API_KEY|APIKEY|SECRET_KEY|ACCESS_TOKEN|PRIVATE_KEY)[[:space:]]*=[[:space:]]*["'"'"']?[A-Za-z0-9_./+-]{16,}'
+while IFS= read -r f; do
+  [ -f "$f" ] || continue
+  case "$f" in
+    *.md|*.txt) continue ;;
+  esac
+  if grep -nEq "$secret_pat" "$f" 2>/dev/null; then
+    say_fail "疑似密钥字面量：$f"
+    grep -nE "$secret_pat" "$f" | sed -E 's/(=.{6}).*/\1…（已截断）/' | head -3 | sed 's/^/  /' >&2
+  fi
+  if grep -nq 'BEGIN [A-Z ]*PRIVATE KEY' "$f" 2>/dev/null; then
+    say_fail "私钥块：$f"
+  fi
+done <<< "$staged"
+
+# 4) 整合层镜像一致性：改动两端源码却忘了同步，CI 的 contract 门禁也会红
+if printf '%s\n' "$staged" | grep -qE '^(agent-lite|agentlite-server)/'; then
+  if ! bash agent-unified/scripts/sync-sources.sh --check >/tmp/.agentlite-sync-check 2>&1; then
+    say_fail "agent-unified 副本与原项目不一致（改了两端源码但没同步镜像）"
+    sed -n '1,12p' /tmp/.agentlite-sync-check | sed 's/^/  /' >&2
+    note "修复：bash agent-unified/scripts/sync-sources.sh && git add agent-unified/"
+  fi
+fi
+
+if [ "$fail" = "1" ]; then
+  printf '\n\033[31m提交被拦下。\033[0m若确认无误：git commit --no-verify\n' >&2
+  exit 1
+fi
+
+exit 0
